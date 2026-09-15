@@ -1,0 +1,1 @@
+﻿"""Stocker application package."""

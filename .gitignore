@@ -1,0 +1,28 @@
+﻿# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/incoming/*
+data/working/*
+data/approved/*
+data/rejected/*
+logs/*
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
