@@ -1,8 +1,9 @@
 from pathlib import Path
+import json
 import sqlite3
 
 import numpy as np
-from PIL import Image, ImageStat
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,7 +138,7 @@ def save_qc_result(asset_id, result):
             """,
             (
                 status,
-                str(result),
+                json.dumps(result, ensure_ascii=False),
                 "; ".join(result["errors"]) if result["errors"] else None,
                 asset_id,
             ),
@@ -153,7 +154,7 @@ def save_qc_result(asset_id, result):
                 asset_id,
                 "QC",
                 status,
-                str(result),
+                json.dumps(result, ensure_ascii=False),
             ),
         )
 
