@@ -6,6 +6,10 @@
 > различение концептов и конкретных утверждений (§4.7). Код до этой редакции не
 > существовал, поэтому версия не увеличена.
 >
+> **`metadata-v2` (🟢 СОГЛАСОВАН 25.09.2026, с уточнениями по людям и правкам):** автоматический review gate —
+> §6A. Расширяет v1: builder, валидация и grounding не меняются, добавляются
+> состояния `auto_approved` и `human_review` и блок `review_gate`.
+>
 > Связанные разделы паспорта: §3A (принципы), §14 (контракт событий), §35H–35I (журнал).
 >
 > Любое изменение структуры `metadata_json`, событий или правил валидации — это
@@ -406,6 +410,206 @@ Pipeline не блокируется: у asset всегда есть draft, а �
 
 Прочие переходы — ошибка CLI (код 1), без изменений и без событий.
 Одобрение сбрасывается любым изменением содержимого.
+
+> Таблица выше — `metadata-v1`. В `metadata-v2` её дополняет §6A: после
+> `build`, `rebuild` и `edit` автоматически выполняется review gate.
+
+---
+
+## 6A. Review gate (`metadata-v2`)
+
+### 6A.1. Цель
+
+Stocker автоматизирует промышленный stock-поток. Человек нужен только для
+спорных случаев, а не для каждой фотографии:
+
+```text
+низкий риск:  Vision → Metadata AI → validation → gate → auto_approved ──► дальше автоматически
+высокий риск: Vision → Metadata AI → validation → gate → human_review  ──► human approve / reject
+```
+
+**Разделение ответственности:**
+
+| Слой | Отвечает на вопрос | Версия |
+|---|---|---|
+| validation (§4.5) | корректны ли metadata по форме и лимитам? | `builder_version` |
+| **review gate** | можно ли пропустить без человека? | `policy_version = gate-v1` |
+| человек | спорный случай: approve или reject | — |
+
+Gate — отдельный детерминированный модуль (`app/review_gate.py`, чистые
+функции). Builder, валидация и grounding v1 **не меняются**.
+
+### 6A.2. Состояния
+
+| `state` | Смысл | Кто устанавливает | Дальше автоматически (экспорт) |
+|---|---|---|---|
+| `draft` | gate ещё не выполнялся (записи v1) или отложен (partial) | builder | нет |
+| `auto_approved` | прошёл правила риска | **только gate** | **да** |
+| `human_review` | есть причина риска, нужен человек | gate или `escalate` | нет |
+| `approved` | одобрено человеком | **только человек** | **да** |
+| `rejected` | отклонено человеком | **только человек** | нет |
+
+`auto_approved` **не заменяет** человеческое `approved`: это отдельное
+состояние с записанной причиной (правила и версия политики). Человек может
+в любой момент одобрить, отклонить или отредактировать `auto_approved`.
+
+### 6A.3. Решение gate
+
+Gate выполняется над текущими `fields`, `validation`, `grounding` и Vision
+(`AIAnalysis`) и выдаёт одно из трёх решений:
+
+| decision | Условие | `state` |
+|---|---|---|
+| `deferred` | `completeness = partial` | `draft` (worker повторит Metadata AI; очередь человека не засоряется при сбоях LM Studio) |
+| `human_review` | есть хотя бы одна **причина** (таблица ниже) | `human_review` |
+| `auto_approved` | причин нет и автоодобрение включено | `auto_approved` |
+
+**Причины → `human_review`:**
+
+| code | Условие |
+|---|---|
+| `VALIDATION_ERRORS` | есть `validation.errors`, кроме `UNCONFIRMED_CLAIM` |
+| `UNCONFIRMED_CLAIM` | есть неподтверждённые конкретные утверждения (§4.7) |
+| `TRADEMARK` | Vision `brands` или `logos` не пусты |
+| `TEXT_BRAND_OR_LEGAL` | элемент `text_visible` классифицирован как `brand_or_legal` (§6A.4) |
+| `LEGAL_CLAIM` | в `title`, `description` или keywords юридически значимое утверждение (§6A.5) |
+| `PEOPLE_RECOGNIZABLE` | уровень риска людей `recognizable` (§6A.4a): видно лицо или человек — главный объект, возможен model release |
+| `PEOPLE_UNCLEAR` | люди есть, но по Vision нельзя установить, что присутствие неидентифицируемое (§6A.4a) |
+| `EDITORIAL_RISK` | Vision `editorial_risk` не пуст |
+| `AI_GENERATED` | Vision `ai_generated = true` |
+| `MANUAL_ESCALATION` | вызван `escalate` (действует до решения человека) |
+| `AUTO_APPROVE_DISABLED` | причин нет, но `STOCKER_AUTO_APPROVE=0` (аварийный выключатель) |
+
+**Не блокируют** (записываются в `review_gate.notes`): `TEXT_TECHNICAL`,
+`TEXT_DESCRIPTIVE`, `PEOPLE_PARTIAL`, а также warnings валидации (`FEW_KEYWORDS`,
+`TITLE_LONG`, ...).
+
+### 6A.4. Классификация `text_visible`
+
+Наличие текста само по себе **не** повод для review. Каждый элемент
+`text_visible` Vision классифицируется детерминированно, правила применяются
+**по порядку**, первое совпадение побеждает:
+
+| # | category | Правило (любое из) | Следствие |
+|---|---|---|---|
+| 1 | `brand_or_legal` | содержит бренд или логотип из Vision; **организационно-правовая форма** отдельным словом: `Inc`, `Ltd`, `LLC`, `GmbH`, `AG`, `Corp`, `PLC`, `S.A.`, `SRL`, `BV`, `ООО`, `ОАО`, `ЗАО`, `ПАО`, `АО`, `НПО`, `ФГУП`, `ГУП`, `МУП`, `ИП`; символы `®`, `™`, `©`; слова `copyright`, `patent`, `trademark`, `all rights reserved`; URL, e-mail, телефон | `TEXT_BRAND_OR_LEGAL` → review |
+| 2 | `technical` | токен с цифрой (`IP20`, `220V`, `0,6kg`, `06.2016`, `X3`, `KM6000-УХЛ4`); код из заглавных через дефис (`TN-S`); слово из словаря предупреждений: `WARNING`, `CAUTION`, `DANGER`, `HIGH VOLTAGE`, `NOTICE`, `EXIT`, `EMERGENCY`, `FIRE`, `STOP`, `NO ENTRY`, `KEEP OUT`, `ВНИМАНИЕ`, `ОСТОРОЖНО`, `ОПАСНО`, `ВЫСОКОЕ НАПРЯЖЕНИЕ`, `НЕ ВКЛЮЧАТЬ`, `ЗАПРЕЩЕНО`, `ВЫХОД`, `СТОП` | note `TEXT_TECHNICAL` |
+| 3 | `descriptive` | всё остальное (`Electrical room`, `ЗАМОК ДВЕРИ ШАХТЫ`) | note `TEXT_DESCRIPTIVE` |
+
+Словари — константы в коде, расширяемые. Их изменение увеличивает `policy_version`.
+
+Проверка на реальных данных (Vision `local-v2`/`local-v1`):
+
+| asset | text_visible | Классификация | Ожидаемое решение |
+|---|---|---|---|
+| 3, 4 | — | — | `auto_approved` |
+| 5 | `АО "ШПЗ"`, `ЗАМОК ДВЕРИ ШАХТЫ`, `0411Е.06.05.090` | brand_or_legal (`АО`), descriptive, technical | `human_review` (`TEXT_BRAND_OR_LEGAL`) |
+| 6 | `KM6000-УХЛ4`, `N° 0626023`, `IP20`, `ВИД ЗАЗЕМЛЕНИЯ TN-S`, `0,6kg`, `06.2016`, `X1…X7` | все technical | `auto_approved` |
+
+Asset 5 показывает, зачем нужно правило 1: название компании `АО "ШПЗ"` Vision
+**не** вынес в `brands`.
+
+**Известное ограничение:** бренд без организационно-правовой формы, не
+распознанный Vision и написанный рядом с цифрами (`SIEMENS 220V`), попадёт в
+`technical`. Правило 1 проверяется раньше правила 2, поэтому бренд из Vision
+или с юрформой такой ошибки не даст.
+
+### 6A.4a. Уровень риска людей
+
+Для industrial stock присутствие человека само по себе **не** повод для review.
+`AIAnalysis` не меняется и сообщает только `people.present` и `count`, поэтому
+уровень вычисляется детерминированно из текста Vision (`title`, `description`,
+`subject`, `commercial_context`, `technical_subjects`, `keywords`):
+
+| people_risk | Правило | Gate |
+|---|---|---|
+| `none` | `present = false` и `count = 0` | — |
+| `recognizable` | есть признак узнаваемости (`face`, `faces`, `facial`, `portrait`, `headshot`, `smiling`, `looking at camera`, `eyes`) **или** в `subject` человек (`person`, `people`, `man`, `woman`, `worker`, `engineer`, `technician`, `operator`, `electrician`, `builder`, `welder`, `mechanic`) без признаков частичного присутствия | `PEOPLE_RECOGNIZABLE` → review |
+| `partial` | есть признак неидентифицируемого присутствия (`hand`, `hands`, `glove`, `gloved`, `arm`, `arms`, `finger(s)`, `legs`, `feet`, `from behind`, `back view`, `rear view`, `silhouette(d)`, `faceless`, `face not visible`, `face obscured`, `face hidden`, `face covered`, `unrecognizable`, `anonymous`, `blurred figure`) и нет признаков узнаваемости | note `PEOPLE_PARTIAL` |
+| `unclear` | люди есть, признаков нет | `PEOPLE_UNCLEAR` → review |
+
+- Отрицания лица (`face not visible`, `face obscured`, …) удаляются из текста
+  до поиска признаков узнаваемости.
+- Технические словосочетания не считаются признаками человека: `hand tool(s)`,
+  `hand rail`, `hand truck`, `hand wheel`, `robotic arm`, `robot arm`,
+  `crane arm`, `mechanical arm`, `swing arm`.
+- Совпадения по границам слов, словари — константы `gate-v1`.
+
+**Ограничение:** качество зависит от того, как Vision описал людей. При
+неопределённости решение всегда `human_review`. Если этого окажется мало,
+следующий шаг — отдельная AI-проверка людей по изображению (новая роль, без
+изменения `AIAnalysis`), результат которой gate учитывает так же.
+
+### 6A.5. Юридически значимые утверждения в metadata
+
+`LEGAL_CLAIM` — в `title`, `description` или keywords есть слово или
+фраза: `certified`, `certification`, `compliant`, `compliance`, `approved`,
+`patented`, `patent`, `trademark`, `licensed`, `official`, `guaranteed`,
+`guarantee`, `warranty`, `ISO <число>`, `UL listed`, `CE marked`,
+`meets … standard`. Общие концепты вроде `industrial safety` **не**
+считаются утверждениями.
+
+### 6A.6. Переходы v2
+
+| Команда | Кто | Допустимо из | Результат |
+|---|---|---|---|
+| `build`, `rebuild`, `edit` | любой (как в v1) | как в v1 | как в v1 → `draft` → validation → **gate автоматически** → `auto_approved` / `human_review` / `draft` (deferred). Правка сама по себе состояние `auto_approved` не даёт — его даёт только gate |
+| `gate` | любой | `draft`, `auto_approved`, `human_review` | повторная оценка (записи v1, новая версия политики). **`approved`/`rejected` gate никогда не меняет** |
+| `escalate --reason` | любой, включая агента | `draft`, `auto_approved`, `human_review` | `human_review` + `MANUAL_ESCALATION`; действует до решения человека, повторный gate её не снимает |
+| `approve` | **человек** | `draft`, `auto_approved`, `human_review` (правила v1: без errors, partial с `--allow-partial`, `--confirm-claims`) | `approved` |
+| `reject --reason` | **человек** | `draft`, `auto_approved`, `human_review`, `approved` | `rejected` |
+
+`auto_approved` не может установить никто, кроме gate. Правка агентом
+проходит gate на общих основаниях. Если после правки причин риска нет, объект
+получает `auto_approved`, а actor правки записан в событиях.
+
+### 6A.7. Блок `review_gate` в `metadata_json` (`metadata_version = "2"`)
+
+```json
+"review_gate": {
+  "policy_version": "gate-v1",
+  "decision": "human_review",
+  "reasons": [{"code": "TEXT_BRAND_OR_LEGAL", "detail": "АО \"ШПЗ\""}],
+  "notes": [{"code": "TEXT_TECHNICAL", "detail": "0411Е.06.05.090"},
+            {"code": "TEXT_DESCRIPTIVE", "detail": "ЗАМОК ДВЕРИ ШАХТЫ"}],
+  "text_items": [
+    {"text": "АО \"ШПЗ\"", "category": "brand_or_legal", "rule": "LEGAL_FORM"},
+    {"text": "ЗАМОК ДВЕРИ ШАХТЫ", "category": "descriptive", "rule": "DEFAULT"},
+    {"text": "0411Е.06.05.090", "category": "technical", "rule": "DIGITS"}
+  ],
+  "people_risk": {"level": "none", "markers": []},
+  "escalation": null,
+  "auto_approve_enabled": true,
+  "evaluated_at": "2026-09-25T18:00:00+00:00"
+}
+```
+
+Записи `metadata_version = "1"` (asset 3–6) остаются валидными как `draft`
+без `review_gate`. Команда `gate` добавляет блок и переводит их в v2. Схема БД
+не меняется.
+
+### 6A.8. События v2 (дополняют §7)
+
+| stage | status | message |
+|---|---|---|
+| `METADATA` | `GATED` | `policy_version`, `decision`, `reasons` (list[code]), `notes` (list[code]), `state_before`, `trigger` (`build` \| `rebuild` \| `edit` \| `gate`) |
+| `METADATA` | `ESCALATED` | `reason`, `state_before` |
+
+`APPROVED` и `REJECTED` не меняются. `state_before` теперь может быть
+`auto_approved` или `human_review`.
+
+### 6A.8a. CLI (дополняет §8)
+
+```powershell
+python -m app.metadata gate     N
+python -m app.metadata escalate N --reason "..."
+```
+
+### 6A.9. Конфигурация
+
+| Переменная | По умолчанию | Смысл |
+|---|---|---|
+| `STOCKER_AUTO_APPROVE` | `1` | `0` — аварийный выключатель: всё без причин риска идёт в `human_review` с `AUTO_APPROVE_DISABLED` |
 
 ---
 

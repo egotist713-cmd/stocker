@@ -35,6 +35,14 @@ DRAFT = "draft"
 APPROVED = "approved"
 REJECTED = "rejected"
 
+# metadata-v2 (§6A): состояния review gate. Их устанавливает app/review_gate.py.
+AUTO_APPROVED = "auto_approved"
+HUMAN_REVIEW = "human_review"
+
+# Решения человека допустимы и после gate.
+APPROVABLE_STATES = (DRAFT, AUTO_APPROVED, HUMAN_REVIEW)
+REJECTABLE_STATES = (DRAFT, AUTO_APPROVED, HUMAN_REVIEW, APPROVED)
+
 FULL = "full"
 PARTIAL = "partial"
 
@@ -462,7 +470,7 @@ def approve(
     confirm_claims: bool = False,
 ) -> tuple[dict, list[str]]:
     """Одобрить draft. Возвращает новый metadata и список подтверждённых этой командой утверждений."""
-    if metadata["state"] != DRAFT:
+    if metadata["state"] not in APPROVABLE_STATES:
         raise MetadataTransitionError(f"Cannot approve from state '{metadata['state']}'")
 
     if metadata["completeness"] == PARTIAL and not allow_partial:
@@ -489,7 +497,7 @@ def approve(
 
 
 def reject(metadata: dict, reason: str) -> dict:
-    if metadata["state"] not in (DRAFT, APPROVED):
+    if metadata["state"] not in REJECTABLE_STATES:
         raise MetadataTransitionError(f"Cannot reject from state '{metadata['state']}'")
 
     reason = normalize_text(reason or "")
