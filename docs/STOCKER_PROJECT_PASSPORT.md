@@ -1741,6 +1741,56 @@ metadata-этапа (см. §42).
 
 ---
 
+# 35H. 2026-09-25 — Решения по metadata и проект контракта
+
+### Решения пользователя
+
+1. Первые площадки — Adobe Stock и Shutterstock, но внутренний metadata-формат
+   **не зависит от площадок**. Адаптеры — на этапе экспорта.
+2. Vision `AIAnalysis` не меняется ради количества keywords. Вводится
+   **отдельный Metadata AI pass**:
+   - Vision отвечает «что изображено»;
+   - Metadata AI — «как это подготовить для продажи»;
+   - Python — нормализация, ограничения, проверка.
+3. Ручная проверка сразу: `draft → edit → approve/reject`, только CLI.
+4. Категории площадок — на этапе экспорта.
+5. Реализация начинается только после согласования контракта.
+
+### Контракт
+
+`docs/METADATA_CONTRACT.md` (`metadata-v1`): структура `metadata_json`,
+поля от Vision / Metadata AI / Python, правила нормализации и валидации,
+переходы review, события, CLI.
+
+### Статус
+
+🟢 DONE — контракт согласован (см. §35I)
+
+---
+
+# 35I. 2026-09-25 — Контракт metadata согласован с корректировками
+
+### Корректировки пользователя (внесены в `docs/METADATA_CONTRACT.md`)
+
+1. Metadata AI v1 работает только на JSON `AIAnalysis`, но интерфейс
+   `suggest(analysis, image_path=None)` оставляет возможность передавать
+   изображение. Фактические входы пишутся в provenance (`inputs`).
+2. Metadata provider отделён от Vision: свой интерфейс `MetadataAnalyzer`,
+   своя конфигурация `METADATA_*`. `qwen3-vl-8b-instruct` по умолчанию —
+   только из-за ограничений VRAM.
+3. Недоступность Metadata AI не блокирует pipeline: partial draft из Vision с
+   `completeness = partial`, предупреждением `PARTIAL_DRAFT`; approve требует
+   `--allow-partial`.
+4. Keywords не обрезаются: `TOO_MANY_KEYWORDS` и `KEYWORD_TOO_LONG` — ошибки
+   валидации.
+5. Структура `metadata_json` (§5) и события (§7) зафиксированы до реализации.
+
+### Статус
+
+🟢 DONE
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -1911,10 +1961,10 @@ OPENCLAW AUTONOMY
 
 Порядок, уточнённый 25 сентября 2026 (после закрытия долгов §35G):
 
-1. **Metadata pipeline.** Детерминированный контракт: какие поля `AIAnalysis`
-   становятся editable stock metadata (`assets.metadata_json` уже существует),
-   правила валидации и лимиты стоков, ручное подтверждение. Без новых
-   `assets.status`.
+1. **Metadata pipeline.** Контракт — `docs/METADATA_CONTRACT.md` (§35H):
+   Vision → Metadata AI → Python → `assets.metadata_json`, review
+   `draft → edit → approve/reject` через CLI. Без новых `assets.status`.
+   Реализация — после согласования контракта.
 2. **Сервисный слой + CLI с JSON-выводом.** Операции Core по `asset_id`
    (`process_asset` уже есть, плюс `get`/`list`/`history`/metadata)
    возвращают структурированный результат. CLI печатает JSON для n8n и
