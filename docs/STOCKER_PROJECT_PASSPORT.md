@@ -778,6 +778,10 @@ python -m app.worker --asset-id N --force    # повторный AI при на
 | `SOURCE` | `NORMALIZED` | JSON: `old`, `new` — нормализация `source_path` |
 | `AI` | `PASSED` | JSON: `provider`, `model`, `prompt_version`, `analyzed_at`, `duration_s` |
 | `AI` | `FAILED` | JSON: provenance + `failed_at`, `error_type`, `error`, `raw_output` (до 4000 символов, если ответ был) |
+| `METADATA_AI` / `METADATA` | см. контракт | `docs/METADATA_CONTRACT.md` §7 |
+
+После `AI/PASSED` (и для `--asset-id` при готовом AI) worker вызывает
+`metadata build`: только draft и события, approve — всегда человек (§35K).
 
 Исторические события (до 25.09.2026) могут иметь старый формат: например, у
 `AI/PASSED` для asset 4 сообщение — `AI analysis completed`, а у раннего `QC`
@@ -1836,6 +1840,79 @@ metadata-этапа (см. §42).
 
 ---
 
+# 35K. 2026-09-25 — Metadata pipeline реализован (draft/edit/approve/reject)
+
+### Решения пользователя перед реализацией
+
+- До `app/metadata.py` добавлена нормализация текста: Unicode NFKC,
+  типографские кавычки и тире → ASCII, очистка пробелов (`app/textnorm.py`).
+- Расширение концептами **не запрещается**. Различаются общие концепты
+  (разрешены) и конкретные утверждения, бренды и локации (требуют
+  подтверждения). Контракт — редакция 2, §4.7.
+- Порядок: чистый builder → тесты → сохранение и события → CLI → worker.
+
+### Реализовано
+
+| Файл | Что |
+|---|---|
+| `app/textnorm.py` | `normalize_text` |
+| `app/metadata_builder.py` | чистые функции без БД: `build_draft` (full/partial), `rebuild`, `edit`, `approve`, `reject`; нормализация, флаги, grounding (`vision` / `concept` / `specific_claims`), валидация |
+| `app/metadata.py` | операции по `asset_id` → `{asset_id, outcome, metadata}`; атомарная запись `metadata_json` + событий; CLI `python -m app.metadata build\|rebuild\|show\|edit\|approve\|reject N` |
+| `app/database/db.py` | + `transaction()`, `insert_event()`, `update_metadata()`, `get_last_event()` |
+| `app/worker.py` | после `AI/PASSED` (и для `--asset-id` с готовым AI) — `metadata build`. **Только draft и события, без approve.** Существующие metadata worker не перезаписывает |
+| `tests/conftest.py` | autouse-фикстура: ни один unit-тест не вызывает настоящий Metadata AI |
+
+`AIAnalysis`, Vision-промпт, `assets.status` и схема БД не менялись.
+
+### Проверка
+
+- `python -m pytest`: 138 passed, 3 skipped (LM Studio).
+- Production, asset 3: Metadata AI на недоступном endpoint →
+  `METADATA_AI/FAILED` + partial draft (9 keywords, `PARTIAL_DRAFT`,
+  `FEW_KEYWORDS`); затем обычный `build` → `METADATA_AI/PASSED` + full draft
+  (31 keyword). События 18–21.
+- Production, asset 4 и 5: full drafts (32 и 30 keywords). У asset 4 старое
+  событие Vision без provenance → `sources.vision.prompt_version = null`, как
+  предусмотрено контрактом.
+- Production, asset 2: `VISION_MISSING`, exit 1.
+- Production, worker на новой фотографии `IMG_20260911_130507.jpg` → asset 6:
+  `INGEST/DONE`, `QC/PASSED`, `AI/PASSED`, `METADATA_AI/PASSED`,
+  `METADATA/DRAFTED`, `state = draft`. `worker --asset-id 5` →
+  `METADATA_EXISTS`, без новых событий.
+- Полный цикл review — на **копии** production-БД (production не
+  изменялась): правка с «Moscow» → `UNCONFIRMED_CLAIM` → обычный approve
+  отклонён → `approve --confirm-claims` → правка после approve возвращает в
+  `draft`, подтверждение сохраняется → approve → reject с причиной. События
+  `EDITED` / `APPROVED` (`confirmed_claims`) / `REJECTED` соответствуют
+  контракту.
+- В production нет ни одного `METADATA/APPROVED`: одобрение — решение
+  человека, агент его не выполнял.
+
+### Найдено и исправлено на реальных данных
+
+Asset 6: keyword `ip20 rating` ошибочно считался утверждением `NUMBER`, хотя
+`IP20` есть в `text_visible` Vision. Код требовал опоры для всех слов
+keyword'а, а контракт — только для слов с цифрами. Исправлено по контракту,
+добавлен тест, `rebuild 6` пересобрал draft без AI-вызова (claims → []).
+
+### Известные ограничения
+
+- После `worker --asset-id N --force` Vision пересчитывается, но существующие
+  metadata остаются построенными по прежнему Vision (защита правок человека).
+  Их устаревание видно по несовпадению `sources.vision.event_id` с последним
+  `AI/PASSED`. Автоматическая пометка «stale» — кандидат на будущее.
+- `PROPER_NOUN` не проверяет заголовки в Title Case (§4.7 контракта).
+- Metadata AI может сделать вывод, который не является ни концептом, ни
+  утверждением с цифрой или именем собственным (asset 5: «labels indicate
+  industrial security use»). Такое детерминированно не ловится — для этого
+  нужен review.
+
+### Статус
+
+🟢 DONE — metadata pipeline; drafts asset 3–6 ждут review человеком
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -1967,7 +2044,7 @@ STRICT JSON SCHEMA / TIFF / SOURCE_PATH (Windows + WSL)
     🟢
 
 METADATA
-    🟡 IN PROGRESS — проектирование контракта
+    🟢 DONE — draft/edit/approve/reject, worker создаёт draft (§35K)
 
 SERVICE LAYER + CLI JSON
     ⚪ PLANNED — после metadata
@@ -2004,13 +2081,12 @@ OPENCLAW AUTONOMY
 
 # 42. БЛИЖАЙШИЙ ОБЯЗАТЕЛЬНЫЙ ШАГ
 
-Порядок, уточнённый 25 сентября 2026 (после закрытия долгов §35G):
+Порядок, уточнённый 25 сентября 2026:
 
-1. **Metadata pipeline.** Контракт — `docs/METADATA_CONTRACT.md` (§35H):
-   Vision → Metadata AI → Python → `assets.metadata_json`, review
-   `draft → edit → approve/reject` через CLI. Без новых `assets.status`.
-   Реализация — после согласования контракта.
-2. **Сервисный слой + CLI с JSON-выводом.** Операции Core по `asset_id`
+1. ~~Metadata pipeline~~ — 🟢 DONE (§35K). Контракт — `docs/METADATA_CONTRACT.md`.
+   Drafts asset 3–6 ждут review человеком через `python -m app.metadata`.
+2. **Сервисный слой + CLI с JSON-выводом.** Операции `app/metadata.py` уже
+   возвращают `{asset_id, outcome, metadata}` — образец для остальных. Операции Core по `asset_id`
    (`process_asset` уже есть, плюс `get`/`list`/`history`/metadata)
    возвращают структурированный результат. CLI печатает JSON для n8n и
    OpenClaw. Без FastAPI.
@@ -2092,8 +2168,13 @@ AI/PASSED
 > С 25.09.2026 (§35G): strict JSON schema (`local-v2`), TIFF → JPEG для AI,
 > `source_path` в POSIX-формате (Windows + WSL).
 >
-> **Следующая задача: metadata pipeline (§42), затем сервисный слой + CLI с
-> JSON-выводом, не переписывая завершённый pipeline.**
+> С 25.09.2026 (§35K): metadata pipeline `Vision → Metadata AI → Python →
+> assets.metadata_json`, review `draft → edit → approve/reject` через
+> `python -m app.metadata`. Worker создаёт только draft. Контракт —
+> `docs/METADATA_CONTRACT.md`.
+>
+> **Следующая задача: сервисный слой + CLI с JSON-выводом (§42), не
+> переписывая завершённый pipeline.**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 

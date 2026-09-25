@@ -210,9 +210,12 @@ def analyze_grounding(fields: dict, vision: AIAnalysis, previous: dict | None = 
 
     for keyword in fields["keywords"]:
         tokens = _tokens(keyword)
+        # Утверждением считается только цифра без опоры на Vision:
+        # "ip20 rating" при "IP20" в Vision — концепт, а не утверждение.
+        ungrounded_numbers = [t for t in tokens if any(c.isdigit() for c in t) and t not in corpus]
         if _grounded(keyword, corpus):
             vision_keywords.append(keyword)
-        elif any(char.isdigit() for char in keyword):
+        elif ungrounded_numbers:
             claims.append({"term": keyword, "field": "keywords", "reason": "NUMBER"})
         elif proper_noun_tokens.intersection(tokens):
             claims.append({"term": keyword, "field": "keywords", "reason": "PROPER_NOUN"})

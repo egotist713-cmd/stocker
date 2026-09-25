@@ -4,7 +4,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app import metadata as metadata_service
 from app.ai.analyzer import AIAnalyzer, AIResponseError
+from app.ai.metadata_analyzer import MetadataAnalyzer
 from app.ai.local_analyzer import LocalAnalyzer
 from app.database.db import add_event, get_asset, save_ai_result
 from app.ingest import ingest_file, sha256_file, source_file
@@ -93,12 +95,24 @@ def run_ai(asset_id: int, path: Path, analyzer: AIAnalyzer) -> str:
     return AI_PASSED
 
 
+def run_metadata(asset_id: int, analyzer: MetadataAnalyzer | None = None) -> str:
+    """
+    Создать metadata draft после Vision. Только draft и события: approve
+    всегда выполняет человек. Существующие metadata не перезаписываются.
+    """
+    result = metadata_service.build(asset_id, analyzer=analyzer)
+    metadata = result["metadata"]
+    print(f"METADATA: {result['outcome']} ({metadata['state']}, {metadata['completeness']})")
+    return result["outcome"]
+
+
 def process_asset(
     asset_id: int,
     force: bool = False,
     analyzer: AIAnalyzer | None = None,
+    metadata_analyzer: MetadataAnalyzer | None = None,
 ) -> str:
-    """Проверить источник, выполнить QC и AI для уже зарегистрированного asset."""
+    """Проверить источник, выполнить QC, AI и metadata draft для уже зарегистрированного asset."""
     asset = get_asset(asset_id)
 
     if asset is None:
@@ -109,6 +123,7 @@ def process_asset(
 
     if asset["ai_result"] and not force:
         print("AI: already done (use --force to re-run)")
+        run_metadata(asset_id, metadata_analyzer)
         return AI_ALREADY_DONE
 
     problem = verify_source(asset)
@@ -127,7 +142,12 @@ def process_asset(
         print("AI: skipped because QC failed")
         return QC_FAILED
 
-    return run_ai(asset_id, source_file(asset), analyzer or LocalAnalyzer())
+    outcome = run_ai(asset_id, source_file(asset), analyzer or LocalAnalyzer())
+
+    if outcome == AI_PASSED:
+        run_metadata(asset_id, metadata_analyzer)
+
+    return outcome
 
 
 def _ingest_and_process(path: Path, analyzer: AIAnalyzer | None) -> tuple[int | None, str | None]:

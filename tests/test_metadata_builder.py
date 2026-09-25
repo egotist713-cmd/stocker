@@ -376,3 +376,12 @@ def test_functions_do_not_mutate_input():
     mb.rebuild(m, vision())
 
     assert m == snapshot
+
+
+def test_keyword_with_grounded_number_is_a_concept():
+    # Реальный случай asset 6: "IP20" есть в text_visible Vision, "rating" — концепт.
+    v = vision(text_visible=["IP20"])
+    m = draft(v=v, s=suggestion(keywords=["ip20 rating", "ip21 rating", *keywords(30)]))
+
+    assert "ip20 rating" in m["grounding"]["concept_keywords"]
+    assert [c["term"] for c in m["grounding"]["specific_claims"]] == ["ip21 rating"]

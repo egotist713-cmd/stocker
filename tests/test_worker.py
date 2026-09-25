@@ -1,11 +1,12 @@
 import json
+import sqlite3
 
 from app import worker
 from app.ai.analyzer import AIResponseError
 from app.database.db import get_asset
 from app.ingest import ingest_file
 
-from tests.conftest import FakeAnalyzer, events, make_image
+from tests.conftest import FakeAnalyzer, OfflineMetadataAnalyzer, events, make_image
 
 
 def test_new_file_runs_full_pipeline(stocker_root):
@@ -19,13 +20,15 @@ def test_new_file_runs_full_pipeline(stocker_root):
         ("INGEST", "DONE"),
         ("QC", "PASSED"),
         ("AI", "PASSED"),
+        ("METADATA_AI", "PASSED"),
+        ("METADATA", "DRAFTED"),
     ]
 
 
 def test_ai_passed_event_records_provenance(stocker_root):
     asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
 
-    message = json.loads(events(stocker_root, asset_id)[-1][2])
+    message = json.loads(next(m for s, st, m in events(stocker_root, asset_id) if (s, st) == ("AI", "PASSED")))
     assert message["provider"] == "fake"
     assert message["model"] == "fake-model"
     assert message["prompt_version"] == "test-v1"
@@ -67,10 +70,12 @@ def test_failed_asset_can_be_retried_by_id(stocker_root):
 
     assert outcome == worker.AI_PASSED
     assert get_asset(asset_id)["ai_result"] is not None
-    assert [(s, st) for s, st, _ in events(stocker_root, asset_id)][-3:] == [
+    assert [(s, st) for s, st, _ in events(stocker_root, asset_id)][-5:] == [
         ("AI", "FAILED"),
         ("QC", "PASSED"),
         ("AI", "PASSED"),
+        ("METADATA_AI", "PASSED"),
+        ("METADATA", "DRAFTED"),
     ]
 
 
@@ -147,3 +152,66 @@ def test_cli_exit_code_reflects_outcome(stocker_root, monkeypatch):
     monkeypatch.setattr(worker, "LocalAnalyzer", FakeAnalyzer)
     assert worker.main(["--asset-id", str(asset_id)]) == 0
     assert worker.main(["--asset-id", "999"]) == 1
+
+
+# --- metadata draft в worker ---------------------------------------------------------
+
+
+def _metadata(asset_id):
+    raw = get_asset(asset_id)["metadata_json"]
+    return json.loads(raw) if raw else None
+
+
+def test_worker_creates_draft_never_approves(stocker_root):
+    asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
+
+    metadata = _metadata(asset_id)
+    assert metadata["state"] == "draft"
+    assert metadata["completeness"] == "full"
+    assert not [s for s, st, _ in events(stocker_root, asset_id) if (s, st) == ("METADATA", "APPROVED")]
+
+
+def test_no_metadata_when_ai_or_qc_failed(stocker_root, monkeypatch):
+    failed_ai = worker.process_file(make_image(stocker_root, name="a.jpg", seed=1), analyzer=FakeAnalyzer(error=RuntimeError("x")))
+
+    from app import qc
+    monkeypatch.setattr(qc, "MIN_WIDTH", 10_000)
+    failed_qc = worker.process_file(make_image(stocker_root, name="b.jpg", seed=2), analyzer=FakeAnalyzer())
+
+    assert _metadata(failed_ai) is None
+    assert _metadata(failed_qc) is None
+
+
+def test_metadata_ai_failure_gives_partial_draft_and_success_outcome(stocker_root):
+    asset_id = ingest_file(make_image(stocker_root))
+
+    outcome = worker.process_asset(
+        asset_id, analyzer=FakeAnalyzer(), metadata_analyzer=OfflineMetadataAnalyzer(error=ConnectionError("down"))
+    )
+
+    assert outcome == worker.AI_PASSED
+    assert _metadata(asset_id)["completeness"] == "partial"
+
+
+def test_asset_id_builds_missing_metadata_without_rerunning_ai(stocker_root):
+    asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
+    with sqlite3.connect(stocker_root / "data" / "db" / "stocker.db") as connection:
+        connection.execute("UPDATE assets SET metadata_json = NULL WHERE id = ?", (asset_id,))
+    vision = FakeAnalyzer()
+
+    outcome = worker.process_asset(asset_id, analyzer=vision)
+
+    assert outcome == worker.AI_ALREADY_DONE
+    assert vision.calls == 0
+    assert _metadata(asset_id)["state"] == "draft"
+
+
+def test_existing_metadata_is_not_rebuilt_by_worker(stocker_root):
+    asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
+    events_before = len(events(stocker_root, asset_id))
+    metadata_ai = OfflineMetadataAnalyzer()
+
+    worker.process_asset(asset_id, metadata_analyzer=metadata_ai)
+
+    assert metadata_ai.calls == 0
+    assert len(events(stocker_root, asset_id)) == events_before

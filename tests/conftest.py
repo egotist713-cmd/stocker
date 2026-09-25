@@ -6,8 +6,10 @@ import pytest
 from PIL import Image
 
 from app import ingest, qc
+from app import metadata as metadata_service
 from app.ai.analyzer import AIAnalyzer
-from app.ai.schema import AIAnalysis
+from app.ai.metadata_analyzer import MetadataAnalyzer
+from app.ai.schema import AIAnalysis, MetadataSuggestion
 from app.database import db
 
 
@@ -61,3 +63,31 @@ class FakeAnalyzer(AIAnalyzer):
         if self.error is not None:
             raise self.error
         return AIAnalysis(title="Test title", keywords=["test"], confidence=0.5)
+
+
+class OfflineMetadataAnalyzer(MetadataAnalyzer):
+    """Metadata AI для тестов: без сети, фиксированный ответ."""
+
+    provider = "offline"
+    model = "offline-metadata"
+    prompt_version = "metadata-test"
+
+    def __init__(self, error: Exception | None = None):
+        self.error = error
+        self.calls = 0
+
+    def suggest(self, analysis, image_path=None) -> MetadataSuggestion:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return MetadataSuggestion(
+            title="Offline test title",
+            description="Offline test description.",
+            keywords=["test", *[f"concept{chr(97 + i)}" for i in range(26)]],
+        )
+
+
+@pytest.fixture(autouse=True)
+def no_real_metadata_ai(monkeypatch):
+    """Ни один unit-тест не должен обращаться к настоящему LM Studio через metadata-слой."""
+    monkeypatch.setattr(metadata_service, "LMStudioMetadataAnalyzer", OfflineMetadataAnalyzer)
