@@ -1791,6 +1791,51 @@ metadata-этапа (см. §42).
 
 ---
 
+# 35J. 2026-09-25 — MetadataSuggestion и MetadataAnalyzer
+
+### Реализовано
+
+- `app/ai/schema.py`: `MetadataSuggestion` (без лимитов; `AIAnalysis` не менялась).
+- `app/ai/structured.py`: общий построитель strict `json_schema` с
+  ограничениями только для запроса. `LocalAnalyzer` переведён на него, схема
+  Vision проверена на побайтовое совпадение.
+- `app/ai/metadata_analyzer.py`: интерфейс `MetadataAnalyzer` (не наследует
+  `AIAnalyzer`) и `LMStudioMetadataAnalyzer`. Конфигурация `METADATA_*`
+  независима от `LMSTUDIO_*`. Text-only вход (JSON `AIAnalysis`),
+  `inputs()` для provenance, `prompt_version = metadata-v1`, strict schema с
+  `keywords` 25–49, `AIResponseError` с `raw_output`, без скрытых повторов.
+- Интеграционные тесты с реальным LM Studio — маркер `lmstudio`, по умолчанию
+  пропускаются:
+  `$env:STOCKER_LMSTUDIO_TESTS = "1"; python -m pytest -m lmstudio`.
+
+Сохранения в БД ещё нет.
+
+### Проверка
+
+- `python -m pytest`: 54 passed, 3 skipped.
+- `-m lmstudio`: 3 passed. Реальный ответ валиден, keywords 25–49.
+  Реальный обрезанный ответ (`max_tokens=12`) → `AIResponseError` с
+  непустым `raw_output`. Недоступный endpoint → ошибка соединения, не
+  `AIResponseError`.
+- Vision-результаты asset 3, 4, 5 (только чтение): keywords 9/8/8 →
+  31/31/30, все Vision-keywords сохранены, title 41/71/59 символов,
+  ~2.5 s на asset.
+
+### Наблюдения для Python-слоя и review
+
+- Metadata AI добавляет правдоподобные, но не подтверждённые Vision концепты
+  (`construction site`, `underground`, `factory interior`, `heavy industry`).
+  Контракт это допускает как «концепты для покупателя», но именно поэтому
+  review человеком обязателен.
+- В тексте встречаются типографские символы (`’`). Возможное будущее правило
+  нормализации, в контракт пока не входит.
+
+### Статус
+
+🟢 DONE
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
