@@ -1,16 +1,24 @@
 import base64
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 from openai import OpenAI
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageOps
+from pydantic import ValidationError
 
 from app.ai.schema import AIAnalysis
-from app.ai.analyzer import AIAnalyzer
+from app.ai.analyzer import AIAnalyzer, AIResponseError
 
 load_dotenv()
+
+
+DEFAULT_BASE_URL = "http://192.168.1.104:1234/v1"
+DEFAULT_MODEL = "qwen3-vl-8b-instruct"
+DEFAULT_API_KEY = "lm-studio"
+DEFAULT_TIMEOUT = 180.0
 
 
 class LocalAnalyzer(AIAnalyzer):
@@ -18,9 +26,30 @@ class LocalAnalyzer(AIAnalyzer):
     Локальный провайдер для анализа изображений через LM Studio.
     """
 
-    def __init__(self, api_key: Optional[str] = None, base_url: str = "http://192.168.1.104:1234/v1", model: str = "qwen3-vl-8b-instruct"): 
-        self.client = OpenAI(api_key=api_key or "lm-studio", base_url=base_url)
-        self.model = model
+    provider = "lmstudio"
+
+    # Увеличивать при любом изменении текста промпта: версия пишется в историю событий.
+    prompt_version = "local-v1"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ):
+        self.base_url = base_url or os.getenv("LMSTUDIO_BASE_URL") or DEFAULT_BASE_URL
+        self.model = model or os.getenv("LMSTUDIO_MODEL") or DEFAULT_MODEL
+        self.timeout = timeout or float(os.getenv("LMSTUDIO_TIMEOUT") or DEFAULT_TIMEOUT)
+
+        # Скрытые повторы SDK отключены: сбой фиксируется как AI/FAILED,
+        # повтор выполняется явно через worker --asset-id.
+        self.client = OpenAI(
+            api_key=api_key or os.getenv("LMSTUDIO_API_KEY") or DEFAULT_API_KEY,
+            base_url=self.base_url,
+            timeout=self.timeout,
+            max_retries=0,
+        )
 
     def analyze(self, image_path: Path) -> AIAnalysis:
         """Анализирует изображение через LM Studio и возвращает структуру AIAnalysis."""
@@ -99,13 +128,21 @@ Important:
 
         result_text = response.choices[0].message.content or ""
 
-        return AIAnalysis.model_validate_json(result_text)
+        try:
+            return AIAnalysis.model_validate_json(result_text)
+        except ValidationError as exc:
+            raise AIResponseError(
+                f"Model output is not a valid AIAnalysis: {exc.error_count()} error(s)",
+                raw_output=result_text,
+            ) from exc
 
     @staticmethod
     def _prepare_image(image_path: Path, mime_type: str) -> tuple[bytes, str]:
         """Resize large images before sending them to the local vision model."""
         max_edge = 2048
-        with Image.open(image_path) as image:
+        with Image.open(image_path) as source:
+            # Модель должна видеть кадр так же, как его видит человек.
+            image = ImageOps.exif_transpose(source)
             image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
 
             output = BytesIO()

@@ -3,6 +3,18 @@
 from app.ai.schema import AIAnalysis
 
 
+class AIResponseError(ValueError):
+    """
+    Модель ответила, но ответ не прошёл валидацию AIAnalysis.
+
+    Сырой ответ сохраняется, чтобы его можно было записать в историю событий.
+    """
+
+    def __init__(self, message: str, raw_output: str):
+        super().__init__(message)
+        self.raw_output = raw_output
+
+
 class AIAnalyzer:
     """
     Базовый интерфейс AI-анализа.

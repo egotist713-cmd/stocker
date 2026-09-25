@@ -1,11 +1,10 @@
-\
 # STOCKER — ПАСПОРТ И БОРТОВОЙ ЖУРНАЛ ПРОЕКТА
 
 > **Назначение:** единый переносимый документ с архитектурой, фактическим состоянием, принятыми решениями, важными ограничениями и историей значимых этапов разработки Stocker.
 >
 > **Главный источник истины для кода:** актуальная рабочая директория `F:\stock\stocker`. Этот документ не заменяет фактический код. Если документ и код расходятся, приоритет имеет фактическое состояние проекта, а расхождение нужно зафиксировать в журнале.
 >
-> **Последнее обновление:** 23 сентября 2026.
+> **Последнее обновление:** 25 сентября 2026.
 >
 > **Язык:** русский. Имена файлов, классов, функций, полей БД, команд, model ID и API endpoints сохраняются в оригинальном виде.
 
@@ -263,6 +262,65 @@ SQLite
 
 ---
 
+# 3A. Принципы надёжности и расширяемости
+
+Приняты 25 сентября 2026. Действуют для всех будущих pipeline, не только для фото.
+
+### 1. Events — основа истории
+
+`processing_events` — журнал всего, что произошло с asset. Каждая операция
+(успех или сбой) оставляет событие `stage/status` с JSON-сообщением. События
+не удаляются и не переписываются. Даже проблемный asset сохраняется вместе с
+историей, а проблема фиксируется новым событием.
+
+`assets.status` пока не расширяется: явная модель статусов — отдельный этап
+после стабилизации pipeline (см. §41).
+
+### 2. AI provenance
+
+Каждый AI-результат должен быть воспроизводимо атрибутирован:
+
+- `provider` — кто выполнил анализ (`lmstudio`, `openai`, ...);
+- `model` — model ID;
+- `prompt_version` — версия промпта (увеличивается при каждом изменении текста);
+- `analyzed_at` / `failed_at` — время в UTC;
+- `duration_s` — длительность.
+
+Сейчас provenance хранится в сообщении события `AI/PASSED` или `AI/FAILED`.
+Это позволяет сравнивать модели, находить результаты старых промптов и
+повторно анализировать выборочно.
+
+### 3. Восстановление после ошибок
+
+- Сбой внешнего сервиса (LM Studio, cloud AI) не роняет pipeline: он
+  фиксируется событием `*/FAILED` с типом ошибки и, если есть, сырым ответом.
+- Любая операция повторяема по `asset_id` и идемпотентна: уже завершённый шаг
+  пропускается, если нет явного `--force`.
+- Скрытых автоматических повторов нет. Повтор — явное действие (человек, n8n,
+  OpenClaw), и каждый повтор виден в истории.
+- Перед обработкой проверяется, что исходный файл не изменился (SHA256).
+  Изменённый источник не обрабатывается.
+
+### 4. Сервисный слой — мост к OpenClaw и n8n
+
+OpenClaw и n8n не вызывают внутренние модули напрямую и не пишут в SQLite.
+Они работают через операции Stocker Core, адресуемые по `asset_id` и
+возвращающие структурированный результат (исход + данные).
+
+Порядок появления интерфейсов:
+
+```text
+функции Core (process_asset, ...)
+    ↓
+CLI с JSON-выводом          ← n8n Execute Command, отладка
+    ↓
+HTTP API (FastAPI)          ← n8n HTTP Request, OpenClaw tools
+```
+
+FastAPI — только после стабилизации внутреннего сервисного слоя.
+
+---
+
 # ЧАСТЬ II. ФАКТИЧЕСКОЕ СОСТОЯНИЕ ПРОЕКТА
 
 # 4. Рабочая директория
@@ -328,18 +386,25 @@ scripts/
       test_stock_analysis.py
       test_multi_image.py
       test_tools.py
-    results/
+    results/          (в .gitignore — локальные тестовые данные)
 
 tests/
+  conftest.py          (изолированная временная БД, FakeAnalyzer)
+  test_worker.py
+  test_local_analyzer.py
 
 .venv/
-.venv-linux/
+.venv-linux/           (в .gitignore)
 
 .env
 .env.example
 README.md
 requirements.txt
+requirements-dev.txt   (pytest)
+pytest.ini
 ```
+
+Тесты: `python -m pytest`. Они не обращаются ни к production-БД, ни к LM Studio.
 
 Если фактическая структура отличается, сначала доверять фактическому проекту и при необходимости обновить этот документ.
 
@@ -393,6 +458,18 @@ lm-studio
 ```text
 chat.completions.create()
 ```
+
+С 25 сентября 2026 настройки читаются из `.env`. Если переменная не задана,
+используется значение по умолчанию из кода (текущие production-значения):
+
+| Переменная | По умолчанию |
+|---|---|
+| `LMSTUDIO_BASE_URL` | `http://192.168.1.104:1234/v1` |
+| `LMSTUDIO_MODEL` | `qwen3-vl-8b-instruct` |
+| `LMSTUDIO_API_KEY` | `lm-studio` |
+| `LMSTUDIO_TIMEOUT` | `180` (секунд) |
+
+Явные аргументы конструктора имеют приоритет над `.env`.
 
 ---
 
@@ -455,6 +532,22 @@ max_edge = 2048
 ```
 
 Это не изменяет оригинальный файл.
+
+Изменения от 25 сентября 2026 (промпт и модель не менялись):
+
+- перед уменьшением применяется `ImageOps.exif_transpose`: модель видит кадр
+  в той же ориентации, что и человек (как уже делал `OpenAIAnalyzer`);
+- таймаут запроса из `LMSTUDIO_TIMEOUT`, скрытые повторы SDK отключены
+  (`max_retries=0`): повтор выполняется явно через worker;
+- невалидный ответ модели поднимает `AIResponseError` (из `app/ai/analyzer.py`)
+  с сохранённым `raw_output`;
+- атрибуты provenance: `provider = "lmstudio"`, `model`,
+  `prompt_version = "local-v1"`. При любом изменении текста промпта
+  `prompt_version` нужно увеличить.
+
+Известное ограничение: ingest принимает `.tif/.tiff`, а `LocalAnalyzer` — нет.
+Такой asset получит `AI/FAILED` (`ValueError: Unsupported image format`), но
+pipeline не упадёт.
 
 ---
 
@@ -576,6 +669,11 @@ app/qc.py
 
 AI запускается только после успешного QC.
 
+**Расхождение с кодом (зафиксировано 25.09.2026):** отклоняющие правила —
+только размер файла, разрешение и читаемость изображения. `sharpness`
+записывается как метрика без порога, `dark_ratio`/`bright_ratio > 0.20` дают
+только warnings. Пороги для этих метрик — отдельное решение, пока не принято.
+
 ---
 
 # 14. Worker
@@ -586,32 +684,58 @@ AI запускается только после успешного QC.
 app/worker.py
 ```
 
-Текущая концепция:
+Текущая структура (с 25 сентября 2026):
 
 ```text
-process_file(path)
+process_file(path)                       новый файл
     ↓
-ingest_file()
+ingest_file()  → INGEST/DONE
     ↓
-get_asset()
+process_asset(asset_id, force=False)     новый или уже зарегистрированный asset
     ↓
-check_asset()
+ai_result уже есть и нет force?  → AI_ALREADY_DONE (без событий)
     ↓
-save_qc_result()
+verify_source(): файл есть и SHA256 совпадает?
+    нет → SOURCE/INVALID {reason: SOURCE_MISSING | SOURCE_CHANGED}
     ↓
-если QC PASSED:
-    LocalAnalyzer
-    ↓
-    save_ai_result()
-    ↓
-    AI/PASSED event
+check_asset() + save_qc_result()  → QC/PASSED | QC/FAILED
+    ↓ (только QC PASSED)
+run_ai(): analyzer.analyze()
+    успех → save_ai_result() + AI/PASSED {provenance}
+    сбой  → AI/FAILED {provenance, error_type, error, raw_output?}
 ```
 
-При QC failure:
+CLI:
 
-```text
-AI не запускается
+```powershell
+python -m app.worker IMAGE_PATH              # новый файл
+python -m app.worker --asset-id N            # повтор / догон существующего asset
+python -m app.worker --asset-id N --force    # повторный AI при наличии ai_result
 ```
+
+Код возврата: `1` для `AI_FAILED`, `SOURCE_INVALID`, `ASSET_NOT_FOUND` и
+случая «файл не добавлен» (дубликат, неподдерживаемый или битый файл), иначе
+`0`. `QC_FAILED` — корректный бизнес-исход, не ошибка. Для дубликата нужно
+использовать `--asset-id` с ID, который печатает ingest.
+
+`process_asset` возвращает строку-исход (`AI_PASSED`, `AI_FAILED`,
+`AI_ALREADY_DONE`, `QC_FAILED`, `SOURCE_INVALID`, `ASSET_NOT_FOUND`). Это
+будущий контракт сервисного слоя. `assets.status` worker по-прежнему не
+меняет: его пишет только QC.
+
+### Контракт событий `processing_events`
+
+| stage | status | message |
+|---|---|---|
+| `INGEST` | `DONE` | текст `Registered <FORMAT> <W>x<H>` |
+| `QC` | `PASSED` / `FAILED` | JSON результата QC |
+| `SOURCE` | `INVALID` | JSON: `reason`, `source_path`, `expected_hash`, `actual_hash` |
+| `AI` | `PASSED` | JSON: `provider`, `model`, `prompt_version`, `analyzed_at`, `duration_s` |
+| `AI` | `FAILED` | JSON: provenance + `failed_at`, `error_type`, `error`, `raw_output` (до 4000 символов, если ответ был) |
+
+Исторические события (до 25.09.2026) могут иметь старый формат: например, у
+`AI/PASSED` для asset 4 сообщение — `AI analysis completed`, а у раннего `QC`
+для asset 2 — Python repr вместо JSON.
 
 ---
 
@@ -1385,6 +1509,144 @@ ingest → QC → qwen3-vl-8b-instruct → AIAnalysis → assets.ai_result → A
 
 ---
 
+# 35C. 2026-09-25 — Аудит проекта и расхождения с паспортом
+
+### Цель
+
+Сверить паспорт с фактическим кодом и SQLite перед продолжением работы.
+
+### Выявлено
+
+- Завершённый AI-milestone не был закоммичен в git. Исправлено: коммит
+  `412f33a`. Benchmark results, `.venv-linux/` и временный `scripts/пустой.py`
+  добавлены в `.gitignore` и остаются только на диске.
+- QC: `sharpness` и extreme pixels не отклоняют фото (см. §13).
+- `source_path` хранится со смешанными разделителями (`data\incoming\...` из
+  Windows и `data/incoming/...` из WSL). Под WSL пути с `\` не разрешатся. Пока
+  не исправлено: важно при подключении OpenClaw из WSL.
+- README устарел (Cloud LLM как основной путь metadata, n8n «при
+  необходимости»).
+- `scripts/test_db.py` пишет в production-БД; повторный запуск падает на
+  UNIQUE. Заменён на pytest с временной БД, сам скрипт не удалялся.
+- Качество AI-вывода: 8–9 keywords (стокам нужно 25–49), пустые `categories` и
+  `commercial_context`, `confidence = 1.0`. Схему не менять, но учитывать в
+  metadata pipeline.
+- `response_format` с JSON schema не используется, а в benchmark
+  `stock_analysis` все модели дали schema FAIL. Валидность ответа вероятностная;
+  теперь сбой хотя бы фиксируется `AI/FAILED` с `raw_output`.
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 35D. 2026-09-25 — Решения по дальнейшему порядку
+
+### Решение
+
+1. Явная модель статусов нужна, но `assets.status` пока **не меняется** и
+   миграции нет. Надёжность строится на `processing_events`. Статусы —
+   отдельный этап после стабилизации.
+2. Внешний доступ: сначала CLI с JSON, FastAPI — после стабильного
+   внутреннего сервисного слоя.
+3. Проблемные asset'ы не удаляются: история сохраняется, проблема фиксируется
+   событием.
+4. Приняты принципы §3A: events как история, AI provenance, восстановление
+   после ошибок, сервисный слой как мост к OpenClaw и n8n.
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 35E. 2026-09-25 — Надёжность pipeline: AI/FAILED, повтор по asset_id, hash
+
+### Цель
+
+Сделать ingest → QC → AI восстанавливаемым: сбой AI не должен оставлять asset в
+состоянии, из которого нет выхода.
+
+### Проблема до изменений
+
+Исключение LM Studio или невалидный JSON роняли worker без события. Повторный
+запуск отсекал файл как дубликат, и AI для такого asset'а был недостижим.
+Asset 2 и 3 (зарегистрированы до AI-интеграции) по той же причине не имели
+`ai_result`.
+
+### Реализовано
+
+- `app/worker.py`: `process_asset(asset_id, force)`, `verify_source`,
+  `run_ai`; события `AI/FAILED` и `SOURCE/INVALID`; provenance в `AI/*`;
+  CLI `--asset-id` / `--force`; коды возврата (§14).
+- `app/ai/local_analyzer.py`: настройки из `.env`, таймаут, `max_retries=0`,
+  `exif_transpose`, `AIResponseError` с `raw_output`, `prompt_version`.
+- `app/ai/analyzer.py`: `AIResponseError`.
+- `app/ingest.py`: `source_file(asset)`.
+- `app/database/db.py`: путь к БД вычисляется при вызове, а не при импорте
+  (иначе тесты не могли бы перенаправить запись во временную БД). Для
+  production поведение не изменилось.
+- `tests/`: 19 pytest-тестов на временной БД с `FakeAnalyzer`.
+
+Схема БД, `AIAnalysis`, промпт и модель не менялись.
+
+### Проверка
+
+- `python -m pytest`: 19 passed. Счётчики production-БД до прогона не
+  изменились.
+- Production, `--asset-id 3`: QC PASSED → `AI_PASSED`, валидный `AIAnalysis`
+  в `assets.ai_result`, событие `AI/PASSED` с provenance
+  (`lmstudio`, `qwen3-vl-8b-instruct`, `local-v1`, 41.85 s — вероятно,
+  включая загрузку модели в LM Studio; ранее на asset 4 было ~13 s).
+- Production, `--asset-id 2`: `SOURCE/INVALID`, `SOURCE_CHANGED`, exit 1.
+- Production, `--asset-id 4`: `AI_ALREADY_DONE`, без новых событий.
+- `LocalAnalyzer` на недоступном endpoint: `APIConnectionError` за ~2.4 s, без
+  скрытых повторов.
+
+### Результат
+
+PASS
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 35F. 2026-09-25 — Asset 2: подменённый источник
+
+### Факт
+
+Asset 2 зарегистрирован 19.09.2026 как `IMG_20260911_130107.jpg`,
+8192 × 6144, SHA256 `63e9981c…599c`. Позже файл по тому же пути заменён
+уменьшенной версией 4096 × 3072 (SHA256 `6673ff84…6578`), которая 21.09.2026
+зарегистрирована как asset 3. Оригинал 8192 × 6144 в `data/incoming` больше
+не существует.
+
+### Действие
+
+Asset 2 не удалён и не изменён. Проблема зафиксирована событием
+`SOURCE/INVALID` (`SOURCE_CHANGED`, expected/actual hash). Повторные запуски
+worker для asset 2 будут добавлять такое же событие и не выполнят QC или AI.
+
+### Политика восстановления (⚪ открытый вопрос)
+
+Варианты, решение пока не принято:
+
+1. Вернуть оригинальный файл с тем же SHA256 → `--asset-id 2` пройдёт штатно.
+2. Считать asset 2 историческим/заменённым asset 3 → после появления явной
+   модели статусов перевести в терминальный статус (например, `REJECTED` с
+   причиной `SOURCE_CHANGED`).
+3. Общее правило на будущее: ingest не должен молча принимать новый файл под
+   тем же `source_path`, если там уже зарегистрирован asset с другим hash.
+
+### Статус
+
+⚪ PLANNED — политика восстановления
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -1509,8 +1771,23 @@ END-TO-END TEST
 SQLITE WRITE ACCESS
     🟢
 
+PIPELINE RELIABILITY (AI/FAILED, --asset-id, hash, provenance, tests)
+    🟢
+
+SERVICE LAYER + CLI JSON
+    ⚪ PLANNED — следующий шаг
+
+ASSET 2 RECOVERY POLICY
+    ⚪ PLANNED
+
 METADATA
     ⚪ PLANNED
+
+EXPLICIT STATUS MODEL (assets.status + миграция)
+    ⚪ PLANNED — после стабилизации
+
+FASTAPI
+    ⚪ PLANNED — после стабильного сервисного слоя
 
 SIMILAR IMAGE GROUPS
     ⚪ PLANNED
@@ -1535,13 +1812,19 @@ OPENCLAW AUTONOMY
 
 # 42. БЛИЖАЙШИЙ ОБЯЗАТЕЛЬНЫЙ ШАГ
 
-Начать следующий запланированный milestone — metadata pipeline.
+Порядок, принятый 25 сентября 2026:
 
-Сначала определить детерминированный контракт: какие поля `AIAnalysis`
-становятся editable stock metadata, где они хранятся и какие правила
-валидации/ручного подтверждения нужны. Не переписывать завершённый ingest/QC/AI
-pipeline и не менять Qwen3-VL-8B или AI schema без отдельного доказанного
-требования.
+1. **Сервисный слой + CLI с JSON-выводом.** Операции Core по `asset_id`
+   (`process_asset` уже есть, плюс `get`/`list`/`history`) возвращают
+   структурированный результат. CLI печатает JSON для n8n и OpenClaw. Без FastAPI.
+2. **Metadata pipeline.** Детерминированный контракт: какие поля `AIAnalysis`
+   становятся editable stock metadata (`assets.metadata_json` уже существует),
+   правила валидации и лимиты стоков, ручное подтверждение.
+3. Явная модель статусов и миграция `assets.status`.
+4. FastAPI → n8n → OpenClaw tools.
+
+Не переписывать завершённый ingest/QC/AI pipeline и не менять Qwen3-VL-8B или
+AI schema без отдельного доказанного требования.
 
 ---
 
@@ -1606,9 +1889,14 @@ AI/PASSED
 > Qwen3-VL-8B → AIAnalysis → assets.ai_result → AI/PASSED`. SQLite blocker
 > устранён без удаления или пересоздания БД; SQLite state проверен напрямую.
 >
-> **Следующая задача: спроектировать и реализовать детерминированный metadata
-> pipeline на основе сохранённого `AIAnalysis`, не переписывая завершённый
-> pipeline.**
+> С 25.09.2026 pipeline восстанавливаемый: сбои пишутся как `AI/FAILED` и
+> `SOURCE/INVALID` в `processing_events`, повтор — `python -m app.worker
+> --asset-id N`, provenance (provider/model/prompt_version/время) хранится в
+> событиях `AI/*`. Тесты: `python -m pytest`. Принципы — §3A, контракт
+> событий — §14.
+>
+> **Следующая задача: сервисный слой + CLI с JSON-выводом (§42), затем
+> metadata pipeline, не переписывая завершённый pipeline.**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 

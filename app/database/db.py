@@ -8,17 +8,17 @@ from typing import Any
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "stocker.db"
 
 
-def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Open a SQLite connection with foreign keys enabled."""
-    connection = sqlite3.connect(str(db_path))
+    connection = sqlite3.connect(str(db_path or DEFAULT_DB_PATH))
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
 
-def init_database(db_path: Path | str = DEFAULT_DB_PATH) -> None:
+def init_database(db_path: Path | str | None = None) -> None:
     """Create the Stocker database schema if it does not exist."""
-    db_path = Path(db_path)
+    db_path = Path(db_path or DEFAULT_DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     with get_connection(db_path) as connection:
@@ -75,7 +75,7 @@ def add_asset(
     width: int | None = None,
     height: int | None = None,
     file_size: int | None = None,
-    db_path: Path | str = DEFAULT_DB_PATH,
+    db_path: Path | str | None = None,
 ) -> int:
     """Add a new asset and return its database ID."""
     with get_connection(db_path) as connection:
@@ -110,7 +110,7 @@ def add_event(
     stage: str,
     status: str,
     message: str | None = None,
-    db_path: Path | str = DEFAULT_DB_PATH,
+    db_path: Path | str | None = None,
 ) -> None:
     """Record a processing event for an asset."""
     with get_connection(db_path) as connection:
@@ -131,7 +131,7 @@ def add_event(
 def save_ai_result(
     asset_id: int,
     ai_result: str,
-    db_path: Path | str = DEFAULT_DB_PATH,
+    db_path: Path | str | None = None,
 ) -> None:
     """Save the serialized AI analysis for an asset."""
     with get_connection(db_path) as connection:
@@ -148,7 +148,7 @@ def save_ai_result(
 
 def get_asset(
     asset_id: int,
-    db_path: Path | str = DEFAULT_DB_PATH,
+    db_path: Path | str | None = None,
 ) -> dict[str, Any] | None:
     """Return one asset as a dictionary."""
     with get_connection(db_path) as connection:

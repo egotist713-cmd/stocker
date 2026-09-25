@@ -24,6 +24,11 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def source_file(asset) -> Path:
+    """Абсолютный путь к исходному файлу asset: source_path хранится относительно ROOT."""
+    return ROOT / asset["source_path"]
+
+
 def already_registered(file_hash: str) -> bool:
     db_path = ROOT / "data" / "db" / "stocker.db"
 
