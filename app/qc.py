@@ -5,6 +5,8 @@ import sqlite3
 import numpy as np
 from PIL import Image
 
+from app.ingest import source_file
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "db" / "stocker.db"
@@ -57,7 +59,7 @@ def calculate_extreme_pixels(image: Image.Image):
 
 
 def check_asset(asset):
-    source_path = ROOT / asset["source_path"]
+    source_path = source_file(asset)
 
     result = {
         "passed": True,

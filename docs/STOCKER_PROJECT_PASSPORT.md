@@ -541,13 +541,44 @@ max_edge = 2048
   (`max_retries=0`): повтор выполняется явно через worker;
 - невалидный ответ модели поднимает `AIResponseError` (из `app/ai/analyzer.py`)
   с сохранённым `raw_output`;
-- атрибуты provenance: `provider = "lmstudio"`, `model`,
-  `prompt_version = "local-v1"`. При любом изменении текста промпта
-  `prompt_version` нужно увеличить.
+- атрибуты provenance: `provider = "lmstudio"`, `model`, `prompt_version`.
+  При любом изменении текста промпта или формата ответа `prompt_version`
+  нужно увеличить.
 
-Известное ограничение: ingest принимает `.tif/.tiff`, а `LocalAnalyzer` — нет.
-Такой asset получит `AI/FAILED` (`ValueError: Unsupported image format`), но
-pipeline не упадёт.
+### Strict structured output (с 25.09.2026, `prompt_version = "local-v2"`)
+
+Запрос передаёт `response_format = {"type": "json_schema", "json_schema":
+{"name": "AIAnalysis", "strict": true, "schema": response_schema()}}`.
+LM Studio это соблюдает: проверено реальным запросом с посторонней схемой.
+
+`response_schema()` строится из `AIAnalysis.model_json_schema()`, **сама
+`AIAnalysis` и промпт не менялись**. Отличие: все поля (включая
+`PeopleInfo`) помечены `required`, `additionalProperties: false`.
+
+Причина: у всех полей `AIAnalysis` есть значения по умолчанию, поэтому
+исходная схема не содержит `required`. С ней модель в пробном запросе вернула
+`{}`, и он прошёл бы валидацию как пустой анализ без ошибки.
+
+| Версия | Промпт | Формат ответа |
+|---|---|---|
+| `local-v1` | исходный | свободный текст, парсинг JSON |
+| `local-v2` | тот же | strict `json_schema` |
+
+### TIFF
+
+`.tif/.tiff` принимаются ingest и перекодируются в JPEG только для model
+input, оригинал не меняется. Выбрано преобразование, а не запрет: TIFF
+ожидается как выход Topaz и будущих pipeline обработки. Проверены RGB, CMYK,
+grayscale, RGBA. 16-битный grayscale масштабируется (`>> 8`); без этого
+`convert("RGB")` даёт белый кадр.
+
+Известные ограничения TIFF:
+
+- 16-битный RGB TIFF Pillow не открывает → QC `IMAGE_READ_ERROR`, до AI не
+  доходит;
+- QC-метрики (`sharpness`, `dark/bright_ratio`) для 16-битного grayscale
+  считаются по обрезанным значениям и неточны;
+- `OpenAIAnalyzer` TIFF не поддерживает (он не в production-пути).
 
 ---
 
@@ -649,6 +680,20 @@ app/ingest.py
 
 При тестах pipeline нужно использовать новую фотографию, если не требуется специально проверить duplicate behavior.
 
+### `source_path` (с 25.09.2026)
+
+- Хранится относительно ROOT и **всегда с `/`**: `data/incoming/x.jpg`
+  (`to_source_path`). Одна и та же запись открывается из Windows и из WSL.
+- Путь к файлу можно передавать абсолютным или относительным (от текущей
+  директории).
+- Файл вне проекта пропускается: `SKIP outside project`.
+- Файл по `source_path` находит только `source_file(asset)`, его используют
+  и worker, и QC. Для совместимости он понимает и старые записи с `\`.
+- Существующие записи приведены к `/` скриптом
+  `python -m scripts.normalize_source_paths [--apply]` (идемпотентный,
+  по умолчанию dry-run). Каждое изменение фиксируется событием
+  `SOURCE/NORMALIZED`.
+
 ---
 
 # 13. QC
@@ -730,6 +775,7 @@ python -m app.worker --asset-id N --force    # повторный AI при на
 | `INGEST` | `DONE` | текст `Registered <FORMAT> <W>x<H>` |
 | `QC` | `PASSED` / `FAILED` | JSON результата QC |
 | `SOURCE` | `INVALID` | JSON: `reason`, `source_path`, `expected_hash`, `actual_hash` |
+| `SOURCE` | `NORMALIZED` | JSON: `old`, `new` — нормализация `source_path` |
 | `AI` | `PASSED` | JSON: `provider`, `model`, `prompt_version`, `analyzed_at`, `duration_s` |
 | `AI` | `FAILED` | JSON: provenance + `failed_at`, `error_type`, `error`, `raw_output` (до 4000 символов, если ответ был) |
 
@@ -1647,6 +1693,54 @@ worker для asset 2 будут добавлять такое же событи
 
 ---
 
+# 35G. 2026-09-25 — Три технических долга перед metadata
+
+### Цель
+
+Закрыть три долга до metadata pipeline, не меняя архитектуру, `AIAnalysis`,
+промпт и `assets.status`.
+
+### Реализовано
+
+1. **Strict JSON schema** для `LocalAnalyzer` (§9): `response_schema()`,
+   `prompt_version = local-v2`.
+2. **TIFF**: преобразование в JPEG для AI (§9). Ingest больше не принимает
+   формат, который AI не может обработать.
+3. **`source_path`**: POSIX-запись, приём относительных путей, пропуск файлов
+   вне проекта, единая функция `source_file()` для worker и QC, миграция
+   старых записей с событием `SOURCE/NORMALIZED` (§12).
+
+Попутно исправлен баг: `python -m app.worker data/incoming/x.jpg` с
+относительным путём падал в `relative_to` (в БД ничего не записывалось).
+
+### Проверка
+
+- `python -m pytest`: 32 passed.
+- Нормализация на production: asset 2 и 4 `data\incoming\...` →
+  `data/incoming/...`, события 13–14. Повторный запуск: `Nothing to
+  normalize`.
+- WSL (`OpenClawGateway`, `.venv-linux`), только чтение: для asset 2–4 пути
+  разрешаются, файлы найдены, hash asset 3 и 4 — OK, asset 2 —
+  `SOURCE_CHANGED`. Старый путь с `\` тоже разрешается.
+- Новая фотография `IMG_20260911_130437.jpg` (относительный путь) → asset 5:
+  `INGEST/DONE`, `QC/PASSED`, `AI/PASSED` с `prompt_version = local-v2`,
+  7.23 s, `source_path = data/incoming/IMG_20260911_130437.jpg`, валидный
+  `AIAnalysis`.
+- Реальный TIFF (LZW, из `IMG_20260911_130107.jpg`) → LM Studio → валидный
+  `AIAnalysis` за 3.3 s (без записи в БД).
+
+### Наблюдение для metadata
+
+Strict schema гарантирует формат, но не содержание: у asset 5 8 keywords, пустые
+`categories` и `commercial_context`, `confidence = 0.98`. Это задача
+metadata-этапа (см. §42).
+
+### Статус
+
+🟢 DONE
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -1774,13 +1868,16 @@ SQLITE WRITE ACCESS
 PIPELINE RELIABILITY (AI/FAILED, --asset-id, hash, provenance, tests)
     🟢
 
-SERVICE LAYER + CLI JSON
-    ⚪ PLANNED — следующий шаг
-
-ASSET 2 RECOVERY POLICY
-    ⚪ PLANNED
+STRICT JSON SCHEMA / TIFF / SOURCE_PATH (Windows + WSL)
+    🟢
 
 METADATA
+    🟡 IN PROGRESS — проектирование контракта
+
+SERVICE LAYER + CLI JSON
+    ⚪ PLANNED — после metadata
+
+ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
 
 EXPLICIT STATUS MODEL (assets.status + миграция)
@@ -1812,14 +1909,16 @@ OPENCLAW AUTONOMY
 
 # 42. БЛИЖАЙШИЙ ОБЯЗАТЕЛЬНЫЙ ШАГ
 
-Порядок, принятый 25 сентября 2026:
+Порядок, уточнённый 25 сентября 2026 (после закрытия долгов §35G):
 
-1. **Сервисный слой + CLI с JSON-выводом.** Операции Core по `asset_id`
-   (`process_asset` уже есть, плюс `get`/`list`/`history`) возвращают
-   структурированный результат. CLI печатает JSON для n8n и OpenClaw. Без FastAPI.
-2. **Metadata pipeline.** Детерминированный контракт: какие поля `AIAnalysis`
+1. **Metadata pipeline.** Детерминированный контракт: какие поля `AIAnalysis`
    становятся editable stock metadata (`assets.metadata_json` уже существует),
-   правила валидации и лимиты стоков, ручное подтверждение.
+   правила валидации и лимиты стоков, ручное подтверждение. Без новых
+   `assets.status`.
+2. **Сервисный слой + CLI с JSON-выводом.** Операции Core по `asset_id`
+   (`process_asset` уже есть, плюс `get`/`list`/`history`/metadata)
+   возвращают структурированный результат. CLI печатает JSON для n8n и
+   OpenClaw. Без FastAPI.
 3. Явная модель статусов и миграция `assets.status`.
 4. FastAPI → n8n → OpenClaw tools.
 
@@ -1895,8 +1994,11 @@ AI/PASSED
 > событиях `AI/*`. Тесты: `python -m pytest`. Принципы — §3A, контракт
 > событий — §14.
 >
-> **Следующая задача: сервисный слой + CLI с JSON-выводом (§42), затем
-> metadata pipeline, не переписывая завершённый pipeline.**
+> С 25.09.2026 (§35G): strict JSON schema (`local-v2`), TIFF → JPEG для AI,
+> `source_path` в POSIX-формате (Windows + WSL).
+>
+> **Следующая задача: metadata pipeline (§42), затем сервисный слой + CLI с
+> JSON-выводом, не переписывая завершённый pipeline.**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 

@@ -1,12 +1,15 @@
+import base64
 from io import BytesIO
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from PIL import Image
 
 from app.ai import local_analyzer
 from app.ai.analyzer import AIResponseError
-from app.ai.local_analyzer import LocalAnalyzer
+from app.ai.local_analyzer import LocalAnalyzer, response_schema
+from app.ai.schema import AIAnalysis
 
 ENV_VARS = ("LMSTUDIO_BASE_URL", "LMSTUDIO_MODEL", "LMSTUDIO_API_KEY", "LMSTUDIO_TIMEOUT")
 
@@ -65,11 +68,17 @@ def test_prepare_image_limits_long_edge(tmp_path):
     assert Image.open(BytesIO(data)).size == (2048, 1536)
 
 
-def _stub_response(analyzer: LocalAnalyzer, content: str) -> None:
+def _stub_response(analyzer: LocalAnalyzer, content: str) -> dict:
+    """Подменить LM Studio; вернуть dict, в который попадут аргументы запроса."""
     response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
-    analyzer.client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_: response))
-    )
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return response
+
+    analyzer.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return captured
 
 
 def test_invalid_output_raises_with_raw_text(tmp_path, clean_env):
@@ -91,3 +100,57 @@ def test_valid_output_is_parsed(tmp_path, clean_env):
     _stub_response(analyzer, '{"title": "White square", "confidence": 0.9}')
 
     assert analyzer.analyze(path).title == "White square"
+
+
+def test_response_schema_requires_every_field():
+    schema = response_schema()
+
+    assert set(schema["required"]) == set(AIAnalysis.model_fields)
+    assert schema["additionalProperties"] is False
+    people = schema["$defs"]["PeopleInfo"]
+    assert set(people["required"]) == {"present", "count"}
+    assert people["additionalProperties"] is False
+
+
+def test_response_schema_does_not_modify_aianalysis():
+    response_schema()
+
+    assert "required" not in AIAnalysis.model_json_schema()
+
+
+def test_request_uses_strict_json_schema(tmp_path, clean_env):
+    path = tmp_path / "photo.jpg"
+    Image.new("RGB", (32, 32), "white").save(path)
+    analyzer = LocalAnalyzer()
+    captured = _stub_response(analyzer, '{"title": "x"}')
+
+    analyzer.analyze(path)
+
+    response_format = captured["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"] == response_schema()
+
+
+@pytest.mark.parametrize("suffix", [".tif", ".tiff"])
+def test_tiff_is_sent_to_model_as_jpeg(tmp_path, clean_env, suffix):
+    path = tmp_path / f"photo{suffix}"
+    Image.new("CMYK", (40, 30), (0, 50, 100, 0)).save(path, compression="tiff_lzw")
+    analyzer = LocalAnalyzer()
+    captured = _stub_response(analyzer, '{"title": "x"}')
+
+    analyzer.analyze(path)
+
+    url = captured["messages"][0]["content"][1]["image_url"]["url"]
+    assert url.startswith("data:image/jpeg;base64,")
+    assert Image.open(BytesIO(base64.b64decode(url.split(",", 1)[1]))).format == "JPEG"
+
+
+def test_16bit_tiff_is_scaled_not_clipped(tmp_path):
+    path = tmp_path / "gray16.tif"
+    Image.fromarray(np.full((30, 40), 40000, dtype=np.uint16)).save(path)
+
+    data, _ = LocalAnalyzer._prepare_image(path, "image/jpeg")
+
+    red, green, blue = Image.open(BytesIO(data)).getpixel((5, 5))
+    assert abs(red - 40000 // 256) <= 2

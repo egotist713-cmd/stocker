@@ -1,9 +1,11 @@
 import base64
+import copy
 import os
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from openai import OpenAI
 from dotenv import load_dotenv
 from PIL import Image, ImageOps
@@ -21,6 +23,32 @@ DEFAULT_API_KEY = "lm-studio"
 DEFAULT_TIMEOUT = 180.0
 
 
+def response_schema() -> dict:
+    """
+    JSON schema для strict structured output LM Studio.
+
+    Строится из AIAnalysis без изменения самой модели. Все поля помечены
+    обязательными, а лишние запрещены: иначе пустой {} формально валиден
+    (у всех полей AIAnalysis есть значения по умолчанию) и модель может
+    вернуть пустой анализ.
+    """
+    schema = copy.deepcopy(AIAnalysis.model_json_schema())
+
+    def make_strict(node) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                node["required"] = list(node["properties"])
+                node["additionalProperties"] = False
+            for value in node.values():
+                make_strict(value)
+        elif isinstance(node, list):
+            for value in node:
+                make_strict(value)
+
+    make_strict(schema)
+    return schema
+
+
 class LocalAnalyzer(AIAnalyzer):
     """
     Локальный провайдер для анализа изображений через LM Studio.
@@ -28,8 +56,11 @@ class LocalAnalyzer(AIAnalyzer):
 
     provider = "lmstudio"
 
-    # Увеличивать при любом изменении текста промпта: версия пишется в историю событий.
-    prompt_version = "local-v1"
+    # Увеличивать при любом изменении текста промпта или формата ответа:
+    # версия пишется в историю событий.
+    # local-v1: промпт + свободный текстовый ответ.
+    # local-v2: тот же промпт + strict json_schema response_format.
+    prompt_version = "local-v2"
 
     def __init__(
         self,
@@ -65,6 +96,9 @@ class LocalAnalyzer(AIAnalyzer):
             ".jpeg": "image/jpeg",
             ".png": "image/png",
             ".webp": "image/webp",
+            # TIFF модели не передаётся: _prepare_image перекодирует его в JPEG.
+            ".tif": "image/jpeg",
+            ".tiff": "image/jpeg",
         }
 
         mime_type = mime_types.get(suffix)
@@ -124,6 +158,14 @@ Important:
                     ],
                 }
             ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "AIAnalysis",
+                    "strict": True,
+                    "schema": response_schema(),
+                },
+            },
         )
 
         result_text = response.choices[0].message.content or ""
@@ -144,6 +186,12 @@ Important:
             # Модель должна видеть кадр так же, как его видит человек.
             image = ImageOps.exif_transpose(source)
             image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+
+            # 16-bit grayscale (бывает в TIFF): convert("RGB") обрезает значения
+            # до 255 и даёт белый кадр, поэтому сначала масштабируем в 8 бит.
+            if image.mode in ("I", "I;16", "I;16L", "I;16B"):
+                pixels = np.asarray(image, dtype=np.uint32) >> 8
+                image = Image.fromarray(pixels.clip(0, 255).astype(np.uint8))
 
             output = BytesIO()
             if mime_type == "image/jpeg":

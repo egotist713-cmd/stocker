@@ -24,9 +24,19 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def to_source_path(path: Path) -> str:
+    """
+    Путь для assets.source_path: относительно ROOT, всегда с разделителем "/".
+
+    Одинаковая запись из Windows и WSL позволяет открыть asset в обеих средах.
+    """
+    return path.resolve().relative_to(ROOT).as_posix()
+
+
 def source_file(asset) -> Path:
     """Абсолютный путь к исходному файлу asset: source_path хранится относительно ROOT."""
-    return ROOT / asset["source_path"]
+    # Старые записи из Windows содержат "\": под WSL такой путь не разрешится.
+    return ROOT / asset["source_path"].replace("\\", "/")
 
 
 def already_registered(file_hash: str) -> bool:
@@ -48,6 +58,11 @@ def already_registered(file_hash: str) -> bool:
 def ingest_file(path: Path) -> int | None:
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         print(f"SKIP unsupported: {path.name}")
+        return None
+
+    # source_path хранится относительно ROOT, поэтому файл должен лежать в проекте.
+    if not path.resolve().is_relative_to(ROOT):
+        print(f"SKIP outside project: {path}")
         return None
 
     print(f"Processing: {path.name}")
@@ -76,7 +91,7 @@ def ingest_file(path: Path) -> int | None:
 
     asset_id = add_asset(
         filename=path.name,
-        source_path=str(path.relative_to(ROOT)),
+        source_path=to_source_path(path),
         file_hash=file_hash,
         extension=path.suffix.lower(),
         width=width,
