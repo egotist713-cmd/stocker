@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -156,5 +158,74 @@ def get_asset(
             "SELECT * FROM assets WHERE id = ?",
             (asset_id,),
         ).fetchone()
+
+    return dict(row) if row else None
+
+
+@contextmanager
+def transaction(db_path: Path | str | None = None) -> Iterator[sqlite3.Connection]:
+    """Одна транзакция на несколько записей: commit при успехе, rollback при ошибке."""
+    connection = get_connection(db_path)
+    try:
+        yield connection
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def insert_event(
+    connection: sqlite3.Connection,
+    asset_id: int,
+    stage: str,
+    status: str,
+    message: str | None = None,
+) -> int:
+    """Record a processing event inside an open transaction and return its ID."""
+    cursor = connection.execute(
+        """
+        INSERT INTO processing_events (asset_id, stage, status, message)
+        VALUES (?, ?, ?, ?)
+        """,
+        (asset_id, stage, status, message),
+    )
+    return int(cursor.lastrowid)
+
+
+def update_metadata(connection: sqlite3.Connection, asset_id: int, metadata_json: str) -> None:
+    """Save assets.metadata_json inside an open transaction."""
+    connection.execute(
+        """
+        UPDATE assets
+        SET metadata_json = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (metadata_json, asset_id),
+    )
+
+
+def get_last_event(
+    asset_id: int,
+    stage: str,
+    status: str,
+    db_path: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """Return the most recent event of the given stage/status for an asset."""
+    connection = get_connection(db_path)
+    try:
+        row = connection.execute(
+            """
+            SELECT * FROM processing_events
+            WHERE asset_id = ? AND stage = ? AND status = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (asset_id, stage, status),
+        ).fetchone()
+    finally:
+        connection.close()
 
     return dict(row) if row else None
