@@ -2025,6 +2025,66 @@ Stocker автоматизирует промышленный stock-поток, 
 
 ---
 
+# 35N. 2026-09-26 — Service layer и JSON CLI
+
+### Реализовано (контракт — `docs/SERVICE_CONTRACT.md`)
+
+| Файл | Что |
+|---|---|
+| `app/service/__init__.py` | `dispatch(operation, params, actor) -> envelope`; права actor; ошибки → envelope (никогда не бросает) |
+| `app/service/registry.py` | реестр 15 операций: Pydantic-модели параметров (`extra="forbid"`) → JSON Schema, уровни `read` / `pipeline` / `review` |
+| `app/service/operations.py` | обработчики поверх `worker` и `app.metadata`, без бизнес-логики |
+| `app/service/views.py` | asset view, производный `pipeline` (source/qc/vision/metadata/ready/review_reasons), `allowed_actions`, list, history, review queue |
+| `app/api.py` | JSON CLI `python -m app.api <operation> --params '{..}' \| - [--actor] [--pretty]`; stdout — только envelope, вывод worker'а → stderr |
+| `app/database/db.py` | `acting_as(actor)`: actor в JSON-сообщениях событий |
+| `app/qc.py` | событие QC через `insert_event` (чтобы получить actor); поведение прежнее |
+| `app/worker.py` | `_ingest_and_process` → публичный `ingest_and_process` |
+
+Существующие CLI (`app.worker`, `app.metadata`), review-логика, схема БД и
+`assets.status` не менялись.
+
+### Права
+
+- `read`, `pipeline` — любой actor (`human`, `agent:*`, `workflow:*`).
+- `review` (approve/reject) — только `human`; агент и workflow получают `FORBIDDEN`.
+- `auto_approved` не задаётся ни одним параметром — только review gate.
+  Параметр `state` отклоняется как `INVALID_PARAMS`.
+- Агент может поднять риск (`metadata.escalate`), но не снять его.
+
+### Проверка
+
+- `python -m pytest`: 248 passed, 3 skipped.
+- Production, только через `python -m app.api --actor agent:openclaw`:
+  `review.queue` → [5 (`TEXT_BRAND_OR_LEGAL`)]; `asset.process_file` для
+  `IMG_20260911_130601.jpg` → asset 8, `AI_PASSED`, `auto_approved`;
+  `metadata.approve` → `FORBIDDEN`, exit 1, без изменений. У всех событий
+  asset 8, кроме текстового `INGEST`, `actor = agent:openclaw`.
+  Человеческих `APPROVED` — 0.
+- Копия production-БД: правка агентом с «ISO 9001 certified» → `human_review`
+  (`LEGAL_CLAIM`, `UNCONFIRMED_CLAIM`); удаление утверждения → gate сам вернул
+  `auto_approved`; эскалация агентом держится после `gate`; approve агентом →
+  `FORBIDDEN`, человеком → `approved`; `gate` после решения человека →
+  `INVALID_TRANSITION`.
+
+### Наблюдения
+
+- `metadata.review_gate` хранит последнюю оценку gate. После решения
+  человека там видны причины, по которым объект был в review. Текущие
+  причины для очереди — `pipeline.review_reasons` (только в `human_review`).
+- `asset.list` фильтрует по производному состоянию в Python — достаточно для
+  текущего объёма. При росте каталога понадобится индексируемое хранение
+  состояния (кандидат для явной модели статусов).
+
+### Следующий шаг
+
+MCP-адаптер поверх реестра для OpenClaw (`SERVICE_CONTRACT.md` §7, шаг 5 §9).
+
+### Статус
+
+🟢 DONE
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -2158,11 +2218,14 @@ STRICT JSON SCHEMA / TIFF / SOURCE_PATH (Windows + WSL)
 METADATA
     🟢 DONE — draft/edit/approve/reject, worker создаёт draft (§35K)
 
-REVIEW GATE (auto_approved / human_review, gate-v1)
-    🟢 DONE (§35L)
+REVIEW GATE (auto_approved / human_review, gate-v1.1)
+    🟢 DONE (§35L, §35M)
 
-SERVICE LAYER + CLI JSON
-    ⚪ PLANNED — после metadata
+SERVICE LAYER + JSON CLI (app.service, python -m app.api)
+    🟢 DONE (§35N)
+
+MCP ДЛЯ OPENCLAW
+    ⚪ PLANNED — следующий шаг
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
@@ -2201,15 +2264,13 @@ OPENCLAW AUTONOMY
 1. ~~Metadata pipeline~~ — 🟢 DONE (§35K). ~~Review gate~~ — 🟢 DONE (§35L).
    Контракт — `docs/METADATA_CONTRACT.md` (`metadata-v2`). Очередь человека —
    объекты в `human_review` (сейчас asset 5).
-2. **Сервисный слой + CLI с JSON-выводом** — контракт согласован:
-   `docs/SERVICE_CONTRACT.md` (реестр операций, envelope, actor и права,
-   `app.api`, затем MCP для OpenClaw). Операции `app/metadata.py` уже
-   возвращают `{asset_id, outcome, metadata}`. Операции Core по `asset_id`
-   (`process_asset` уже есть, плюс `get`/`list`/`history`/metadata)
-   возвращают структурированный результат. CLI печатает JSON для n8n и
-   OpenClaw. Без FastAPI.
-3. Явная модель статусов и миграция `assets.status`.
-4. FastAPI → n8n → OpenClaw tools.
+2. ~~Service layer + JSON CLI~~ — 🟢 DONE (§35N), `docs/SERVICE_CONTRACT.md`.
+3. **MCP-адаптер для OpenClaw** поверх реестра операций (actor
+   `agent:openclaw`, операции `read` + `pipeline`) — следующий шаг.
+4. n8n (роль — §35M): Execute Command → `python -m app.api --actor workflow:n8n`,
+   позже HTTP поверх того же реестра.
+5. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
+   общий долгоживущий Windows-процесс (`SERVICE_CONTRACT.md` §7).
 
 Не переписывать завершённый ingest/QC/AI pipeline и не менять Qwen3-VL-8B или
 AI schema без отдельного доказанного требования.
@@ -2295,8 +2356,12 @@ AI/PASSED
 > `auto_approved` автоматически, спорные случаи → `human_review`. Approve и
 > reject — только человек.
 >
-> **Следующая задача: service layer по `docs/SERVICE_CONTRACT.md` (§42), не
-> переписывая завершённый pipeline.**
+> С 26.09.2026 (§35N): service layer `app.service.dispatch` и JSON CLI
+> `python -m app.api` — единая точка входа для агентов и workflow; approve и
+> reject только для `human`.
+>
+> **Следующая задача: MCP-адаптер для OpenClaw поверх реестра операций
+> (`SERVICE_CONTRACT.md` §7), затем n8n.**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 

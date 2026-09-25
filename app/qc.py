@@ -5,6 +5,7 @@ import sqlite3
 import numpy as np
 from PIL import Image
 
+from app.database.db import insert_event
 from app.ingest import source_file
 
 
@@ -146,19 +147,7 @@ def save_qc_result(asset_id, result):
             ),
         )
 
-        conn.execute(
-            """
-            INSERT INTO processing_events
-            (asset_id, stage, status, message)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                asset_id,
-                "QC",
-                status,
-                json.dumps(result, ensure_ascii=False),
-            ),
-        )
+        insert_event(conn, asset_id, "QC", status, json.dumps(result, ensure_ascii=False))
 
         conn.commit()
 

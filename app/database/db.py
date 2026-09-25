@@ -1,13 +1,45 @@
 ﻿from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "stocker.db"
+
+# Кто выполняет операцию (service layer: "human", "agent:openclaw", "workflow:n8n").
+# Если задан, добавляется ключом "actor" в JSON-сообщения событий. Без него
+# (прямые CLI) события не меняются.
+_ACTOR: ContextVar[str | None] = ContextVar("stocker_actor", default=None)
+
+
+@contextmanager
+def acting_as(actor: str) -> Iterator[None]:
+    token = _ACTOR.set(actor)
+    try:
+        yield
+    finally:
+        _ACTOR.reset(token)
+
+
+def _with_actor(message: str | None) -> str | None:
+    actor = _ACTOR.get()
+    if actor is None or not message:
+        return message
+
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        return message  # текстовые сообщения (INGEST) не меняются
+
+    if not isinstance(payload, dict):
+        return message
+
+    return json.dumps({**payload, "actor": actor}, ensure_ascii=False)
 
 
 def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
@@ -126,7 +158,7 @@ def add_event(
             )
             VALUES (?, ?, ?, ?)
             """,
-            (asset_id, stage, status, message),
+            (asset_id, stage, status, _with_actor(message)),
         )
 
 
@@ -189,7 +221,7 @@ def insert_event(
         INSERT INTO processing_events (asset_id, stage, status, message)
         VALUES (?, ?, ?, ?)
         """,
-        (asset_id, stage, status, message),
+        (asset_id, stage, status, _with_actor(message)),
     )
     return int(cursor.lastrowid)
 

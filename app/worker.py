@@ -150,7 +150,8 @@ def process_asset(
     return outcome
 
 
-def _ingest_and_process(path: Path, analyzer: AIAnalyzer | None) -> tuple[int | None, str | None]:
+def ingest_and_process(path: Path, analyzer: AIAnalyzer | None = None) -> tuple[int | None, str | None]:
+    """Новый файл: ingest, затем process_asset. Возвращает (asset_id, outcome)."""
     print(f"WORKER: {path}")
 
     asset_id = ingest_file(path)
@@ -163,7 +164,7 @@ def _ingest_and_process(path: Path, analyzer: AIAnalyzer | None) -> tuple[int | 
 
 
 def process_file(path: Path, analyzer: AIAnalyzer | None = None) -> int | None:
-    asset_id, _ = _ingest_and_process(path, analyzer)
+    asset_id, _ = ingest_and_process(path, analyzer)
     return asset_id
 
 
@@ -181,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.asset_id is not None:
         outcome = process_asset(args.asset_id, force=args.force)
     else:
-        _, outcome = _ingest_and_process(args.image_path, analyzer=None)
+        _, outcome = ingest_and_process(args.image_path, analyzer=None)
 
     print(f"Outcome: {outcome}")
     return 1 if outcome is None or outcome in ERROR_OUTCOMES else 0

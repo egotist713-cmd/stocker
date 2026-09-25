@@ -1,7 +1,7 @@
 # STOCKER — КОНТРАКТ SERVICE LAYER
 
-> **Статус:** 🟢 СОГЛАСОВАН 26 сентября 2026. Шаг 0 (review gate) реализован,
-> остальное — по §9.
+> **Статус:** 🟢 СОГЛАСОВАН 26 сентября 2026. Реализованы шаги 0–4 §9 (review
+> gate, service layer, JSON CLI, production-проверка). Шаг 5 (MCP) — следующий.
 >
 > **Версия API:** `1`, от 25 сентября 2026.
 >
@@ -225,7 +225,10 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 ### Actor в событиях
 
 Изменяющие операции через service layer добавляют `"actor": "<actor>"` в
-JSON-сообщение каждого события, которое они создают (`METADATA/EDITED`,
+JSON-сообщение каждого события, которое они создают. Реализация:
+`app.database.db.acting_as(actor)` (contextvars) — `add_event` и
+`insert_event` дописывают ключ, если actor задан. Текстовые сообщения
+(`INGEST/DONE`) не меняются. QC пишет событие через `insert_event` (`METADATA/EDITED`,
 `METADATA/DRAFTED`, `AI/PASSED`, ...). Это **аддитивное** расширение контракта
 событий. У событий из существующих CLI (`app.worker`, `app.metadata`) ключа
 `actor` нет, что означает «человек через прямой CLI».
@@ -282,6 +285,7 @@ echo '{"asset_id": 5}' | python -m app.api asset.history --params -     # params
 | `app/review_gate.py` | чистый review gate `gate-v1` (`METADATA_CONTRACT.md` §6A) |
 | `app/service/operations.py` | обработчики: вызов `worker` и `app.metadata` |
 | `app/service/__init__.py` | `dispatch(operation, params, actor) -> envelope` |
+| `app/service/errors.py` | `ServiceError(code, message)` |
 | `app/api.py` | JSON CLI |
 | `app/metadata.py`, `app/worker.py` | + необязательный параметр `actor` (передаётся в сообщения событий); поведение без него не меняется |
 | `tests/test_service_*.py` | envelope, права, views, CLI |
