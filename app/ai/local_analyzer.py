@@ -1,5 +1,4 @@
 import base64
-import copy
 import os
 from io import BytesIO
 from pathlib import Path
@@ -13,6 +12,7 @@ from pydantic import ValidationError
 
 from app.ai.schema import AIAnalysis
 from app.ai.analyzer import AIAnalyzer, AIResponseError
+from app.ai.structured import json_schema_response_format, strict_json_schema
 
 load_dotenv()
 
@@ -24,29 +24,8 @@ DEFAULT_TIMEOUT = 180.0
 
 
 def response_schema() -> dict:
-    """
-    JSON schema для strict structured output LM Studio.
-
-    Строится из AIAnalysis без изменения самой модели. Все поля помечены
-    обязательными, а лишние запрещены: иначе пустой {} формально валиден
-    (у всех полей AIAnalysis есть значения по умолчанию) и модель может
-    вернуть пустой анализ.
-    """
-    schema = copy.deepcopy(AIAnalysis.model_json_schema())
-
-    def make_strict(node) -> None:
-        if isinstance(node, dict):
-            if node.get("type") == "object" and "properties" in node:
-                node["required"] = list(node["properties"])
-                node["additionalProperties"] = False
-            for value in node.values():
-                make_strict(value)
-        elif isinstance(node, list):
-            for value in node:
-                make_strict(value)
-
-    make_strict(schema)
-    return schema
+    """JSON schema ответа Vision: AIAnalysis со всеми полями обязательными (см. structured.py)."""
+    return strict_json_schema(AIAnalysis)
 
 
 class LocalAnalyzer(AIAnalyzer):
@@ -158,14 +137,7 @@ Important:
                     ],
                 }
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "AIAnalysis",
-                    "strict": True,
-                    "schema": response_schema(),
-                },
-            },
+            response_format=json_schema_response_format("AIAnalysis", response_schema()),
         )
 
         result_text = response.choices[0].message.content or ""

@@ -30,3 +30,20 @@ class AIAnalysis(BaseModel):
     ai_generated: bool = False
 
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class MetadataSuggestion(BaseModel):
+    """
+    Ответ Metadata AI: как подготовить изображение к продаже.
+
+    Не содержит лимитов: minItems/maxItems для keywords задаются только в схеме
+    запроса, а сохранённый результат проверяет Python metadata-слой
+    (docs/METADATA_CONTRACT.md, §3.3 и §4.5).
+    """
+
+    suggestion_version: str = "1.0"
+
+    title: str = ""
+    description: str = ""
+
+    keywords: list[str] = Field(default_factory=list)
