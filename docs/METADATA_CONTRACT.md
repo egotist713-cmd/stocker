@@ -2,7 +2,9 @@
 
 > **Статус:** 🟢 СОГЛАСОВАН 25 сентября 2026 (с корректировками пользователя). Реализация — поэтапно.
 >
-> **Версия контракта:** `metadata-v1`.
+> **Версия контракта:** `metadata-v1`, редакция 2: нормализация текста (§4.2) и
+> различение концептов и конкретных утверждений (§4.7). Код до этой редакции не
+> существовал, поэтому версия не увеличена.
 >
 > Связанные разделы паспорта: §3A (принципы), §14 (контракт событий), §35H–35I (журнал).
 >
@@ -149,9 +151,15 @@ class MetadataSuggestion(BaseModel):
 
 ### 4.2. Нормализация текста (`title`, `description`)
 
-- trim, схлопывание пробелов и переводов строк;
+- `app.textnorm.normalize_text`: Unicode NFKC; типографские кавычки, апострофы и
+  тире заменяются на ASCII (`'`, `"`, `-`); невидимые символы (soft hyphen,
+  zero-width, BOM) удаляются, управляющие заменяются пробелом; пробелы и
+  переводы строк схлопываются, trim. Регистр и смысл не меняются;
 - у `title` убирается завершающая точка;
 - **без обрезки**: превышение лимита — ошибка валидации.
+
+Та же `normalize_text` применяется к каждому keyword перед правилами §4.3, а
+также к значениям, введённым человеком через `edit`.
 
 ### 4.3. Нормализация keywords
 
@@ -159,7 +167,7 @@ class MetadataSuggestion(BaseModel):
 это проверяет валидация.
 
 1. разбить элементы, содержащие `,` или `;`;
-2. trim, lower case, схлопнуть пробелы, снять окружающую пунктуацию;
+2. `normalize_text`, lower case, снять окружающую пунктуацию;
 3. удалить пустые → `EMPTY`;
 4. удалить совпадающие с `brands`/`logos` из Vision или содержащие их
    (регистронезависимо) → `BRAND`;
@@ -201,6 +209,7 @@ Adobe Stock и Shutterstock на этапе экспорта. При измен�
 | `TOO_MANY_KEYWORDS` | keywords | > 49 (список **не обрезается**, человек убирает лишнее через `edit`) |
 | `KEYWORD_TOO_LONG` | keywords | ключевое слово > 50 символов (одна запись на слово) |
 | `BRAND_IN_TEXT` | title / description | бренд или логотип из Vision в тексте |
+| `UNCONFIRMED_CLAIM` | title / description / keywords | конкретное утверждение без опоры на Vision и без подтверждения человеком (§4.7), одна запись на утверждение |
 
 **Warnings** — не блокируют:
 
@@ -228,6 +237,43 @@ Adobe Stock и Shutterstock на этапе экспорта. При измен�
 
 Pipeline не блокируется: у asset всегда есть draft, а неполнота видна и
 в `metadata_json`, и в событиях.
+
+### 4.7. Опора на Vision: концепты и конкретные утверждения
+
+Расширение концептами — цель Metadata AI, и оно **не запрещается**. Python
+детерминированно разделяет содержимое `fields` на три вида:
+
+| Вид | Что это | Следствие |
+|---|---|---|
+| `vision` | keyword, все слова которого есть в тексте Vision | ничего |
+| `concept` | общее понятие, которого нет в Vision (`construction site`, `urban development`) | разрешено, видно в `grounding.concept_keywords` |
+| **конкретное утверждение** | проверяемый факт, которого нет в Vision | ошибка `UNCONFIRMED_CLAIM` до подтверждения |
+
+**Текст Vision** — нормализованные и приведённые к нижнему регистру `title`,
+`description`, `subject`, `commercial_context`, `technical_subjects`,
+`keywords`, `text_visible`, `brands`, `logos`, `editorial_risk`. Слова
+сравниваются после упрощённого приведения к единственному числу (отбрасывается
+конечное `s`).
+
+**Конкретное утверждение** (правила детерминированы и расширяемы):
+
+| reason | Правило | Примеры |
+|---|---|---|
+| `NUMBER` | слово или keyword с цифрой, которой нет в тексте Vision | `1998`, `5mm`, `model x200`, `3 floors` |
+| `PROPER_NOUN` | в `description` или `title` слово с заглавной буквы (не в начале предложения) или аббревиатура, которых нет в тексте Vision; keyword, совпадающий с таким словом | `Berlin`, `Cyrillic`, `Siemens`, `USA` |
+
+Заголовок в Title Case (не меньше 80% слов длиной от 4 букв, не считая первого, с заглавной) не
+проверяется правилом `PROPER_NOUN`: там заглавные не несут информации. Имена
+собственные из такого заголовка обычно есть и в `description`. Это известное
+ограничение.
+
+Бренды и логотипы, которые **назвал Vision**, обрабатываются отдельно:
+удаление из keywords (§4.3) и `BRAND_IN_TEXT`.
+
+**Подтверждение.** Человек либо убирает утверждение через `edit`, либо
+подтверждает все текущие утверждения командой `approve --confirm-claims`.
+Подтверждённые утверждения сохраняют `confirmed: true` при последующих правках,
+пока текст утверждения не изменился.
 
 ---
 
@@ -264,8 +310,18 @@ Pipeline не блокируется: у asset всегда есть draft, а �
     "ai_generated": false
   },
 
+  "grounding": {
+    "vision_keywords": ["elevator shaft", "concrete wall"],
+    "concept_keywords": ["construction site", "urban development"],
+    "specific_claims": [
+      {"term": "Cyrillic", "field": "description", "reason": "PROPER_NOUN", "confirmed": false}
+    ]
+  },
+
   "validation": {
-    "errors": [],
+    "errors": [
+      {"code": "UNCONFIRMED_CLAIM", "field": "description", "message": "Unconfirmed specific claim: 'Cyrillic' (PROPER_NOUN)"}
+    ],
     "warnings": [
       {"code": "TITLE_LONG", "field": "title", "message": "Title is 74 characters (recommended <= 70)"}
     ],
@@ -314,6 +370,8 @@ Pipeline не блокируется: у asset всегда есть draft, а �
 | `generated` | obj \| null | сырой `MetadataSuggestion`; `null` у partial | Metadata AI |
 | `edited_fields` | list[str] | подмножество `title`/`description`/`keywords` | Python при `edit` |
 | `flags` | obj | 5 bool-флагов §4.4 | Python |
+| `grounding.vision_keywords` / `concept_keywords` | list[str] | классификация `fields.keywords` (§4.7), без конкретных утверждений | Python |
+| `grounding.specific_claims` | list[obj] | `{term, field, reason, confirmed}`, reason ∈ `NUMBER`, `PROPER_NOUN` | Python; `confirmed` — человек |
 | `validation.errors` / `warnings` | list[obj] | `{code, field, message}`; `field` может быть `null` | Python |
 | `validation.dropped_keywords` | list[obj] | `{keyword, reason}`, reason ∈ `EMPTY`, `BRAND`, `STOPWORD`, `DUPLICATE` | Python |
 | `review` | obj | `decided_at` (ISO UTC \| null), `reason` (str \| null), `allow_partial` (bool) | Python при approve/reject |
@@ -343,7 +401,7 @@ Pipeline не блокируется: у asset всегда есть draft, а �
 | `build --force` | любое | новый `generated` (или partial при сбое), `fields` пересобраны, `edited_fields` очищен, `draft` |
 | `rebuild` | любое | только Python-правила поверх существующего `generated` (или Vision у partial); **правки человека сохраняются**; `approved`/`rejected` → `draft` |
 | `edit` | любое | меняет `fields`, добавляет поле в `edited_fields`, пересчитывает validation; `approved`/`rejected` → `draft` |
-| `approve` | `draft` без errors; partial — только с `--allow-partial` | `approved` |
+| `approve` | `draft` без errors; partial — только с `--allow-partial`; с `--confirm-claims` сначала подтверждаются все текущие конкретные утверждения | `approved` |
 | `reject --reason` | `draft`, `approved` | `rejected` |
 
 Прочие переходы — ошибка CLI (код 1), без изменений и без событий.
@@ -361,7 +419,7 @@ Pipeline не блокируется: у asset всегда есть draft, а �
 | `METADATA_AI` | `FAILED` | `provider`, `model`, `prompt_version`, `inputs`, `failed_at`, `duration_s`, `error_type`, `error`, `raw_output` (только если был ответ, до 4000 символов) |
 | `METADATA` | `DRAFTED` | `builder_version`, `completeness`, `trigger` (`build` \| `build_force` \| `rebuild`), `errors` (int), `warnings` (int), `keywords` (int) |
 | `METADATA` | `EDITED` | `field`, `old`, `new`, `state_before` |
-| `METADATA` | `APPROVED` | `builder_version`, `completeness`, `allow_partial` |
+| `METADATA` | `APPROVED` | `builder_version`, `completeness`, `allow_partial`, `confirmed_claims` (list[str], подтверждённые этой командой) |
 | `METADATA` | `REJECTED` | `reason`, `state_before` |
 
 `metadata_json` хранит текущее состояние, события — полную историю,
@@ -380,7 +438,7 @@ python -m app.metadata edit    N --title "..."
 python -m app.metadata edit    N --description "..."
 python -m app.metadata edit    N --keywords "a, b, c"
 python -m app.metadata edit    N --add-keyword "x" --remove-keyword "y"
-python -m app.metadata approve N [--allow-partial]
+python -m app.metadata approve N [--allow-partial] [--confirm-claims]
 python -m app.metadata reject  N --reason "..."
 ```
 
@@ -405,7 +463,9 @@ Metadata AI — `0`: draft создан, сбой записан событие�
 | `app/ai/schema.py` | + `MetadataSuggestion` (`AIAnalysis` без изменений) |
 | `app/ai/structured.py` | общий построитель strict `json_schema` (перенос `response_schema` из `local_analyzer`) |
 | `app/ai/metadata_analyzer.py` | `MetadataAnalyzer` + LM Studio-провайдер (отдельная конфигурация `METADATA_*`) |
-| `app/metadata.py` | Python-слой: сборка, нормализация, флаги, валидация, переходы, CLI |
+| `app/textnorm.py` | `normalize_text` (§4.2) |
+| `app/metadata_builder.py` | чистый Python-слой без БД: сборка, нормализация, флаги, grounding, валидация, переходы |
+| `app/metadata.py` | загрузка/сохранение `metadata_json`, события, вызов Metadata AI, CLI |
 | `app/database/db.py` | + `save_metadata(asset_id, metadata_json)` |
 | `tests/test_metadata*.py` | правила, переходы, события, partial (без LM Studio) |
 
