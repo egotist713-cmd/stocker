@@ -128,6 +128,24 @@ def add_event(
         )
 
 
+def save_ai_result(
+    asset_id: int,
+    ai_result: str,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> None:
+    """Save the serialized AI analysis for an asset."""
+    with get_connection(db_path) as connection:
+        connection.execute(
+            """
+            UPDATE assets
+            SET ai_result = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (ai_result, asset_id),
+        )
+
+
 def get_asset(
     asset_id: int,
     db_path: Path | str = DEFAULT_DB_PATH,

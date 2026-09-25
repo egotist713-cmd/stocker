@@ -1,0 +1,1617 @@
+\
+# STOCKER — ПАСПОРТ И БОРТОВОЙ ЖУРНАЛ ПРОЕКТА
+
+> **Назначение:** единый переносимый документ с архитектурой, фактическим состоянием, принятыми решениями, важными ограничениями и историей значимых этапов разработки Stocker.
+>
+> **Главный источник истины для кода:** актуальная рабочая директория `F:\stock\stocker`. Этот документ не заменяет фактический код. Если документ и код расходятся, приоритет имеет фактическое состояние проекта, а расхождение нужно зафиксировать в журнале.
+>
+> **Последнее обновление:** 23 сентября 2026.
+>
+> **Язык:** русский. Имена файлов, классов, функций, полей БД, команд, model ID и API endpoints сохраняются в оригинальном виде.
+
+---
+
+# ЧАСТЬ I. АРХИТЕКТУРА ПРОЕКТА
+
+## 1. Идея Stocker
+
+Stocker — локальная система автоматизации обработки и подготовки фотографий для фотостоков.
+
+Главная архитектурная идея — разделить:
+
+- агентное принятие решений;
+- workflow/orchestration;
+- детерминированную бизнес-логику;
+- состояние;
+- AI-сервисы;
+- внешние инструменты.
+
+Целевая схема:
+
+```text
+                           USER
+                            │
+                            ▼
+                     ┌─────────────┐
+                     │  OpenClaw   │
+                     │    AGENT    │
+                     └──────┬──────┘
+                            │
+                     decisions / tools
+                            │
+             ┌──────────────┼──────────────┐
+             │              │              │
+             ▼              ▼              ▼
+         Stocker           n8n          Browser
+         Core/API        Workflow       Automation
+             │
+             │
+      ┌──────┴──────────────────────────────┐
+      │                                     │
+      ▼                                     ▼
+Deterministic tools                    AI services
+      │                                     │
+      │                            ┌────────┼────────┐
+      │                            │        │        │
+      ▼                            ▼        ▼        ▼
+  QC / SQLite                  Vision    Brain    Expert
+  Topaz                        local     local    cloud
+  Files
+  Metadata
+  ComfyUI
+```
+
+### Роли компонентов
+
+### OpenClaw
+
+**Мозг / агент.**
+
+OpenClaw принимает решения, пользуется инструментами и управляет последовательностью действий.
+
+Он не должен заменять детерминированную бизнес-логику Stocker и не должен произвольно писать в SQLite.
+
+---
+
+### n8n
+
+**Workflow engine.**
+
+Предназначен для:
+
+- расписаний;
+- очередей;
+- retries;
+- ожиданий;
+- повторяемых цепочек;
+- ветвления;
+- долгоживущих workflow;
+- orchestration.
+
+n8n не должен заменять ядро Stocker.
+
+---
+
+### Stocker Python Core / API
+
+**Детерминированная бизнес-логика.**
+
+Здесь должны находиться операции, результат которых должен быть предсказуемым и тестируемым:
+
+- ingest;
+- duplicate detection;
+- QC;
+- запись состояния;
+- сохранение AI-результатов;
+- работа с файлами;
+- metadata;
+- сравнение изображений;
+- бизнес-правила;
+- будущие decision functions.
+
+AI может предоставлять данные для решений, но Python-код определяет, как эти данные изменяют состояние системы.
+
+---
+
+### SQLite
+
+**Источник состояния.**
+
+SQLite хранит состояние обработки:
+
+- assets;
+- QC;
+- AI results;
+- processing events;
+- будущие статусы и metadata.
+
+Состояние должно быть восстанавливаемым и проверяемым независимо от агента.
+
+---
+
+### Vision model
+
+**Глаза.**
+
+Отвечает на вопросы вроде:
+
+> Что реально изображено на фотографии?
+
+Текущая production vision model:
+
+```text
+qwen3-vl-8b-instruct
+```
+
+---
+
+### Brain model
+
+**Локальное рассуждение / tool use.**
+
+Отдельная роль от vision.
+
+В экспериментах OpenClaw использовалась:
+
+```text
+qwen3.8-9b-distill
+```
+
+Не путать её с:
+
+```text
+qwen3-vl-8b-instruct
+```
+
+---
+
+### Cloud LLM / Expert
+
+**Экспертный слой.**
+
+Используется там, где локальной модели недостаточно.
+
+В проекте существует:
+
+```text
+app/ai/openai_analyzer.py
+```
+
+Это отдельный provider и не текущий основной AI-путь.
+
+---
+
+### Инструменты
+
+Планируемые/возможные инструменты:
+
+- Topaz;
+- ComfyUI;
+- Files;
+- Google Drive;
+- Browser;
+- Stock APIs;
+- другие внешние сервисы.
+
+---
+
+# 2. Целевой принцип работы
+
+Stocker развивается поэтапно.
+
+Первый уровень:
+
+```text
+Фотография
+    ↓
+INGEST
+    ↓
+SQLite / Asset
+    ↓
+QC
+    ↓
+Local Vision AI
+    ↓
+AIAnalysis
+    ↓
+SQLite / ai_result
+```
+
+Позже:
+
+```text
+AIAnalysis
+    ↓
+Decision Engine
+    ↓
+metadata / enhancement / approval
+    ↓
+export / stock platforms
+```
+
+А ещё позже:
+
+```text
+OpenClaw
+    ↓
+решение
+    ↓
+Stocker Core / n8n / Browser / Tools
+```
+
+Не следует сразу реализовывать весь верхний уровень автономности.
+
+---
+
+# 3. Основной принцип безопасности архитектуры
+
+LLM/VLM не должна напрямую и бесконтрольно менять внутреннее состояние Stocker.
+
+Правильный путь:
+
+```text
+AI
+ ↓
+структурированный результат
+ ↓
+Python validation
+ ↓
+детерминированная бизнес-логика
+ ↓
+SQLite
+```
+
+---
+
+# ЧАСТЬ II. ФАКТИЧЕСКОЕ СОСТОЯНИЕ ПРОЕКТА
+
+# 4. Рабочая директория
+
+```text
+F:\stock\stocker
+```
+
+Если агент имеет прямой доступ к этой директории:
+
+> **`F:\stock\stocker` является единственным источником истины для текущего состояния проекта.**
+
+Старые архивы не должны использоваться вместо рабочей директории.
+
+---
+
+# 5. Структура проекта
+
+```text
+app/
+  __init__.py
+  ai/
+    __init__.py
+    analyzer.py
+    openai_analyzer.py
+    local_analyzer.py
+    schema.py
+  database/
+    __init__.py
+    db.py
+  ingest.py
+  main.py
+  qc.py
+  worker.py
+
+config/
+
+data/
+  incoming/
+  working/
+  approved/
+  rejected/
+  db/
+
+logs/
+
+scripts/
+  init_db.py
+  test_db.py
+  test_openai_image.py
+  test_local_ai.py
+  debug_local_ai.py
+  test_lmstudio_native.py
+  model_benchmark/
+    run_benchmark.py
+    config.py
+    client.py
+    prompts.py
+    logger.py
+    tests/
+      test_vision.py
+      test_structured.py
+      test_stock_analysis.py
+      test_multi_image.py
+      test_tools.py
+    results/
+
+tests/
+
+.venv/
+.venv-linux/
+
+.env
+.env.example
+README.md
+requirements.txt
+```
+
+Если фактическая структура отличается, сначала доверять фактическому проекту и при необходимости обновить этот документ.
+
+---
+
+# 6. Окружение
+
+Основной компьютер:
+
+- Windows 11 Pro x64
+- AMD Ryzen 9 3900X
+- 12 ядер / 24 потока
+- RTX 3080 Ti
+- 12 GB VRAM
+- 32 GB RAM
+
+RAM:
+
+- MemTest86: 103%
+- ошибок: 0
+
+WSL:
+
+- WSL 2.7.14.0
+- distro: `OpenClawGateway`
+- Node 26.4
+- OpenClaw 2026.9.5
+
+LM Studio работает на Windows.
+
+---
+
+# 7. LM Studio
+
+Stocker использует OpenAI-compatible endpoint:
+
+```text
+http://192.168.1.104:1234/v1
+```
+
+API key для LM Studio:
+
+```text
+lm-studio
+```
+
+если не задан другой.
+
+`LocalAnalyzer` использует OpenAI Python SDK и:
+
+```text
+chat.completions.create()
+```
+
+---
+
+# 8. Текущая vision model
+
+Production vision model:
+
+```text
+qwen3-vl-8b-instruct
+```
+
+Это Qwen3-VL-8B.
+
+НЕ путать с:
+
+```text
+qwen3.8-9b-distill
+```
+
+Последняя модель использовалась в отдельном эксперименте OpenClaw.
+
+---
+
+# 9. LocalAnalyzer
+
+Файл:
+
+```text
+app/ai/local_analyzer.py
+```
+
+Текущая модель:
+
+```python
+model: str = "qwen3-vl-8b-instruct"
+```
+
+LocalAnalyzer:
+
+1. принимает путь к изображению;
+2. проверяет файл;
+3. определяет MIME;
+4. подготавливает изображение;
+5. кодирует его в base64;
+6. отправляет его в LM Studio;
+7. получает JSON;
+8. валидирует через `AIAnalysis.model_validate_json()`.
+
+Поддерживаемые форматы:
+
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.webp`
+
+Для model input:
+
+```text
+max_edge = 2048
+```
+
+Это не изменяет оригинальный файл.
+
+---
+
+# 10. AI schema
+
+Файл:
+
+```text
+app/ai/schema.py
+```
+
+Текущая структура:
+
+```python
+class PeopleInfo(BaseModel):
+    present: bool = False
+    count: int = Field(default=0, ge=0)
+
+
+class AIAnalysis(BaseModel):
+    analysis_version: str = "1.0"
+    description: str = ""
+    title: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    subject: str = ""
+    commercial_context: str = ""
+    technical_subjects: list[str] = Field(default_factory=list)
+    people: PeopleInfo = Field(default_factory=PeopleInfo)
+    brands: list[str] = Field(default_factory=list)
+    logos: list[str] = Field(default_factory=list)
+    text_visible: list[str] = Field(default_factory=list)
+    editorial_risk: list[str] = Field(default_factory=list)
+    ai_generated: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+```
+
+Не изменять schema просто ради подгонки под случайный malformed output модели.
+
+---
+
+# 11. SQLite
+
+Ожидаемый путь:
+
+```text
+F:\stock\stocker\data\db\stocker.db
+```
+
+В `app/database/db.py` используется путь, вычисляемый относительно проекта.
+
+Основная таблица:
+
+```sql
+CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    file_hash TEXT UNIQUE,
+    extension TEXT,
+    width INTEGER,
+    height INTEGER,
+    file_size INTEGER,
+    status TEXT NOT NULL DEFAULT 'NEW',
+    qc_result TEXT,
+    ai_result TEXT,
+    metadata_json TEXT,
+    rejection_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Также используется таблица:
+
+```text
+processing_events
+```
+
+Она хранит события обработки.
+
+---
+
+# 12. Ingest
+
+Файл:
+
+```text
+app/ingest.py
+```
+
+Отвечает за:
+
+- hashing;
+- duplicate detection;
+- извлечение metadata;
+- создание asset;
+- запись события.
+
+При тестах pipeline нужно использовать новую фотографию, если не требуется специально проверить duplicate behavior.
+
+---
+
+# 13. QC
+
+Файл:
+
+```text
+app/qc.py
+```
+
+Известные правила:
+
+- размер файла: 100 KB – 45 MB;
+- minimum width: 4000;
+- minimum height: 3000;
+- sharpness;
+- extreme pixel checks.
+
+AI запускается только после успешного QC.
+
+---
+
+# 14. Worker
+
+Файл:
+
+```text
+app/worker.py
+```
+
+Текущая концепция:
+
+```text
+process_file(path)
+    ↓
+ingest_file()
+    ↓
+get_asset()
+    ↓
+check_asset()
+    ↓
+save_qc_result()
+    ↓
+если QC PASSED:
+    LocalAnalyzer
+    ↓
+    save_ai_result()
+    ↓
+    AI/PASSED event
+```
+
+При QC failure:
+
+```text
+AI не запускается
+```
+
+---
+
+# 15. Production AI integration
+
+Production-путь уже реализован:
+
+```text
+ingest
+  ↓
+QC
+  ↓
+AI
+  ↓
+assets.ai_result
+```
+
+Изменения:
+
+### `app/worker.py`
+
+После успешного QC:
+
+- запускается `LocalAnalyzer`;
+- результат сериализуется через `AIAnalysis.model_dump_json()`;
+- результат сохраняется в `assets.ai_result`;
+- добавляется событие `AI/PASSED`.
+
+При провальном QC AI пропускается.
+
+### `app/database/db.py`
+
+Добавлена функция:
+
+```text
+save_ai_result
+```
+
+в существующий DB layer.
+
+### `app/ai/local_analyzer.py`
+
+Используется:
+
+```text
+qwen3-vl-8b-instruct
+```
+
+---
+
+# ЧАСТЬ III. ПРОВЕДЁННЫЕ ИСПЫТАНИЯ И РЕШЕНИЯ
+
+# 16. Benchmark локальных vision-моделей
+
+Тестировались:
+
+1. Qwen2.5-VL-7B
+2. Qwen3-VL-8B
+3. MiniCPM-V 4.5
+4. Ministral 3 8B
+
+Проверялись:
+
+- basic vision;
+- structured output;
+- stock analysis;
+- multi-image;
+- tool calling.
+
+Это проектный benchmark, а не универсальный рейтинг.
+
+---
+
+# 17. Benchmark summary
+
+| Тест | Qwen2.5-VL-7B | Qwen3-VL-8B | MiniCPM-V 4.5 Q4 | Ministral 3 8B |
+|---|---:|---:|---:|---:|
+| Basic vision | OK | OK ~2.25 s | OK ~7.14 s | OK ~2.43 s |
+| Structured output | schema FAIL | schema OK | schema OK | FAIL |
+| Stock analysis | schema FAIL | schema FAIL | schema FAIL | schema FAIL |
+| Tool calling | no structured call | structured call OK | no | no |
+| 1 image | OK | OK ~1.64 s | OK ~8.84 s | OK ~8.81 s |
+| 2 images | OK | OK ~1.82 s | OK ~7.32 s | OK ~8.62 s |
+| 3 images | OK | OK ~4.58 s | OK ~11.56 s | OK ~11.51 s |
+
+MiniCPM фактически тестировался на Q4_K_S.
+
+Практическое решение:
+
+> Для текущей реализации используется `qwen3-vl-8b-instruct`.
+
+---
+
+# 18. Успешный отдельный AI test
+
+Команда:
+
+```powershell
+python -m scripts.test_local_ai
+```
+
+успешно вернула валидный `AIAnalysis`.
+
+Это доказало:
+
+```text
+LocalAnalyzer
+    ↓
+LM Studio
+    ↓
+Qwen3-VL-8B
+    ↓
+JSON
+    ↓
+AIAnalysis validation
+```
+
+работает.
+
+---
+
+# 19. Тестовое изображение
+
+Ранее использованное:
+
+```text
+F:\stock\stocker\data\incoming\IMG_20260911_130107.jpg
+```
+
+Размер:
+
+```text
+4096 × 3072
+```
+
+Размер:
+
+```text
+5158623 bytes
+```
+
+SHA256:
+
+```text
+6673ff8456783f02ea96166bbf542867541b9b58d6e4a8e5d375b59b51d06578
+```
+
+Asset ID:
+
+```text
+3
+```
+
+Ранее QC:
+
+- passed;
+- width 4096;
+- height 3072;
+- JPEG;
+- file size 5158623;
+- sharpness ~240.421;
+- dark_ratio ~1e-6;
+- bright_ratio ~0.006129.
+
+---
+
+# ЧАСТЬ IV. ТЕКУЩИЙ ЭТАП
+
+# 20. Текущий production pipeline
+
+Цель текущего этапа:
+
+```text
+НОВАЯ ФОТОГРАФИЯ
+    ↓
+INGEST
+    ↓
+ASSET В SQLITE
+    ↓
+QC
+    ↓
+QC PASSED
+    ↓
+QWEN3-VL-8B
+    ↓
+AIAnalysis
+    ↓
+assets.ai_result
+    ↓
+AI/PASSED EVENT
+```
+
+---
+
+# 21. End-to-end проверка
+
+Для проверки использовалась новая фотография:
+
+```text
+F:\stock\stocker\data\incoming\IMG_20260911_130109.jpg
+```
+
+Команда:
+
+```powershell
+python -m app.worker F:\stock\stocker\data\incoming\IMG_20260911_130109.jpg
+```
+
+Результат:
+
+```text
+WORKER: F:\stock\stocker\data\incoming\IMG_20260911_130109.jpg
+Processing: IMG_20260911_130109.jpg
+ADDED: ID=4
+QC: True
+AI: PASSED
+Asset ID: 4
+```
+
+Проверка фактического SQLite state для asset ID `4`:
+
+- asset существует, имеет `status = PASSED`;
+- `qc_result` сохранён и содержит `passed = true`;
+- `ai_result` непустой и повторно валидируется через `AIAnalysis`;
+- существуют события `INGEST/DONE`, `QC/PASSED`, `AI/PASSED`.
+
+---
+
+# 22. Устранённый SQLite blocker
+
+Статус:
+
+```text
+🟢 DONE
+```
+
+Причина:
+
+```text
+sqlite3.OperationalError:
+attempt to write a readonly database
+```
+
+Подтверждённая фактическая причина (23 сентября 2026): процесс, выполняющий
+Stocker из Codex, работает от имени
+`DESKTOP-NL7P3S0\\codexsandboxoffline`. У защищённых ACL существующих
+`data\\db` и `data\\db\\stocker.db` нет разрешения Modify для группы
+`DESKTOP-NL7P3S0\\CodexSandboxUsers`. В результате SQLite может читать БД и
+взять `BEGIN IMMEDIATE`, но не может открыть сам файл для записи и создать
+служебный rollback journal. Проверочная `INSERT` завершается `SQLITE_READONLY`.
+Это проблема доступа к существующим объектам файловой системы, а не БД,
+схемы, QC или AI.
+
+ACL были выданы только существующим `data\\db` и `data\\db\\stocker.db`; БД
+не удалялась и не пересоздавалась. Внутренний default sandbox Codex всё ещё
+ограничивает прямую запись своего процесса даже после исправления Windows ACL,
+поэтому production test был выполнен вне этого внутреннего ограничения. Это
+ограничение рабочей среды Codex, а не Stocker или SQLite.
+
+Это НЕ проблема:
+
+- Qwen3-VL;
+- LM Studio;
+- LocalAnalyzer;
+- AIAnalysis;
+- QC.
+
+Исторически ошибка происходила раньше:
+
+```text
+worker
+ ↓
+ingest
+ ↓
+add_asset
+ X
+SQLite write
+```
+
+После первоначальной ошибки:
+
+```text
+assets: []
+events: []
+```
+
+То есть до исправления asset вообще не был создан. Повторная проверка успешно
+создала asset ID `4` и завершила весь pipeline.
+
+---
+
+# 23. Результат исправления
+
+SQLite write access подтверждён контрольной транзакцией с rollback. Затем
+production worker успешно записал ingest, QC и AI state в существующую БД.
+Ни модель, ни AI schema, ни DB schema не менялись.
+
+Следующий этап по текущему плану: детерминированный metadata pipeline на
+основе уже сохранённого `AIAnalysis`; перед реализацией нужно определить его
+контракт и критерии проверки.
+
+---
+
+# 24. Критерий завершения текущего этапа
+
+Текущий этап считается `DONE` только если доказан полный путь:
+
+```text
+photo
+ ↓
+asset row
+ ↓
+QC result
+ ↓
+valid AIAnalysis
+ ↓
+assets.ai_result
+ ↓
+AI/PASSED event
+```
+
+Проверка должна включать реальное состояние SQLite, а не только консольный вывод.
+
+Статус:
+
+```text
+🟢 DONE
+```
+
+---
+
+# ЧАСТЬ V. ПРАВИЛА БОРТОВОГО ЖУРНАЛА
+
+# 25. Зачем нужен бортовой журнал
+
+Этот файл — не только технический паспорт.
+
+Он одновременно является **бортовым журналом проекта**.
+
+Его задача — сохранить:
+
+- архитектурные решения;
+- важные технические решения;
+- завершённые этапы;
+- подтверждённые результаты;
+- существенные блокеры;
+- причины изменения направления;
+- важные ограничения.
+
+Журнал нужен для того, чтобы новый агент или человек мог восстановить ход проекта без чтения всей истории чатов.
+
+---
+
+# 26. Когда добавлять новую запись в журнал
+
+Новая запись создаётся, когда произошло хотя бы одно из следующего:
+
+### 1. Достигнута законченная техническая цель
+
+Например:
+
+```text
+LocalAnalyzer → Qwen3-VL-8B → AIAnalysis
+```
+
+успешно работает.
+
+---
+
+### 2. Принято архитектурное решение
+
+Например:
+
+> Stocker Core остаётся детерминированным слоем, OpenClaw не пишет напрямую в SQLite.
+
+---
+
+### 3. Выбран или заменён компонент
+
+Например:
+
+> Qwen3-VL-8B выбран как текущая vision model после benchmark.
+
+---
+
+### 4. Найдена существенная проблема и установлена её причина
+
+Например:
+
+> Production pipeline заблокирован readonly SQLite на `add_asset`, до QC и AI.
+
+---
+
+### 5. Изменился контракт между компонентами
+
+Например:
+
+- изменение AIAnalysis;
+- изменение структуры event;
+- изменение API;
+- изменение формата DB state.
+
+---
+
+### 6. Завершён этап проекта
+
+Например:
+
+> Ingest + QC + AI persistence завершены и подтверждены интеграционным тестом.
+
+---
+
+### 7. Изменилось стратегическое решение
+
+Например:
+
+> n8n отложен до стабилизации внутреннего Python pipeline.
+
+---
+
+# 27. Что НЕ писать в журнал
+
+Не записывать каждую команду и каждую промежуточную попытку:
+
+```text
+запустил PowerShell
+изменил строку
+запустил тест
+получил traceback
+повторил тест
+```
+
+Если это не изменило понимание проекта, архитектуру или состояние этапа, это остаётся в:
+
+- истории чата;
+- Git;
+- тестовых логах;
+- runtime logs.
+
+Бортовой журнал должен отражать **состояние и решения**, а не историю терминала.
+
+---
+
+# 28. Формат записи журнала
+
+Каждая значимая запись должна по возможности иметь:
+
+```markdown
+## YYYY-MM-DD — Название события
+
+### Цель
+Что хотели получить.
+
+### Решение
+Что решили сделать.
+
+### Реализовано
+Что фактически изменилось.
+
+### Проверка
+Каким тестом подтверждено.
+
+### Результат
+PASS / FAIL / BLOCKED.
+
+### Блокер
+Если есть.
+
+### Следующий шаг
+Что делать дальше.
+
+### Статус
+🟢 DONE
+🟡 IN PROGRESS
+🔴 BLOCKED
+⚪ PLANNED
+```
+
+Не требуется заполнять все поля, если они неприменимы.
+
+---
+
+# 29. Статусы
+
+Использовать:
+
+```text
+🟢 DONE
+```
+
+Техническая цель достигнута и подтверждена.
+
+```text
+🟡 IN PROGRESS
+```
+
+Работа продолжается.
+
+```text
+🔴 BLOCKED
+```
+
+Есть конкретная проблема, мешающая продолжению.
+
+```text
+⚪ PLANNED
+```
+
+Запланировано, но ещё не реализуется.
+
+---
+
+# 30. ВАЖНОЕ ПРАВИЛО ЖУРНАЛА
+
+Запись должна фиксировать **доказанный факт**, а не намерение.
+
+Плохо:
+
+> AI pipeline готов.
+
+Хорошо:
+
+> AI pipeline реализован; end-to-end тест пока заблокирован SQLite readonly на `add_asset`.
+
+Плохо:
+
+> Qwen3-VL лучший.
+
+Хорошо:
+
+> Qwen3-VL-8B выбран для текущей реализации после проектного benchmark; он показал vision + valid target schema + tool call + multi-image в наших тестах.
+
+---
+
+# ЧАСТЬ VI. ИСТОРИЯ ЗНАЧИМЫХ СОБЫТИЙ
+
+# 31. 2026-09 — Архитектурная модель Stocker
+
+### Цель
+
+Определить разделение ролей между агентом, workflow engine, Python core, состоянием и AI.
+
+### Решение
+
+Принята архитектурная модель:
+
+```text
+YOU
+ ↓
+OpenClaw Agent
+ ↓
+Stocker Core / n8n / Browser
+ ↓
+deterministic tools + AI services
+```
+
+Stocker Python остаётся детерминированным ядром.
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 32. 2026-09 — Benchmark локальных VLM
+
+### Цель
+
+Выбрать vision model для Stocker на RTX 3080 Ti 12 GB.
+
+### Рассматривались
+
+- Qwen2.5-VL-7B;
+- Qwen3-VL-8B;
+- MiniCPM-V 4.5;
+- Ministral 3 8B.
+
+### Решение
+
+Для текущего production implementation выбран:
+
+```text
+qwen3-vl-8b-instruct
+```
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 33. 2026-09 — LocalAnalyzer переключён на Qwen3-VL-8B
+
+### Цель
+
+Перевести реальный `LocalAnalyzer` на выбранную vision model.
+
+### Изменение
+
+```text
+qwen2.5-vl-3b-instruct
+        ↓
+qwen3-vl-8b-instruct
+```
+
+### Проверка
+
+```powershell
+python -m scripts.test_local_ai
+```
+
+успешно вернул валидный `AIAnalysis`.
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 34. 2026-09 — Production AI path реализован
+
+### Цель
+
+Подключить LocalAnalyzer к production worker.
+
+### Изменено
+
+- `app/worker.py`;
+- `app/database/db.py`.
+
+### Реализовано
+
+```text
+ingest
+ ↓
+QC
+ ↓
+AI
+ ↓
+assets.ai_result
+ ↓
+AI/PASSED event
+```
+
+AI запускается только после успешного QC.
+
+### Статус
+
+🟢 DONE
+
+Интеграция подтверждена реальной новой фотографией в asset ID `4`: ingest,
+QC, `LocalAnalyzer`, `assets.ai_result` и `AI/PASSED` прошли в одной
+production-проверке.
+
+---
+
+# 35. 2026-09 — Production test заблокирован SQLite
+
+### Цель
+
+Проверить полный pipeline на новой фотографии.
+
+### Команда
+
+```powershell
+python -m app.worker F:\stock\stocker\data\incoming\IMG_20260911_130109.jpg
+```
+
+### Первоначальный результат
+
+```text
+sqlite3.OperationalError:
+attempt to write a readonly database
+```
+
+Ошибка:
+
+```text
+app/database/db.py
+add_asset
+```
+
+### Вывод
+
+Asset не создаётся.
+
+QC и AI не запускаются.
+
+### Статус
+
+🟢 DONE — исторический blocker устранён. После выдачи Modify ACL на
+существующие DB-объекты worker был успешно проверен вне внутреннего Codex
+sandbox; создан asset ID `4`, QC и AI прошли.
+
+---
+
+# 35A. 2026-09-23 — Подтверждён источник SQLite readonly
+
+### Цель
+
+Установить причину ошибки записи до изменения кода или БД.
+
+### Проверка
+
+- фактический DB path: `F:\stock\stocker\data\db\stocker.db`;
+- `PRAGMA query_only = 0`, `journal_mode = delete`, `locking_mode = normal`;
+- чтение БД и `BEGIN IMMEDIATE` проходят;
+- попытка `INSERT` в транзакции завершается `SQLITE_READONLY`;
+- прямое открытие `stocker.db` как `r+b` и создание временного файла в
+  `data\\db` завершаются `Permission denied`;
+- ACL указанных дочерних объектов не содержат группу
+  `DESKTOP-NL7P3S0\\CodexSandboxUsers`, от которой работает текущий процесс.
+
+### Вывод
+
+Readonly вызван файловыми ACL. БД не повреждена, не должна удаляться или
+пересоздаваться. AI-код, модель и schema менять не требуется.
+
+### Следующий шаг
+
+Исправить ACL только для существующих `data\\db` и `data\\db\\stocker.db`,
+затем выполнить production end-to-end test.
+
+### Результат
+
+Администратор выдал Modify для `DESKTOP-NL7P3S0\\CodexSandboxUsers` на
+существующие `data\\db` и `data\\db\\stocker.db`. Контрольная SQLite
+транзакция с rollback прошла. Default sandbox Codex по-прежнему ограничивает
+свой прямой доступ поверх Windows ACL, но запуск worker вне него успешно
+записал весь production state в эту же БД.
+
+### Статус
+
+🟢 DONE
+
+---
+
+# 35B. 2026-09-23 — Первый production pipeline подтверждён end-to-end
+
+### Цель
+
+Доказать полный путь на новой фотографии без изменения модели, AI schema или
+существующей SQLite БД.
+
+### Проверка
+
+Для `F:\stock\stocker\data\incoming\IMG_20260911_130109.jpg` worker создал
+asset ID `4` (JPEG, `8192 × 6144`, SHA256
+`fd9726b043f0a5e8627e1d32529aaf57c4225960ec0f3f025faedbc3daa103ca`).
+Фактический SQLite state подтвердил:
+
+- `assets.status = PASSED`;
+- сохранённый `qc_result` с `passed = true`;
+- непустой `assets.ai_result`, повторно валидируемый через `AIAnalysis`;
+- события `INGEST/DONE`, `QC/PASSED`, `AI/PASSED`.
+
+### Результат
+
+```text
+ingest → QC → qwen3-vl-8b-instruct → AIAnalysis → assets.ai_result → AI/PASSED
+```
+
+### Следующий шаг
+
+Перейти к планированию детерминированного metadata pipeline, используя
+сохранённый AI result как входные данные.
+
+### Статус
+
+🟢 DONE
+
+---
+
+# ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
+
+# 36. Работа с фактическим проектом
+
+Если есть прямой доступ к:
+
+```text
+F:\stock\stocker
+```
+
+сначала изучать актуальные файлы там.
+
+Не просить пользователя вручную копировать содержимое файлов, если агент может открыть их сам.
+
+---
+
+# 37. Не начинать проект заново
+
+Нельзя:
+
+- игнорировать уже сделанные benchmark;
+- повторно выбирать модель без причины;
+- переписывать работающий LocalAnalyzer;
+- пересоздавать архитектуру;
+- делать новую БД вместо диагностики существующей;
+- делать новый pipeline параллельно старому.
+
+Сначала использовать существующую реализацию.
+
+---
+
+# 38. Стиль исправлений
+
+Предпочтение:
+
+```text
+факт
+ ↓
+минимальное изменение
+ ↓
+тест
+ ↓
+доказательство
+```
+
+а не:
+
+```text
+предположение
+ ↓
+большой рефакторинг
+ ↓
+новые ошибки
+```
+
+---
+
+# 39. Если информация неизвестна
+
+Не придумывать.
+
+Правильно:
+
+> Не знаю; нужно проверить фактическое состояние файла/БД/окружения.
+
+Неправильно:
+
+> Наверное, проблема в X, поэтому сразу меняем Y.
+
+---
+
+# 40. Если обнаружено расхождение с этим паспортом
+
+Приоритет:
+
+```text
+Фактический проект
+    >
+Паспорт
+    >
+История чата
+```
+
+Если фактический проект отличается:
+
+1. не откатывать код к паспорту;
+2. установить, какое состояние актуально;
+3. обновить паспорт;
+4. добавить запись в журнал, если расхождение существенно.
+
+---
+
+# 41. Текущая точка продолжения
+
+На момент последнего обновления:
+
+```text
+АРХИТЕКТУРА
+    🟢
+
+INGEST
+    🟢
+
+QC
+    🟢
+
+LOCAL ANALYZER
+    🟢
+
+QWEN3-VL-8B
+    🟢
+
+AIAnalysis
+    🟢
+
+PRODUCTION AI INTEGRATION
+    🟢
+
+END-TO-END TEST
+    🟢
+
+SQLITE WRITE ACCESS
+    🟢
+
+METADATA
+    ⚪ PLANNED
+
+SIMILAR IMAGE GROUPS
+    ⚪ PLANNED
+
+DECISION ENGINE
+    ⚪ PLANNED
+
+TOPAZ / COMFYUI
+    ⚪ PLANNED
+
+EXPORT / STOCK APIs
+    ⚪ PLANNED
+
+N8N AUTOMATION
+    ⚪ PLANNED
+
+OPENCLAW AUTONOMY
+    ⚪ PLANNED
+```
+
+---
+
+# 42. БЛИЖАЙШИЙ ОБЯЗАТЕЛЬНЫЙ ШАГ
+
+Начать следующий запланированный milestone — metadata pipeline.
+
+Сначала определить детерминированный контракт: какие поля `AIAnalysis`
+становятся editable stock metadata, где они хранятся и какие правила
+валидации/ручного подтверждения нужны. Не переписывать завершённый ingest/QC/AI
+pipeline и не менять Qwen3-VL-8B или AI schema без отдельного доказанного
+требования.
+
+---
+
+# 43. КРИТЕРИЙ ГОТОВНОСТИ STOCKER НА ТЕКУЩЕМ ЭТАПЕ
+
+Текущий milestone считается завершённым только после доказательства:
+
+```text
+NEW PHOTO
+   ↓
+INGEST
+   ↓
+ASSET
+   ↓
+QC PASSED
+   ↓
+QWEN3-VL-8B
+   ↓
+VALID AIAnalysis
+   ↓
+assets.ai_result
+   ↓
+AI/PASSED
+```
+
+и проверки фактического SQLite state.
+
+Результат: подтверждён для asset ID `4` 23 сентября 2026.
+
+Статус: 🟢 DONE
+
+---
+
+# 44. КОРОТКАЯ ТОЧКА ВОЗВРАТА
+
+Если весь предыдущий контекст потерян, читать этот раздел.
+
+> Stocker — Python + SQLite система обработки stock-фотографий.
+>
+> Архитектура разделяет:
+>
+> - YOU;
+> - OpenClaw Agent;
+> - Stocker Python Core/API;
+> - n8n Workflow;
+> - Browser Automation;
+> - deterministic tools;
+> - Vision;
+> - Brain;
+> - Cloud Expert;
+> - SQLite.
+>
+> Текущий production pipeline:
+>
+> `ingest → QC → Qwen3-VL-8B → AIAnalysis → assets.ai_result → AI/PASSED`
+>
+> Qwen3-VL-8B уже выбран после project benchmark и отдельно проверен через LocalAnalyzer.
+>
+> Production integration уже реализована.
+>
+> Первый production pipeline подтверждён на asset ID `4`: `ingest → QC →
+> Qwen3-VL-8B → AIAnalysis → assets.ai_result → AI/PASSED`. SQLite blocker
+> устранён без удаления или пересоздания БД; SQLite state проверен напрямую.
+>
+> **Следующая задача: спроектировать и реализовать детерминированный metadata
+> pipeline на основе сохранённого `AIAnalysis`, не переписывая завершённый
+> pipeline.**
+>
+> После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
+
+---
+
+# КОНЕЦ ПАСПОРТА И БОРТОВОГО ЖУРНАЛА

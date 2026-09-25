@@ -26,3 +26,15 @@ logs/*
 # OS
 Thumbs.db
 Desktop.ini
+
+# Linux/WSL virtual environment
+.venv-linux/
+
+# Test tooling
+.pytest_cache/
+
+# Benchmark run outputs (test data, kept locally)
+scripts/model_benchmark/results/
+
+# Scratch files
+scripts/пустой.py
