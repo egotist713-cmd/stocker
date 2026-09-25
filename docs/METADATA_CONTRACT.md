@@ -433,7 +433,7 @@ Stocker автоматизирует промышленный stock-поток. 
 | Слой | Отвечает на вопрос | Версия |
 |---|---|---|
 | validation (§4.5) | корректны ли metadata по форме и лимитам? | `builder_version` |
-| **review gate** | можно ли пропустить без человека? | `policy_version = gate-v1` |
+| **review gate** | можно ли пропустить без человека? | `policy_version` (`gate-v1` → `gate-v1.1` с 26.09.2026) |
 | человек | спорный случай: approve или reject | — |
 
 Gate — отдельный детерминированный модуль (`app/review_gate.py`, чистые
@@ -474,14 +474,13 @@ Gate выполняется над текущими `fields`, `validation`, `gro
 | `TEXT_BRAND_OR_LEGAL` | элемент `text_visible` классифицирован как `brand_or_legal` (§6A.4) |
 | `LEGAL_CLAIM` | в `title`, `description` или keywords юридически значимое утверждение (§6A.5) |
 | `PEOPLE_RECOGNIZABLE` | уровень риска людей `recognizable` (§6A.4a): видно лицо или человек — главный объект, возможен model release |
-| `PEOPLE_UNCLEAR` | люди есть, но по Vision нельзя установить, что присутствие неидентифицируемое (§6A.4a) |
 | `EDITORIAL_RISK` | Vision `editorial_risk` не пуст |
 | `AI_GENERATED` | Vision `ai_generated = true` |
 | `MANUAL_ESCALATION` | вызван `escalate` (действует до решения человека) |
 | `AUTO_APPROVE_DISABLED` | причин нет, но `STOCKER_AUTO_APPROVE=0` (аварийный выключатель) |
 
 **Не блокируют** (записываются в `review_gate.notes`): `TEXT_TECHNICAL`,
-`TEXT_DESCRIPTIVE`, `PEOPLE_PARTIAL`, а также warnings валидации (`FEW_KEYWORDS`,
+`TEXT_DESCRIPTIVE`, `PEOPLE_PARTIAL`, `PEOPLE_INCIDENTAL`, а также warnings валидации (`FEW_KEYWORDS`,
 `TITLE_LONG`, ...).
 
 ### 6A.4. Классификация `text_visible`
@@ -526,7 +525,7 @@ Asset 5 показывает, зачем нужно правило 1: назва
 | `none` | `present = false` и `count = 0` | — |
 | `recognizable` | есть признак узнаваемости (`face`, `faces`, `facial`, `portrait`, `headshot`, `smiling`, `looking at camera`, `eyes`) **или** в `subject` человек (`person`, `people`, `man`, `woman`, `worker`, `engineer`, `technician`, `operator`, `electrician`, `builder`, `welder`, `mechanic`) без признаков частичного присутствия | `PEOPLE_RECOGNIZABLE` → review |
 | `partial` | есть признак неидентифицируемого присутствия (`hand`, `hands`, `glove`, `gloved`, `arm`, `arms`, `finger(s)`, `legs`, `feet`, `from behind`, `back view`, `rear view`, `silhouette(d)`, `faceless`, `face not visible`, `face obscured`, `face hidden`, `face covered`, `unrecognizable`, `anonymous`, `blurred figure`) и нет признаков узнаваемости | note `PEOPLE_PARTIAL` |
-| `unclear` | люди есть, признаков нет | `PEOPLE_UNCLEAR` → review |
+| `unclear` | люди есть, признаков нет (рабочий случайно в кадре) | note `PEOPLE_INCIDENTAL` — **не блокирует** (с `gate-v1.1`) |
 
 - Отрицания лица (`face not visible`, `face obscured`, …) удаляются из текста
   до поиска признаков узнаваемости.
@@ -535,10 +534,15 @@ Asset 5 показывает, зачем нужно правило 1: назва
   `crane arm`, `mechanical arm`, `swing arm`.
 - Совпадения по границам слов, словари — константы `gate-v1`.
 
-**Ограничение:** качество зависит от того, как Vision описал людей. При
-неопределённости решение всегда `human_review`. Если этого окажется мало,
-следующий шаг — отдельная AI-проверка людей по изображению (новая роль, без
-изменения `AIAnalysis`), результат которой gate учитывает так же.
+**Приоритет — автоматизация industrial stock (решение 26.09.2026,
+`gate-v1.1`):** к человеку отправляется только `recognizable`. Частичное и
+неясное присутствие (рабочий случайно в кадре) автопроход не блокирует. Редкие
+случаи решаются по ходу процесса (отклонение, согласие, замена кадра), а не
+ценой автоматизации.
+
+**Ограничение:** уровень определяется по тому, как Vision описал людей.
+Определение узнаваемости по самому изображению (отдельная AI-роль, без
+изменения `AIAnalysis`) — возможное будущее улучшение.
 
 ### 6A.5. Юридически значимые утверждения в metadata
 
@@ -567,7 +571,7 @@ Asset 5 показывает, зачем нужно правило 1: назва
 
 ```json
 "review_gate": {
-  "policy_version": "gate-v1",
+  "policy_version": "gate-v1.1",
   "decision": "human_review",
   "reasons": [{"code": "TEXT_BRAND_OR_LEGAL", "detail": "АО \"ШПЗ\""}],
   "notes": [{"code": "TEXT_TECHNICAL", "detail": "0411Е.06.05.090"},

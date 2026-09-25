@@ -15,7 +15,8 @@ from app.ai.schema import AIAnalysis
 from app.textnorm import normalize_text
 
 
-POLICY_VERSION = "gate-v1"
+# gate-v1.1 (26.09.2026): неясное присутствие людей больше не отправляет в review.
+POLICY_VERSION = "gate-v1.1"
 METADATA_VERSION = "2"
 
 AUTO_APPROVED = "auto_approved"
@@ -214,11 +215,13 @@ def evaluate(metadata: dict, vision: AIAnalysis, auto_approve_enabled: bool = Tr
     for claim in legal_claims(metadata["fields"]):
         reason("LEGAL_CLAIM", f"{claim['field']}: {claim['term']}")
 
+    # gate-v1.1: к человеку — только узнаваемый человек. Частичное или
+    # неясное присутствие (рабочий случайно в кадре) автопроход не блокирует.
     people = people_risk(vision)
     if people["level"] == "recognizable":
         reason("PEOPLE_RECOGNIZABLE", ", ".join(people["markers"]))
     elif people["level"] == "unclear":
-        reason("PEOPLE_UNCLEAR", f"people.count={vision.people.count}")
+        note("PEOPLE_INCIDENTAL", f"people.count={vision.people.count}")
     elif people["level"] == "partial":
         note("PEOPLE_PARTIAL", ", ".join(people["markers"]))
 

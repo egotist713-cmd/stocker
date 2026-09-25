@@ -56,7 +56,7 @@ def test_low_risk_is_auto_approved():
 
     assert m["state"] == "auto_approved"
     assert m["metadata_version"] == "2"
-    assert m["review_gate"]["policy_version"] == "gate-v1"
+    assert m["review_gate"]["policy_version"] == "gate-v1.1"
     assert m["review_gate"]["decision"] == "auto_approved"
     assert reason_codes(m) == []
 
@@ -241,17 +241,27 @@ def test_partial_people_do_not_block_auto_approval():
 
 
 @pytest.mark.parametrize(
-    ("description", "subject", "code"),
+    ("description", "subject"),
     [
-        ("Engineer smiling at the camera.", "Engineer", "PEOPLE_RECOGNIZABLE"),
-        ("A person stands near the conveyor.", "Conveyor line", "PEOPLE_UNCLEAR"),
+        ("Engineer smiling at the camera.", "Engineer"),
+        ("Portrait of a welder with a visible face.", "Welder"),
+        ("An engineer inspects the control cabinet.", "Engineer inspecting cabinet"),
     ],
 )
-def test_recognizable_or_unclear_people_require_review(description, subject, code):
+def test_recognizable_people_require_review(description, subject):
     m = gated(v=people(description, subject))
 
     assert m["state"] == "human_review"
-    assert code in reason_codes(m)
+    assert "PEOPLE_RECOGNIZABLE" in reason_codes(m)
+
+
+def test_incidental_worker_in_industrial_frame_does_not_block():
+    # Рабочий случайно попал в промышленный кадр: не главный объект, лица в описании нет.
+    m = gated(v=people("A person stands near the conveyor line.", "Conveyor line", count=1))
+
+    assert m["state"] == "auto_approved"
+    assert "PEOPLE_INCIDENTAL" in note_codes(m)
+    assert not [code for code in reason_codes(m) if code.startswith("PEOPLE")]
 
 
 # --- юридические утверждения ------------------------------------------------------------

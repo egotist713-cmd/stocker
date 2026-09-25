@@ -31,7 +31,7 @@ def test_low_risk_build_is_auto_approved(stocker_root):
     assert result["metadata"]["state"] == "auto_approved"
     (gated,) = gate_events(stocker_root, asset_id)
     assert gated == {
-        "policy_version": "gate-v1",
+        "policy_version": "gate-v1.1",
         "decision": "auto_approved",
         "reasons": [],
         "notes": [],
