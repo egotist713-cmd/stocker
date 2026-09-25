@@ -2129,6 +2129,68 @@ MCP-адаптер поверх реестра для OpenClaw (`SERVICE_CONTRAC
 ### Статус
 
 🟡 IN PROGRESS — сервер готов; транспорт для OpenClaw ждёт решения
+(завершено в §35P)
+
+---
+
+# 35P. 2026-09-26 — OpenClaw подключён к Stocker через MCP
+
+### Цель
+
+Рабочая связка `OpenClaw → MCP → Stocker Service Layer → Stocker Core → SQLite`.
+
+### Ход
+
+1. Проверка до изменений: WSL 2.7.14 (NAT), Windows build 26200; LM Studio
+   слушает `0.0.0.0:1234`; OpenClaw ходит в LM Studio по
+   `http://172.26.192.1:1234/v1` (адрес NAT-адаптера WSL); Docker Desktop на
+   WSL-движке, контейнеры остановлены; Hyper-V firewall для WSL: входящие `Block`.
+2. **Mirrored networking** (выбор пользователя) — пользователь включил вручную.
+   WSL не смог его настроить: `CreateInstance/CreateVm/ConfigureNetworking/0x8007054f`,
+   откат в `networkingMode None` (без сети), `Wsl/Service/E_UNEXPECTED`.
+   Выполнен **откат** (пользователем, по командам): `.wslconfig` и
+   `openclaw.json` восстановлены из резервных копий. Проверено: NAT, прежний
+   адрес `172.26.192.1`, LM Studio 200, gateway здоров, Docker отвечает.
+3. **Путь 1 (NAT):** `mcp_http` может слушать адрес адаптера
+   `vEthernet (WSL)` (`STOCKER_MCP_HOST=wsl`, определяется при запуске, с
+   ожиданием появления адаптера); LAN и `0.0.0.0` запрещены; токен обязателен.
+   Токен создан пользователем в `.env`, сервер зарегистрирован в OpenClaw
+   пользователем (`openclaw mcp add stocker ... --transport streamable-http`).
+   `openclaw mcp probe`: `stocker: 13 tools`.
+4. Серверный журнал вызовов (`logs/mcp_http.log`): время, инструмент, actor,
+   asset_id, ok, outcome, error (без аргументов и токена).
+
+### Проверка (агент OpenClaw `tardis`, модель `lmstudio/qwen3.8-9b-distill`)
+
+| Тест | Результат | Доказательство |
+|---|---|---|
+| чтение asset | ✅ | журнал: `tool=asset_get actor=agent:openclaw asset_id=5 ok=True`; данные в ответе агента совпадают с БД |
+| pipeline-операция | ✅ | журнал: `tool=metadata_gate ... asset_id=3 ok=True outcome=GATED`; SQLite: событие 48 `METADATA/GATED`, `actor=agent:openclaw`, `decision=auto_approved` |
+| approve/reject через агента | ✅ отказ | агент сообщил, что таких инструментов нет; вызовов в журнале нет |
+| approve/reject напрямую по MCP (в обход LLM, с валидным токеном) | ✅ отказ | `UNKNOWN_OPERATION`; `metadata_edit` с `state: approved` → `INVALID_PARAMS`; `APPROVED`/`REJECTED` в БД — 0 |
+
+### Находки
+
+- **Локальная модель может выдумывать результат инструмента.** В первой
+  попытке теста pipeline агент вернул правдоподобный, но полностью выдуманный
+  ответ («HydroFlow Dynamics Corp», серийный номер, стоимость), не вызвав
+  инструмент: в журнале и в БД вызова не было. С явной инструкцией вызвать
+  инструмент тест прошёл. **Вывод:** истина — журнал сервера и события Stocker,
+  а не текст ответа агента. Деструктивных последствий нет: состояние меняет
+  только Stocker.
+- **Gateway OpenClaw живёт, только пока к WSL подключена сессия `wsl.exe`.**
+  Службы systemd дистрибутив в живых не держат: без сессии WSL гасит его
+  примерно через минуту. Так было и до этой работы (gateway жил, пока была
+  открыта консоль). Для постоянной работы нужна keep-alive сессия.
+- `restart-loop breaker` OpenClaw после серии `wsl --shutdown` подавил
+  автозапуск каналов. Каналы не настроены, поэтому последствий нет.
+- Предупреждение плагина `codex` (state migration pending) было и до работы,
+  к Stocker отношения не имеет.
+
+### Статус
+
+🟢 DONE — связка работает. Автозапуск (keep-alive WSL и Stocker MCP) —
+по командам пользователя.
 
 ---
 
@@ -2272,7 +2334,7 @@ SERVICE LAYER + JSON CLI (app.service, python -m app.api)
     🟢 DONE (§35N)
 
 MCP ДЛЯ OPENCLAW
-    🟡 IN PROGRESS — stdio-сервер готов (§35O); сетевой транспорт ждёт решения
+    🟢 DONE — OpenClaw → MCP HTTP (NAT, адрес WSL, токен) → Stocker (§35P)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
@@ -2312,8 +2374,9 @@ OPENCLAW AUTONOMY
    Контракт — `docs/METADATA_CONTRACT.md` (`metadata-v2`). Очередь человека —
    объекты в `human_review` (сейчас asset 5).
 2. ~~Service layer + JSON CLI~~ — 🟢 DONE (§35N), `docs/SERVICE_CONTRACT.md`.
-3. **MCP-адаптер для OpenClaw** поверх реестра операций (actor
-   `agent:openclaw`, операции `read` + `pipeline`) — следующий шаг.
+3. ~~MCP-адаптер для OpenClaw~~ — 🟢 DONE (§35O, §35P). Сервер:
+   `python -m app.service.mcp_http` (`STOCKER_MCP_HOST=wsl`); журнал вызовов —
+   `logs/mcp_http.log`.
 4. n8n (роль — §35M): Execute Command → `python -m app.api --actor workflow:n8n`,
    позже HTTP поверх того же реестра.
 5. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
@@ -2407,8 +2470,12 @@ AI/PASSED
 > `python -m app.api` — единая точка входа для агентов и workflow; approve и
 > reject только для `human`.
 >
-> **Следующая задача: MCP-адаптер для OpenClaw поверх реестра операций
-> (`SERVICE_CONTRACT.md` §7), затем n8n.**
+> С 26.09.2026 (§35P): OpenClaw подключён к Stocker по MCP HTTP
+> (`http://172.26.192.1:8765/mcp`, токен). Агент читает и выполняет
+> pipeline-операции; approve/reject ему недоступны. Истина — журнал сервера и
+> события Stocker, а не текст ответа агента.
+>
+> **Следующая задача: обсудить n8n (роль — §35M).**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 

@@ -49,9 +49,19 @@ def test_wsl_adapter_address_allowed(monkeypatch, wsl_adapter, host):
 def test_wsl_host_requires_adapter(monkeypatch):
     monkeypatch.setattr(mcp_http, "wsl_host_address", lambda: None)
     monkeypatch.setenv("STOCKER_MCP_HOST", "wsl")
+    monkeypatch.setenv("STOCKER_MCP_WAIT_SECONDS", "0")
 
     with pytest.raises(SystemExit):
         mcp_http.resolve_host()
+
+
+def test_wsl_host_waits_for_adapter(monkeypatch):
+    answers = iter([None, None, WSL_ADDRESS])
+    monkeypatch.setattr(mcp_http, "wsl_host_address", lambda: next(answers))
+    monkeypatch.setattr(mcp_http.time, "sleep", lambda _: None)
+    monkeypatch.setenv("STOCKER_MCP_HOST", "wsl")
+
+    assert mcp_http.resolve_host() == WSL_ADDRESS
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])

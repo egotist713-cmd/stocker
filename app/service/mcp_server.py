@@ -14,6 +14,7 @@ MCP stdio-сервер Stocker для агентов (docs/SERVICE_CONTRACT.md �
 """
 
 import contextlib
+from datetime import datetime
 import json
 import os
 import re
@@ -101,6 +102,16 @@ def call(name: str, arguments: dict | None, actor: str) -> types.CallToolResult:
             envelope = dispatch(operations[name].name, arguments or {}, actor=actor)
     else:
         envelope = dispatch(operations[name].name, arguments or {}, actor=actor)
+
+    # Журнал вызовов в stderr: доказательство, что агент действительно вызвал
+    # инструмент (чтения не оставляют событий в БД). Аргументы не пишутся.
+    error = envelope["error"]["code"] if envelope["error"] else None
+    print(
+        f"{datetime.now().isoformat(timespec='seconds')} MCP tool={name} actor={actor} "
+        f"asset_id={envelope['asset_id']} ok={envelope['ok']} outcome={envelope['outcome']} error={error}",
+        file=sys.__stderr__,
+        flush=True,
+    )
 
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(envelope, ensure_ascii=False))],

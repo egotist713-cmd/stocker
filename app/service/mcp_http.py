@@ -18,6 +18,7 @@ import ipaddress
 import os
 import subprocess
 import sys
+import time
 
 import uvicorn
 from dotenv import load_dotenv
@@ -62,6 +63,14 @@ def resolve_host() -> str:
     """
     host = os.getenv("STOCKER_MCP_HOST", DEFAULT_HOST).strip()
     wsl_address = wsl_host_address() if host == WSL_HOST or not _is_loopback(host) else None
+
+    # При автозапуске на входе в Windows адаптер WSL появляется только после старта WSL.
+    if host == WSL_HOST and wsl_address is None:
+        deadline = time.monotonic() + float(os.getenv("STOCKER_MCP_WAIT_SECONDS", "300"))
+        print("Waiting for the vEthernet (WSL) adapter...", file=sys.stderr, flush=True)
+        while wsl_address is None and time.monotonic() < deadline:
+            time.sleep(5)
+            wsl_address = wsl_host_address()
 
     if host == WSL_HOST:
         if wsl_address is None:
