@@ -2189,8 +2189,26 @@ MCP-адаптер поверх реестра для OpenClaw (`SERVICE_CONTRAC
 
 ### Статус
 
-🟢 DONE — связка работает. Автозапуск (keep-alive WSL и Stocker MCP) —
-по командам пользователя.
+🟢 DONE — связка работает, автозапуск настроен.
+
+### Автозапуск (зарегистрирован пользователем, проверен)
+
+| Задача Планировщика | Что делает |
+|---|---|
+| `OpenClaw WSL keep-alive` | при входе: `conhost --headless wsl.exe -d OpenClawGateway --exec sleep infinity` — держит дистрибутив и gateway OpenClaw |
+| `Stocker MCP` | при входе: `scripts/start_mcp_http.cmd` → `python -m app.service.mcp_http`, журнал `logs/mcp_http.log`; ждёт адаптер WSL до 5 мин |
+
+Обе задачи: без лимита времени, перезапуск раз в минуту при сбое.
+`.env`: `STOCKER_MCP_HOST=wsl`, `STOCKER_MCP_TOKEN`.
+
+Проверка после запуска задач (временные процессы агента остановлены):
+сервер задачи слушает `172.26.192.1:8765`; `openclaw mcp probe`: 13 tools;
+агент вызвал `review_queue` — в журнале
+`tool=review_queue actor=agent:openclaw ok=True`, ответ совпал с реальной
+очередью (asset 5); gateway работает непрерывно с момента старта задачи,
+без `SIGTERM`.
+
+Удаление: `Unregister-ScheduledTask -TaskName "<имя>" -Confirm:$false`.
 
 ---
 
