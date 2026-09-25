@@ -17,6 +17,7 @@ from app.ai.analyzer import AIResponseError
 from app.ai.metadata_analyzer import LMStudioMetadataAnalyzer, MetadataAnalyzer
 from app.ai.schema import AIAnalysis
 from app.database.db import get_asset, get_last_event, insert_event, transaction, update_metadata
+from app.textnorm import normalize_text
 
 
 MAX_RAW_OUTPUT_CHARS = 4000
@@ -269,3 +270,115 @@ def reject(asset_id: int, reason: str) -> dict:
 def show(asset_id: int) -> dict:
     _, metadata = _require_metadata(asset_id)
     return _result(asset_id, metadata["state"].upper(), metadata)
+
+
+# --- CLI ----------------------------------------------------------------------------
+
+
+def _split_keywords(values: list[str] | None) -> list[str]:
+    return [part for value in values or [] for part in value.split(",")]
+
+
+def _keyword_changes(current: list[str], args) -> list[str] | None:
+    if args.keywords is None and not args.add_keyword and not args.remove_keyword:
+        return None
+
+    keywords = _split_keywords([args.keywords]) if args.keywords is not None else list(current)
+    keywords += _split_keywords(args.add_keyword)
+    removed = {normalize_text(k).lower() for k in _split_keywords(args.remove_keyword)}
+    return [k for k in keywords if normalize_text(k).lower() not in removed]
+
+
+def _print_summary(result: dict) -> None:
+    metadata = result["metadata"]
+    print(f"Asset ID: {result['asset_id']}")
+    print(f"Outcome: {result['outcome']}")
+
+    if metadata is None:
+        return
+
+    fields, validation = metadata["fields"], metadata["validation"]
+    unconfirmed = [c["term"] for c in metadata["grounding"]["specific_claims"] if not c["confirmed"]]
+    print(f"State: {metadata['state']} ({metadata['completeness']})")
+    print(f"Title: {fields['title']}")
+    print(f"Description: {fields['description']}")
+    print(f"Keywords ({len(fields['keywords'])}): {', '.join(fields['keywords'])}")
+    print(f"Concepts: {len(metadata['grounding']['concept_keywords'])}, unconfirmed claims: {unconfirmed}")
+    print(f"Errors: {[e['code'] for e in validation['errors']]}")
+    print(f"Warnings: {[w['code'] for w in validation['warnings']]}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import sys
+
+    # JSON с не-ASCII символами не должен падать в консоли Windows (cp1251).
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+    parser = argparse.ArgumentParser(prog="python -m app.metadata", description="Stocker metadata review.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    def command(name: str, help_text: str):
+        sub = commands.add_parser(name, help=help_text)
+        sub.add_argument("asset_id", type=int)
+        return sub
+
+    command("build", "create draft (Metadata AI, or partial from Vision)").add_argument(
+        "--force", action="store_true", help="regenerate even if metadata exists (drops human edits)"
+    )
+    command("rebuild", "re-apply Python rules without AI, keep human edits")
+    command("show", "print metadata_json")
+
+    edit_parser = command("edit", "edit title, description or keywords")
+    edit_parser.add_argument("--title")
+    edit_parser.add_argument("--description")
+    edit_parser.add_argument("--keywords", help='replace list: "a, b, c"')
+    edit_parser.add_argument("--add-keyword", action="append", help="repeatable; commas allowed")
+    edit_parser.add_argument("--remove-keyword", action="append", help="repeatable; commas allowed")
+
+    approve_parser = command("approve", "approve draft")
+    approve_parser.add_argument("--allow-partial", action="store_true")
+    approve_parser.add_argument("--confirm-claims", action="store_true")
+
+    command("reject", "reject with reason").add_argument("--reason", required=True)
+
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "build":
+            result = build(args.asset_id, force=args.force)
+        elif args.command == "rebuild":
+            result = rebuild(args.asset_id)
+        elif args.command == "show":
+            result = show(args.asset_id)
+            print(json.dumps(result["metadata"], ensure_ascii=False, indent=2))
+            return 0
+        elif args.command == "edit":
+            changes = {}
+            if args.title is not None:
+                changes["title"] = args.title
+            if args.description is not None:
+                changes["description"] = args.description
+            _, current = _require_metadata(args.asset_id)
+            keywords = _keyword_changes(current["fields"]["keywords"], args)
+            if keywords is not None:
+                changes["keywords"] = keywords
+            if not changes:
+                parser.error("edit: nothing to change")
+            result = edit(args.asset_id, changes)
+        elif args.command == "approve":
+            result = approve(args.asset_id, allow_partial=args.allow_partial, confirm_claims=args.confirm_claims)
+        else:
+            result = reject(args.asset_id, args.reason)
+
+    except MetadataError as exc:
+        print(f"ERROR {exc.code}: {exc}", file=sys.stderr)
+        return 1
+
+    _print_summary(result)
+    return 1 if result["outcome"] == METADATA_AI_FAILED else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
