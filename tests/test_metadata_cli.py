@@ -73,7 +73,7 @@ def test_invalid_transition_returns_1(asset_id, fake_ai, capsys):
 
     assert service.main(["approve", str(asset_id)]) == 1
     assert "ERROR INVALID_TRANSITION" in capsys.readouterr().err
-    assert stored(asset_id)["state"] == "draft"
+    assert stored(asset_id)["state"] == "human_review"  # VALIDATION_ERRORS
 
 
 def test_missing_asset_returns_1(stocker_root, capsys):

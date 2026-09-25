@@ -1,18 +1,21 @@
 """
 Metadata pipeline: загрузка и сохранение metadata_json, события, вызов Metadata AI.
 
-Правила и переходы — в app/metadata_builder.py (чистые функции).
-Контракт — docs/METADATA_CONTRACT.md (metadata-v1).
+Правила и переходы — в app/metadata_builder.py, review gate — в
+app/review_gate.py (чистые функции). Контракт — docs/METADATA_CONTRACT.md
+(metadata-v2: после build/rebuild/edit gate выполняется автоматически).
 
 Каждая операция адресуется по asset_id и возвращает структурированный
 результат {asset_id, outcome, metadata}: это основа будущего сервисного слоя.
 """
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 
 from app import metadata_builder as mb
+from app import review_gate as rg
 from app.ai.analyzer import AIResponseError
 from app.ai.metadata_analyzer import LMStudioMetadataAnalyzer, MetadataAnalyzer
 from app.ai.schema import AIAnalysis
@@ -31,6 +34,8 @@ EDITED = "EDITED"
 NO_CHANGES = "NO_CHANGES"
 APPROVED = "APPROVED"
 REJECTED = "REJECTED"
+GATED = "GATED"
+ESCALATED = "ESCALATED"
 
 
 class MetadataError(Exception):
@@ -118,6 +123,36 @@ def _drafted_event(metadata: dict, trigger: str) -> tuple[str, str, dict]:
     )
 
 
+def auto_approve_enabled() -> bool:
+    """Аварийный выключатель автоодобрения: STOCKER_AUTO_APPROVE=0 (§6A.9)."""
+    return os.getenv("STOCKER_AUTO_APPROVE", "1").strip() != "0"
+
+
+def _gated_event(gate: dict, trigger: str, state_before: str | None) -> tuple[str, str, dict]:
+    return (
+        "METADATA",
+        "GATED",
+        {
+            "policy_version": gate["policy_version"],
+            "decision": gate["decision"],
+            "reasons": [reason["code"] for reason in gate["reasons"]],
+            "notes": [note["code"] for note in gate["notes"]],
+            "state_before": state_before,
+            "trigger": trigger,
+        },
+    )
+
+
+def _gate(metadata: dict, vision: AIAnalysis, trigger: str, state_before: str | None) -> tuple[dict, list]:
+    """Review gate после изменения содержимого. Возвращает metadata и события (0 или 1)."""
+    gated, gate = rg.apply_gate(metadata, vision, auto_approve_enabled=auto_approve_enabled())
+
+    if gate is None:
+        return metadata, []
+
+    return gated, [_gated_event(gate, trigger, state_before)]
+
+
 def _event_args(event: tuple[str, str, dict]) -> tuple[str, str, str]:
     stage, status, message = event
     return stage, status, _dumps(message)
@@ -155,6 +190,7 @@ def build(asset_id: int, force: bool = False, analyzer: MetadataAnalyzer | None 
     }
     vision_source = _vision_source(asset_id, vision)
     trigger = "build_force" if force else "build"
+    state_before = existing["state"] if existing else None
     started = time.perf_counter()
 
     try:
@@ -181,8 +217,11 @@ def build(asset_id: int, force: bool = False, analyzer: MetadataAnalyzer | None 
             metadata = mb.build_draft(
                 vision, None, vision_source=vision_source, metadata_ai_failure_event_id=failure_id
             )
+            drafted = _drafted_event(metadata, trigger)
+            metadata, gate_events = _gate(metadata, vision, trigger, state_before)
             update_metadata(connection, asset_id, _dumps(metadata))
-            insert_event(connection, asset_id, *_event_args(_drafted_event(metadata, trigger)))
+            for event in [drafted, *gate_events]:
+                insert_event(connection, asset_id, *_event_args(event))
 
         return _result(asset_id, DRAFTED, metadata)
 
@@ -205,8 +244,11 @@ def build(asset_id: int, force: bool = False, analyzer: MetadataAnalyzer | None 
         metadata = mb.build_draft(
             vision, suggestion, vision_source=vision_source, metadata_ai_source=metadata_ai_source
         )
+        drafted = _drafted_event(metadata, trigger)
+        metadata, gate_events = _gate(metadata, vision, trigger, state_before)
         update_metadata(connection, asset_id, _dumps(metadata))
-        insert_event(connection, asset_id, *_event_args(_drafted_event(metadata, trigger)))
+        for event in [drafted, *gate_events]:
+            insert_event(connection, asset_id, *_event_args(event))
 
     return _result(asset_id, DRAFTED, metadata)
 
@@ -215,7 +257,9 @@ def rebuild(asset_id: int) -> dict:
     """Применить текущие Python-правила без AI-вызова, сохранив правки человека."""
     vision, metadata = _require_metadata(asset_id)
     rebuilt = mb.rebuild(metadata, vision)
-    _save(asset_id, rebuilt, [_drafted_event(rebuilt, "rebuild")])
+    drafted = _drafted_event(rebuilt, "rebuild")
+    rebuilt, gate_events = _gate(rebuilt, vision, "rebuild", metadata["state"])
+    _save(asset_id, rebuilt, [drafted, *gate_events])
     return _result(asset_id, REBUILT, rebuilt)
 
 
@@ -230,7 +274,9 @@ def edit(asset_id: int, changes: dict) -> dict:
     if not applied:
         return _result(asset_id, NO_CHANGES, metadata)
 
-    _save(asset_id, edited, [("METADATA", "EDITED", change) for change in applied])
+    # Правка → validation (в mb.edit) → review gate. Сама правка auto_approved не даёт.
+    edited, gate_events = _gate(edited, vision, "edit", metadata["state"])
+    _save(asset_id, edited, [*(("METADATA", "EDITED", change) for change in applied), *gate_events])
     return _result(asset_id, EDITED, edited)
 
 
@@ -239,7 +285,7 @@ def approve(asset_id: int, allow_partial: bool = False, confirm_claims: bool = F
 
     try:
         approved, confirmed = mb.approve(
-            metadata, vision, allow_partial=allow_partial, confirm_claims=confirm_claims
+            rg.clear_escalation(metadata), vision, allow_partial=allow_partial, confirm_claims=confirm_claims
         )
     except mb.MetadataTransitionError as exc:
         raise MetadataError("INVALID_TRANSITION", str(exc)) from exc
@@ -258,13 +304,45 @@ def reject(asset_id: int, reason: str) -> dict:
     _, metadata = _require_metadata(asset_id)
 
     try:
-        rejected = mb.reject(metadata, reason)
+        rejected = mb.reject(rg.clear_escalation(metadata), reason)
     except mb.MetadataTransitionError as exc:
         raise MetadataError("INVALID_TRANSITION", str(exc)) from exc
 
     event = {"reason": rejected["review"]["reason"], "state_before": metadata["state"]}
     _save(asset_id, rejected, [("METADATA", "REJECTED", event)])
     return _result(asset_id, REJECTED, rejected)
+
+
+def gate(asset_id: int) -> dict:
+    """Повторно оценить review gate (записи v1, новая версия политики). Решения человека не меняет."""
+    vision, metadata = _require_metadata(asset_id)
+
+    if metadata["state"] not in rg.GATEABLE_STATES:
+        raise MetadataError(
+            "INVALID_TRANSITION", f"Gate does not change human decisions (state '{metadata['state']}')"
+        )
+
+    gated, gate_events = _gate(metadata, vision, "gate", metadata["state"])
+    _save(asset_id, gated, gate_events)
+    return _result(asset_id, GATED, gated)
+
+
+def escalate(asset_id: int, reason: str) -> dict:
+    """Поднять риск: → human_review (MANUAL_ESCALATION) до решения человека."""
+    vision, metadata = _require_metadata(asset_id)
+
+    try:
+        escalated = rg.escalate(metadata, vision, reason, auto_approve_enabled=auto_approve_enabled())
+    except mb.MetadataTransitionError as exc:
+        raise MetadataError("INVALID_TRANSITION", str(exc)) from exc
+
+    gate_result = escalated["review_gate"]
+    events = [
+        ("METADATA", "ESCALATED", {"reason": gate_result["escalation"]["reason"], "state_before": metadata["state"]}),
+        _gated_event(gate_result, "escalate", metadata["state"]),
+    ]
+    _save(asset_id, escalated, events)
+    return _result(asset_id, ESCALATED, escalated)
 
 
 def show(asset_id: int) -> dict:
@@ -307,6 +385,12 @@ def _print_summary(result: dict) -> None:
     print(f"Errors: {[e['code'] for e in validation['errors']]}")
     print(f"Warnings: {[w['code'] for w in validation['warnings']]}")
 
+    review_gate = metadata.get("review_gate")
+    if review_gate:
+        print(f"Gate: {review_gate['decision']} ({review_gate['policy_version']})")
+        print(f"Review reasons: {[(r['code'], r['detail']) for r in review_gate['reasons']]}")
+        print(f"Notes: {[n['code'] for n in review_gate['notes']]}")
+
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
@@ -342,6 +426,8 @@ def main(argv: list[str] | None = None) -> int:
     approve_parser.add_argument("--confirm-claims", action="store_true")
 
     command("reject", "reject with reason").add_argument("--reason", required=True)
+    command("gate", "re-evaluate review gate (never changes approved/rejected)")
+    command("escalate", "send to human review").add_argument("--reason", required=True)
 
     args = parser.parse_args(argv)
 
@@ -369,8 +455,12 @@ def main(argv: list[str] | None = None) -> int:
             result = edit(args.asset_id, changes)
         elif args.command == "approve":
             result = approve(args.asset_id, allow_partial=args.allow_partial, confirm_claims=args.confirm_claims)
-        else:
+        elif args.command == "reject":
             result = reject(args.asset_id, args.reason)
+        elif args.command == "gate":
+            result = gate(args.asset_id)
+        else:
+            result = escalate(args.asset_id, args.reason)
 
     except MetadataError as exc:
         print(f"ERROR {exc.code}: {exc}", file=sys.stderr)

@@ -592,7 +592,7 @@ Asset 5 показывает, зачем нужно правило 1: назва
 
 | stage | status | message |
 |---|---|---|
-| `METADATA` | `GATED` | `policy_version`, `decision`, `reasons` (list[code]), `notes` (list[code]), `state_before`, `trigger` (`build` \| `rebuild` \| `edit` \| `gate`) |
+| `METADATA` | `GATED` | `policy_version`, `decision`, `reasons` (list[code]), `notes` (list[code]), `state_before`, `trigger` (`build` \| `build_force` \| `rebuild` \| `edit` \| `gate` \| `escalate`) |
 | `METADATA` | `ESCALATED` | `reason`, `state_before` |
 
 `APPROVED` и `REJECTED` не меняются. `state_before` теперь может быть

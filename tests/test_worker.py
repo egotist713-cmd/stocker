@@ -22,6 +22,7 @@ def test_new_file_runs_full_pipeline(stocker_root):
         ("AI", "PASSED"),
         ("METADATA_AI", "PASSED"),
         ("METADATA", "DRAFTED"),
+        ("METADATA", "GATED"),
     ]
 
 
@@ -70,12 +71,13 @@ def test_failed_asset_can_be_retried_by_id(stocker_root):
 
     assert outcome == worker.AI_PASSED
     assert get_asset(asset_id)["ai_result"] is not None
-    assert [(s, st) for s, st, _ in events(stocker_root, asset_id)][-5:] == [
+    assert [(s, st) for s, st, _ in events(stocker_root, asset_id)][-6:] == [
         ("AI", "FAILED"),
         ("QC", "PASSED"),
         ("AI", "PASSED"),
         ("METADATA_AI", "PASSED"),
         ("METADATA", "DRAFTED"),
+        ("METADATA", "GATED"),
     ]
 
 
@@ -166,7 +168,8 @@ def test_worker_creates_draft_never_approves(stocker_root):
     asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
 
     metadata = _metadata(asset_id)
-    assert metadata["state"] == "draft"
+    # Низкий риск → auto_approved от gate; человеческого approve нет.
+    assert metadata["state"] == "auto_approved"
     assert metadata["completeness"] == "full"
     assert not [s for s, st, _ in events(stocker_root, asset_id) if (s, st) == ("METADATA", "APPROVED")]
 
@@ -203,7 +206,7 @@ def test_asset_id_builds_missing_metadata_without_rerunning_ai(stocker_root):
 
     assert outcome == worker.AI_ALREADY_DONE
     assert vision.calls == 0
-    assert _metadata(asset_id)["state"] == "draft"
+    assert _metadata(asset_id)["state"] == "auto_approved"
 
 
 def test_existing_metadata_is_not_rebuilt_by_worker(stocker_root):

@@ -63,6 +63,7 @@ def test_tiff_passes_ingest_qc_and_ai(stocker_root):
         ("AI", "PASSED"),
         ("METADATA_AI", "PASSED"),
         ("METADATA", "DRAFTED"),
+        ("METADATA", "GATED"),
     ]
 
 

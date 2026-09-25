@@ -1910,6 +1910,72 @@ keyword'а, а контракт — только для слов с цифрам
 ### Статус
 
 🟢 DONE — metadata pipeline; drafts asset 3–6 ждут review человеком
+(обновлено в §35L: review gate, человек нужен только для спорных случаев)
+
+---
+
+# 35L. 2026-09-26 — Review gate: автоматический проход безопасных объектов
+
+### Решение пользователя
+
+Stocker автоматизирует промышленный stock-поток, а не превращает обработку в
+ручную модерацию. Человек нужен только для спорных случаев:
+
+```text
+низкий риск:  AI → metadata → validation → gate → auto_approved
+высокий риск: AI → metadata → validation → gate → human_review → human approve/reject
+```
+
+- `auto_approved` не заменяет человеческий `approved`: это отдельное
+  состояние, которое устанавливает **только** детерминированный gate.
+- Текст на изображении сам по себе не повод для review. Технические маркировки
+  (`IP20`, `220V`, `WARNING`, номера) и описательные надписи review не требуют;
+  бренды, логотипы, названия компаний и юридические утверждения — требуют.
+- Люди: узнаваемый человек (лицо, главный объект) → review; частичное или
+  неидентифицируемое присутствие (рука, вид со спины, силуэт) → не блокирует.
+- После любой правки (агентом или человеком): edit → validation → gate. Сама
+  правка `auto_approved` не даёт.
+
+### Реализовано (`metadata-v2`, `gate-v1`; контракт — `docs/METADATA_CONTRACT.md` §6A)
+
+- `app/review_gate.py` — чистый gate: решения `auto_approved` /
+  `human_review` / `deferred` (partial остаётся `draft`); классификация
+  `text_visible`; уровень риска людей (`none` / `partial` / `recognizable` /
+  `unclear`) из текста Vision без изменения `AIAnalysis`; юридические
+  утверждения в metadata; эскалация до решения человека; аварийный
+  выключатель `STOCKER_AUTO_APPROVE=0`. Решения человека gate не меняет никогда.
+- `app/metadata.py` — gate автоматически после `build` / `rebuild` / `edit`
+  в той же транзакции; новые операции `gate`, `escalate`; события
+  `METADATA/GATED`, `METADATA/ESCALATED`; approve/reject снимают эскалацию.
+  CLI: `python -m app.metadata gate|escalate N`. Синтаксис существующих команд
+  не менялся.
+- `app/metadata_builder.py` — только расширение допустимых состояний для
+  approve/reject. Остальная логика builder не менялась.
+
+### Проверка
+
+- `python -m pytest`: 207 passed, 3 skipped.
+- Production, `gate` для записей v1 — решения совпали с прогнозом контракта:
+  asset 3, 4 → `auto_approved`; asset 6 (`KM6000-УХЛ4`, `IP20`, `TN-S`, серийный
+  номер, дата, клеммы — всё `technical`) → `auto_approved`; asset 5 →
+  `human_review` (`TEXT_BRAND_OR_LEGAL`: `АО "ШПЗ"` — название компании,
+  которое Vision **не** вынес в `brands`).
+- Production, worker на новой фотографии `IMG_20260911_130530.jpg` → asset 7:
+  `INGEST → QC → AI → METADATA_AI → DRAFTED → GATED(auto_approved)` без
+  участия человека.
+- Итог: `auto_approved` — 4, `human_review` — 1, человеческих `APPROVED` — 0.
+
+### Известные ограничения
+
+- Риск людей вычисляется по тексту Vision. При неопределённости решение —
+  `human_review`. Следующий шаг при необходимости — отдельная AI-проверка людей
+  по изображению.
+- Бренд без юрформы, не распознанный Vision, рядом с цифрами (`SIEMENS 220V`)
+  классифицируется как `technical`.
+
+### Статус
+
+🟢 DONE
 
 ---
 
@@ -2046,6 +2112,9 @@ STRICT JSON SCHEMA / TIFF / SOURCE_PATH (Windows + WSL)
 METADATA
     🟢 DONE — draft/edit/approve/reject, worker создаёт draft (§35K)
 
+REVIEW GATE (auto_approved / human_review, gate-v1)
+    🟢 DONE (§35L)
+
 SERVICE LAYER + CLI JSON
     ⚪ PLANNED — после metadata
 
@@ -2083,10 +2152,13 @@ OPENCLAW AUTONOMY
 
 Порядок, уточнённый 25 сентября 2026:
 
-1. ~~Metadata pipeline~~ — 🟢 DONE (§35K). Контракт — `docs/METADATA_CONTRACT.md`.
-   Drafts asset 3–6 ждут review человеком через `python -m app.metadata`.
-2. **Сервисный слой + CLI с JSON-выводом.** Операции `app/metadata.py` уже
-   возвращают `{asset_id, outcome, metadata}` — образец для остальных. Операции Core по `asset_id`
+1. ~~Metadata pipeline~~ — 🟢 DONE (§35K). ~~Review gate~~ — 🟢 DONE (§35L).
+   Контракт — `docs/METADATA_CONTRACT.md` (`metadata-v2`). Очередь человека —
+   объекты в `human_review` (сейчас asset 5).
+2. **Сервисный слой + CLI с JSON-выводом** — контракт согласован:
+   `docs/SERVICE_CONTRACT.md` (реестр операций, envelope, actor и права,
+   `app.api`, затем MCP для OpenClaw). Операции `app/metadata.py` уже
+   возвращают `{asset_id, outcome, metadata}`. Операции Core по `asset_id`
    (`process_asset` уже есть, плюс `get`/`list`/`history`/metadata)
    возвращают структурированный результат. CLI печатает JSON для n8n и
    OpenClaw. Без FastAPI.
@@ -2173,7 +2245,11 @@ AI/PASSED
 > `python -m app.metadata`. Worker создаёт только draft. Контракт —
 > `docs/METADATA_CONTRACT.md`.
 >
-> **Следующая задача: сервисный слой + CLI с JSON-выводом (§42), не
+> С 26.09.2026 (§35L): review gate `gate-v1` — низкий риск →
+> `auto_approved` автоматически, спорные случаи → `human_review`. Approve и
+> reject — только человек.
+>
+> **Следующая задача: service layer по `docs/SERVICE_CONTRACT.md` (§42), не
 > переписывая завершённый pipeline.**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.

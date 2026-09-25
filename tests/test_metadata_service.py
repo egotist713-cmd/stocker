@@ -66,9 +66,11 @@ def test_build_full_draft_saves_metadata_and_events(stocker_root, asset_id):
     assert result["outcome"] == service.DRAFTED
     metadata = stored(asset_id)
     assert metadata == result["metadata"]
-    assert metadata["state"] == "draft" and metadata["completeness"] == "full"
+    assert metadata["state"] == "auto_approved" and metadata["completeness"] == "full"
 
-    (ai_stage, ai_status, ai_msg), (d_stage, d_status, d_msg) = metadata_events(stocker_root, asset_id)
+    (ai_stage, ai_status, ai_msg), (d_stage, d_status, d_msg), gated = metadata_events(stocker_root, asset_id)
+    assert gated[:2] == ("METADATA", "GATED")
+    assert gated[2]["decision"] == "auto_approved" and gated[2]["state_before"] is None
     assert (ai_stage, ai_status) == ("METADATA_AI", "PASSED")
     assert set(ai_msg) == {"provider", "model", "prompt_version", "inputs", "generated_at", "duration_s"}
     assert ai_msg["inputs"] == ["vision_json"]
@@ -136,7 +138,8 @@ def test_metadata_ai_failure_creates_partial_draft(stocker_root, asset_id):
     assert metadata["completeness"] == "partial"
     assert metadata["fields"]["title"] == VISION.title
 
-    (f_stage, f_status, failure), (d_stage, d_status, drafted) = metadata_events(stocker_root, asset_id)
+    (f_stage, f_status, failure), (d_stage, d_status, drafted), gated = metadata_events(stocker_root, asset_id)
+    assert gated[2]["decision"] == "deferred" and metadata["state"] == "draft"
     assert (f_stage, f_status) == ("METADATA_AI", "FAILED")
     assert failure["error_type"] == "AIResponseError"
     assert failure["raw_output"] == '{"title": "x", "keyw'
@@ -195,7 +198,7 @@ def test_edit_writes_event_per_field(stocker_root, asset_id):
     assert result["outcome"] == service.EDITED
     edited = [msg for s, st, msg in metadata_events(stocker_root, asset_id) if (s, st) == ("METADATA", "EDITED")]
     assert [e["field"] for e in edited] == ["title", "description"]
-    assert edited[0]["new"] == "New title" and edited[0]["state_before"] == "draft"
+    assert edited[0]["new"] == "New title" and edited[0]["state_before"] == "auto_approved"
     assert stored(asset_id)["edited_fields"] == ["title", "description"]
 
 
@@ -215,7 +218,7 @@ def test_approve_and_reject_events(stocker_root, asset_id):
     with pytest.raises(service.MetadataError) as info:
         service.approve(asset_id)
     assert info.value.code == "INVALID_TRANSITION"
-    assert stored(asset_id)["state"] == "draft"
+    assert stored(asset_id)["state"] == "human_review"  # UNCONFIRMED_CLAIM
 
     result = service.approve(asset_id, confirm_claims=True)
     assert result["outcome"] == service.APPROVED
