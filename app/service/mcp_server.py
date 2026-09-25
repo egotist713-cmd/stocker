@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import threading
 
 import anyio
 import mcp.types as types
@@ -28,6 +29,7 @@ from app.service import dispatch
 from app.service.registry import PIPELINE, READ, build_registry
 
 DEFAULT_ACTOR = "agent:openclaw"
+_MUTATION_LOCK = threading.Lock()
 EXPOSED_ACCESS = (READ, PIPELINE)
 _NON_HUMAN_ACTOR = re.compile(r"^(agent|workflow):[a-z0-9_.-]+$")
 
@@ -93,6 +95,10 @@ def call(name: str, arguments: dict | None, actor: str) -> types.CallToolResult:
             "data": None,
             "error": {"code": "UNKNOWN_OPERATION", "message": f"Unknown or not allowed tool: {name}"},
         }
+    elif operations[name].mutating:
+        # Изменяющие вызовы — по одному: одна GPU для AI и один writer SQLite.
+        with _MUTATION_LOCK:
+            envelope = dispatch(operations[name].name, arguments or {}, actor=actor)
     else:
         envelope = dispatch(operations[name].name, arguments or {}, actor=actor)
 
