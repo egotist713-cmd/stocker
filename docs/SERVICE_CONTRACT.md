@@ -267,12 +267,18 @@ echo '{"asset_id": 5}' | python -m app.api asset.history --params -     # params
 на таком монтировании ненадёжны при одновременной записи из Windows и WSL.
 Поэтому:
 
-- v1: MCP-сервер и CLI запускаются **в Windows** (`.venv`). Для OpenClaw из WSL
-  это означает запуск Windows-процесса (`python.exe` через interop) как MCP
-  stdio-сервера. Проверить на этапе 4;
-- если interop окажется неудобным, следующий шаг — один долгоживущий
-  Windows-процесс с HTTP-транспортом (MCP HTTP или FastAPI), к которому
-  подключаются и WSL, и n8n. Это та самая точка, где FastAPI станет оправдан.
+- MCP-сервер и CLI запускаются **в Windows** (`.venv`);
+- **проверено 26.09.2026: stdio через interop невозможен и не нужен.** В
+  дистрибутиве `OpenClawGateway` interop выключен намеренно
+  (`/etc/wsl.conf`: `[interop] enabled=false`, `appendWindowsPath=false`):
+  агент изолирован от Windows-программ. Включать interop нельзя — это дало бы
+  агенту доступ ко всем Windows-программам, а не только к Stocker;
+- **поэтому для OpenClaw нужен сетевой транспорт**: один долгоживущий
+  Windows-процесс с MCP streamable HTTP поверх того же реестра, доступный из
+  WSL. Тот же процесс позже обслуживает n8n. Решение о привязке, авторизации
+  и firewall — за пользователем (см. паспорт §35O);
+- stdio-сервер (`python -m app.service.mcp_server`) остаётся для локальных
+  Windows-клиентов MCP и тестов.
 
 ---
 
@@ -290,8 +296,7 @@ echo '{"asset_id": 5}' | python -m app.api asset.history --params -     # params
 | `app/metadata.py`, `app/worker.py` | + необязательный параметр `actor` (передаётся в сообщения событий); поведение без него не меняется |
 | `tests/test_service_*.py` | envelope, права, views, CLI |
 
-Этап 4 (отдельно, после согласования): `app/service/mcp_server.py` и
-документация подключения OpenClaw и n8n.
+| `app/service/mcp_server.py` | MCP stdio-сервер: инструменты из реестра (`read` + `pipeline`), actor задаёт сервер (`STOCKER_MCP_ACTOR`, только `agent:*`/`workflow:*`), envelope как text + structured content |
 
 ---
 

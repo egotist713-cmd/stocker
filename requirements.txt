@@ -3,3 +3,4 @@ numpy
 pydantic>=2,<3
 openai
 python-dotenv
+mcp>=2.2,<3

@@ -2085,6 +2085,53 @@ MCP-адаптер поверх реестра для OpenClaw (`SERVICE_CONTRAC
 
 ---
 
+# 35O. 2026-09-26 — MCP-сервер; изоляция OpenClaw в WSL
+
+### Реализовано
+
+`app/service/mcp_server.py` (`python -m app.service.mcp_server`, SDK `mcp` 2.2):
+
+- 13 инструментов генерируются из реестра (`asset_get`, `review_queue`,
+  `asset_process_file`, `metadata_edit`, `metadata_escalate`, ...) с JSON Schema
+  параметров и подсказками read-only/idempotent;
+- операции `review` (approve/reject) агенту **не показываются и не
+  выполняются**;
+- actor задаёт сервер (`STOCKER_MCP_ACTOR`, по умолчанию `agent:openclaw`).
+  `human` и некорректные значения — отказ при запуске;
+- stdout — канал протокола: весь вывод worker'а перенаправлен в stderr;
+  `dispatch` выполняется в отдельном потоке (LM Studio может отвечать минутами).
+
+### Проверка
+
+- `python -m pytest`: 257 passed, 3 skipped. Среди них настоящая stdio-сессия:
+  MCP-клиент запускает сервер отдельным процессом на изолированной БД и
+  выполняет `asset_process_file` (с выводом worker'а) → `metadata_edit` →
+  `asset_history` → `metadata_approve`. Протокол не нарушен, правка ушла в
+  `human_review`, actor записан, approve недоступен.
+
+### Находка: OpenClaw изолирован от Windows
+
+Запуск Windows-сервера из WSL (`OpenClawGateway`) через interop завершился
+`Exec format error`. Причина — намеренная настройка `/etc/wsl.conf`:
+`[interop] enabled=false`, `appendWindowsPath=false`. Это правильная изоляция
+агента, её **не меняем**. Вариант «stdio через interop» из
+`SERVICE_CONTRACT.md` §7 отпадает. Нужен сетевой транспорт — запасной вариант,
+заложенный в контракт.
+
+Сеть WSL — NAT: хост Windows из WSL виден как `172.26.192.1` (адрес может
+меняться после перезагрузки); LM Studio — `192.168.1.104`.
+
+### Решение пользователя (ожидается)
+
+Способ подключения OpenClaw: MCP streamable HTTP из Windows — адрес привязки,
+токен авторизации, правило firewall.
+
+### Статус
+
+🟡 IN PROGRESS — сервер готов; транспорт для OpenClaw ждёт решения
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -2225,7 +2272,7 @@ SERVICE LAYER + JSON CLI (app.service, python -m app.api)
     🟢 DONE (§35N)
 
 MCP ДЛЯ OPENCLAW
-    ⚪ PLANNED — следующий шаг
+    🟡 IN PROGRESS — stdio-сервер готов (§35O); сетевой транспорт ждёт решения
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
