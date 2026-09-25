@@ -23,9 +23,32 @@ TOKEN = "t" * 40
 # --- конфигурация ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.104", "172.26.192.1", "example.com"])
-def test_only_loopback_hosts_allowed(monkeypatch, host):
+WSL_ADDRESS = "172.26.192.1"
+
+
+@pytest.fixture
+def wsl_adapter(monkeypatch):
+    monkeypatch.setattr(mcp_http, "wsl_host_address", lambda: WSL_ADDRESS)
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.104", "172.27.112.1", "example.com", "::"])
+def test_lan_and_wildcard_hosts_are_refused(monkeypatch, wsl_adapter, host):
     monkeypatch.setenv("STOCKER_MCP_HOST", host)
+
+    with pytest.raises(SystemExit):
+        mcp_http.resolve_host()
+
+
+@pytest.mark.parametrize("host", ["wsl", WSL_ADDRESS])
+def test_wsl_adapter_address_allowed(monkeypatch, wsl_adapter, host):
+    monkeypatch.setenv("STOCKER_MCP_HOST", host)
+
+    assert mcp_http.resolve_host() == WSL_ADDRESS
+
+
+def test_wsl_host_requires_adapter(monkeypatch):
+    monkeypatch.setattr(mcp_http, "wsl_host_address", lambda: None)
+    monkeypatch.setenv("STOCKER_MCP_HOST", "wsl")
 
     with pytest.raises(SystemExit):
         mcp_http.resolve_host()

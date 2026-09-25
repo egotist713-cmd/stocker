@@ -4,9 +4,10 @@ MCP streamable HTTP-сервер Stocker для OpenClaw в WSL (docs/SERVICE_CO
     python -m app.service.mcp_http
 
 Долгоживущий Windows-процесс: в SQLite пишет одна среда. OpenClaw в WSL
-(mirrored networking) подключается к http://127.0.0.1:<port>/mcp.
+(NAT, interop выключен) подключается к http://<адрес vEthernet (WSL)>:<port>/mcp.
 
-- слушает только loopback (STOCKER_MCP_HOST: 127.0.0.1 или ::1);
+- слушает loopback или адрес хоста в сети WSL (STOCKER_MCP_HOST=wsl);
+  LAN-адреса и 0.0.0.0 запрещены;
 - обязателен токен: заголовок "Authorization: Bearer <STOCKER_MCP_TOKEN>".
   Без токена сервер не запускается;
 - инструменты, actor и ограничения — те же, что у stdio-сервера (mcp_server).
@@ -15,6 +16,7 @@ MCP streamable HTTP-сервер Stocker для OpenClaw в WSL (docs/SERVICE_CO
 import hmac
 import ipaddress
 import os
+import subprocess
 import sys
 
 import uvicorn
@@ -25,20 +27,61 @@ from app.service.mcp_server import create_server, resolve_actor
 load_dotenv()
 
 DEFAULT_HOST = "127.0.0.1"
+WSL_HOST = "wsl"
 DEFAULT_PORT = 8765
 MCP_PATH = "/mcp"
 MIN_TOKEN_LENGTH = 32
 
 
-def resolve_host() -> str:
-    host = os.getenv("STOCKER_MCP_HOST", DEFAULT_HOST).strip()
+def wsl_host_address() -> str | None:
+    """IPv4 адаптера Windows "vEthernet (WSL...)": адрес хоста в NAT-сети WSL."""
+    command = (
+        "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.InterfaceAlias -like 'vEthernet (WSL*' } | "
+        "Select-Object -First 1 -ExpandProperty IPAddress"
+    )
     try:
-        loopback = ipaddress.ip_address(host).is_loopback
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    address = result.stdout.strip()
+    return address or None
+
+
+def resolve_host() -> str:
+    """
+    Loopback (127.0.0.1, ::1) или адрес хоста в сети WSL (STOCKER_MCP_HOST=wsl).
+
+    OpenClaw в WSL (NAT, interop выключен) видит Windows только по адресу
+    адаптера vEthernet (WSL). LAN-адреса и 0.0.0.0 запрещены.
+    """
+    host = os.getenv("STOCKER_MCP_HOST", DEFAULT_HOST).strip()
+    wsl_address = wsl_host_address() if host == WSL_HOST or not _is_loopback(host) else None
+
+    if host == WSL_HOST:
+        if wsl_address is None:
+            raise SystemExit("STOCKER_MCP_HOST=wsl, but no 'vEthernet (WSL...)' adapter address was found")
+        return wsl_address
+
+    if _is_loopback(host) or (wsl_address is not None and host == wsl_address):
+        return host
+
+    raise SystemExit(
+        "STOCKER_MCP_HOST must be loopback (127.0.0.1, ::1) or 'wsl' "
+        f"(the vEthernet (WSL) address, now {wsl_address}); got {host!r}"
+    )
+
+
+def _is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_loopback
     except ValueError:
-        loopback = False
-    if not loopback:
-        raise SystemExit(f"STOCKER_MCP_HOST must be a loopback address (127.0.0.1 or ::1), got {host!r}")
-    return host
+        return False
 
 
 def resolve_port() -> int:
