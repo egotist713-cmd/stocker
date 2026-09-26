@@ -233,6 +233,21 @@ docker run -d --name n8n --restart unless-stopped -p 127.0.0.1:5678:5678 -v n8n_
   `deploy_n8n_workflows.ps1`).
 - Docker Desktop запускается при входе в Windows (`AutoStart`), контейнер —
   политикой `unless-stopped`.
+- **Публикация (active) в n8n 2.x.** Подпроцесс `stocker-notify` должен быть
+  опубликован, иначе вызовы через Execute Workflow падают («Workflow is not
+  active»). Расписания `stocker-ingest` / `-retry` / `-digest` работают только
+  опубликованными. CLI-публикация требует перезапуска n8n:
+
+  ```powershell
+  docker exec n8n n8n publish:workflow --id=StockerNotify001; docker restart n8n
+  ```
+
+- **Разовый запуск** (у workflow есть вход «Run on demand»; отдельный порт
+  брокера, чтобы не конфликтовать с работающим сервером):
+
+  ```powershell
+  docker exec -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id StockerIngest001
+  ```
 
 ---
 

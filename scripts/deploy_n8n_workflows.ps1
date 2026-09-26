@@ -34,10 +34,10 @@ foreach ($file in Get-ChildItem $Source -Filter *.json) {
     [System.IO.File]::WriteAllText((Join-Path $staging $file.Name), $text, (New-Object System.Text.UTF8Encoding $false))
 }
 
-docker exec $Container rm -rf /tmp/stocker-workflows | Out-Null
+docker exec -u root $Container rm -rf /tmp/stocker-workflows | Out-Null
 docker cp $staging "${Container}:/tmp/stocker-workflows" | Out-Null
 docker exec $Container n8n import:workflow --separate --input=/tmp/stocker-workflows
-docker exec $Container rm -rf /tmp/stocker-workflows | Out-Null
+docker exec -u root $Container rm -rf /tmp/stocker-workflows | Out-Null
 Remove-Item -Recurse -Force $staging
 
 Write-Host "=== workflows in n8n"

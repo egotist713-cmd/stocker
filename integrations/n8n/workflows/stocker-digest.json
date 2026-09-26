@@ -2,22 +2,52 @@
   "id": "StockerDigest001",
   "name": "stocker-digest",
   "active": false,
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "nodes": [
     {
       "id": "7c2e1d22-3c3c-4e3f-9c03-000000000001",
       "name": "Daily 09:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0],
-      "parameters": {"rule": {"interval": [{"field": "days", "daysInterval": 1, "triggerAtHour": 9}]}}
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7c2e1d22-3c3c-4e3f-9c03-000000000099",
+      "name": "Run on demand",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        180
+      ],
+      "notes": "Ручной запуск (n8n execute --id ...) или вызов из другого workflow. Основной триггер — расписание.",
+      "parameters": {}
     },
     {
       "id": "7c2e1d22-3c3c-4e3f-9c03-000000000002",
       "name": "review.queue",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [220, 0],
+      "position": [
+        220,
+        0
+      ],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.STOCKER_URL }}/api/v1/review.queue",
@@ -26,16 +56,26 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{}",
-        "options": {"timeout": 60000}
+        "options": {
+          "timeout": 60000
+        }
       },
-      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__STOCKER_CREDENTIAL_ID__",
+          "name": "Stocker API"
+        }
+      }
     },
     {
       "id": "7c2e1d22-3c3c-4e3f-9c03-000000000003",
       "name": "Digest",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 0],
+      "position": [
+        440,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "// Ежедневная сводка из review_queue.summary (истина — Stocker).\nconst envelope = $input.first().json;\nif (!envelope.ok) {\n  throw new Error(`review.queue: ${JSON.stringify(envelope.error)}`);\n}\nconst s = envelope.data.summary;\nconst states = s.by_metadata_state;\nconst problems = s.problem_assets.map(p => `#${p.id} ${p.filename}: ${p.problems.join(', ')}`);\nconst lines = [\n  `Всего: ${s.total_assets}, готово: ${s.ready}`,\n  `auto_approved: ${states.auto_approved}, approved: ${states.approved}, human_review: ${states.human_review}, draft: ${states.draft}, rejected: ${states.rejected}, без metadata: ${states.none}`,\n  problems.length ? `Требуют внимания:\\n${problems.join('\\n')}` : 'Проблемных объектов нет',\n];\nreturn [{ json: {\n  severity: states.human_review || problems.length ? 'attention' : 'info',\n  title: 'Stocker: ежедневная сводка',\n  text: lines.join('\\n'),\n  data: { summary: s },\n} }];"
@@ -46,13 +86,60 @@
       "name": "Notify",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1,
-      "position": [660, 0],
-      "parameters": {"source": "database", "workflowId": "StockerNotify001"}
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": "StockerNotify001"
+      }
     }
   ],
   "connections": {
-    "Daily 09:00": {"main": [[{"node": "review.queue", "type": "main", "index": 0}]]},
-    "review.queue": {"main": [[{"node": "Digest", "type": "main", "index": 0}]]},
-    "Digest": {"main": [[{"node": "Notify", "type": "main", "index": 0}]]}
+    "Daily 09:00": {
+      "main": [
+        [
+          {
+            "node": "review.queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "review.queue": {
+      "main": [
+        [
+          {
+            "node": "Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest": {
+      "main": [
+        [
+          {
+            "node": "Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run on demand": {
+      "main": [
+        [
+          {
+            "node": "review.queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

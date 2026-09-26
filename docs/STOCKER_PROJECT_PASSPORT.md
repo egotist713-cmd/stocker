@@ -2698,11 +2698,35 @@ allowlist `workflow:n8n`, операция `incoming.list`, workflows v1
 ### Ожидает пользователя
 
 Создание владельца n8n и credential «Stocker API» (Header Auth) — учётные
-данные вводит пользователь.
+данные вводит пользователь. **Выполнено пользователем.**
+
+### Развёртывание и сквозная проверка (26.09.2026)
+
+- `deploy_n8n_workflows.ps1`: credential найден, 4 workflow импортированы.
+  Исправлена очистка временных файлов в контейнере (от root).
+- **Особенности n8n 2.40:** `n8n execute` стартует только от Execute
+  Workflow Trigger — в `ingest`, `retry`, `digest` добавлен вход «Run on
+  demand» (ручной запуск / вызов из другого workflow; основной триггер —
+  расписание). Вызываемый подпроцесс должен быть **опубликован**:
+  `stocker-notify` опубликован (`n8n publish:workflow` + перезапуск
+  контейнера); расписаний у него нет. CLI-запуск рядом с сервером требует
+  отдельного порта брокера (`N8N_RUNNERS_BROKER_PORT=5690`).
+- **`stocker-ingest` на новой фотографии** пользователя
+  `MVIMG_20260926_135350.jpg`: `incoming.list` → `asset.process_file` →
+  asset 9: QC → Vision → Metadata AI → draft → gate → **`auto_approved`**
+  («Wooden Playground with Rope Netting in Urban Park»). Все события, кроме
+  текстового `INGEST`, — `actor=workflow:n8n`. Человек не участвовал.
+- **`stocker-digest` → `stocker-notify`**: тестовый канал, `severity:
+  attention`, текст по `review_queue.summary`: всего 8, готово 6,
+  `human_review` 1, требуют внимания #2 (`SOURCE_CHANGED`) и #5
+  (`TEXT_BRAND_OR_LEGAL`).
+- **`stocker-retry`**: без ошибок, повторять нечего (2 вызова `asset.list`).
+- `check_environment.ps1`: все `PASS` (включая n8n и импорт workflows).
 
 ### Статус
 
-🟡 IN PROGRESS — осталось: credential → импорт → включение → проверка на новом файле
+🟡 IN PROGRESS — всё проверено вручную; расписания (`ingest`, `retry`,
+`digest`) не включены — ждут подтверждения пользователя
 
 ---
 
