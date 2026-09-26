@@ -7,6 +7,7 @@
 import json
 from pathlib import Path
 
+from app import enhancement_decision
 from app import ingest
 from app import metadata as metadata_service
 from app import stock_readiness
@@ -135,6 +136,26 @@ def metadata_gate(params) -> dict:
 
 def metadata_escalate(params) -> dict:
     return _metadata_call(metadata_service.escalate, params.asset_id, params.reason)
+
+
+def enhancement_assess(params) -> dict:
+    """Enhancement decision правилами; данные — оценка, а не asset view."""
+    try:
+        result = enhancement_decision.assess_asset(params.asset_id)
+    except enhancement_decision.EnhancementError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    data = {"assessment": result["assessment"], "decision": enhancement_decision.effective_decision(result["assessment"])}
+    if "error" in result:
+        data["error"] = result["error"]
+    return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != enhancement_decision.ENHANCEMENT_FAILED)
+
+
+def enhancement_get(params) -> dict:
+    try:
+        data = enhancement_decision.get(params.asset_id)
+    except enhancement_decision.EnhancementError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    return _result(params.asset_id, None, data)
 
 
 def _readiness_call(function, asset_id: int) -> dict:

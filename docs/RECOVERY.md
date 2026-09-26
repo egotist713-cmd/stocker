@@ -194,7 +194,7 @@ Unregister-ScheduledTask -TaskName "LMStudioAutoServer" -Confirm:$false
 Правильный перезапуск:
 
 ```powershell
-Stop-ScheduledTask -TaskName "Stocker MCP"; Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object CommandLine -match "app.service.mcp_http" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; Start-ScheduledTask -TaskName "Stocker MCP"
+Stop-ScheduledTask -TaskName "Stocker MCP"; Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object CommandLine -match "app.service.mcp_http" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-ScheduledTask -TaskName "Stocker MCP"
 ```
 
 Проверка: процесс, слушающий 8765, создан после перезапуска

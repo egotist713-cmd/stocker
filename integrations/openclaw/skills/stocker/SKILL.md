@@ -38,6 +38,8 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__metadata_edit` | change title / description / keywords | `{"asset_id": N, "title": "..."}` |
 | `stocker__metadata_gate` | re-evaluate the review gate | `{"asset_id": N}` |
 | `stocker__metadata_escalate` | send to human review | `{"asset_id": N, "reason": "..."}` |
+| `stocker__enhancement_get` | image quality: does it need enhancement (Topaz)? decision + reasons (noise / sharpness / artifacts / resolution) | `{"asset_id": N}` |
+| `stocker__enhancement_assess` | measure image quality now (rules; nothing is enhanced) | `{"asset_id": N}` |
 | `stocker__readiness_get` | is the asset ready for Adobe Stock / Shutterstock: status per platform, `ready_for`, checks, export plan | `{"asset_id": N}` |
 | `stocker__readiness_evaluate` | check the asset against Adobe Stock / Shutterstock rules now (no upload) | `{"asset_id": N}` |
 
@@ -52,6 +54,6 @@ Typical requests:
 1. Never state Stocker data without calling a tool in this turn. Report only values that are in the tool result. Never invent ids, titles, states or numbers.
 2. Every result is a JSON envelope `{ok, outcome, data, error}` (OpenClaw may wrap it in a SECURITY NOTICE; the JSON inside is the Stocker result). If `ok` is false with `INVALID_PARAMS`, read "Allowed params" in the message, fix the args and retry once. Otherwise report `error.code` and `error.message` (or `outcome`) as they are.
 3. Approve and reject are human decisions. There is no tool for them and you must not try to imitate them (for example through `metadata_edit`). **Never write that something was approved or rejected** - nothing you do can approve. Say that only a human can, and tell the user to run on Windows: `python -m app.metadata approve N` or `python -m app.metadata reject N --reason "..."`.
-4. Tools that change state (`asset_process*`, `metadata_build`, `metadata_rebuild`, `metadata_edit`, `metadata_gate`, `metadata_escalate`, `readiness_evaluate`) run only when the user asks for that change.
+4. Tools that change state (`asset_process*`, `metadata_build`, `metadata_rebuild`, `metadata_edit`, `metadata_gate`, `metadata_escalate`, `readiness_evaluate`, `enhancement_assess`) run only when the user asks for that change.
 5. Answer in the language of the user.
 6. Use only the filters the user asked for. Do not add extra filters (for example `qc`) - they can hide assets.

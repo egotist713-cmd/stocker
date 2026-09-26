@@ -3041,6 +3041,69 @@ Topaz не обязателен; результат анализа — `enhancem
 
 ---
 
+# 35ZD. 2026-09-26 — Enhancement decision: метрики QC и решение правилами
+
+### Решения пользователя
+
+1. Readiness устраивает.
+2. **`ready` ≠ `ready_for_export`.** `ready` — соответствие правилам
+   площадки; `ready_for_export` — подготовлено всё: sRGB-конвертация,
+   derivative-файл, final metadata, export package. Контракт §3.4.
+3. **Enhancement — два слоя:** детерминированные метрики QC (noise,
+   sharpness, artifacts, resolution) определяют явные проблемы; Qwen — только
+   для спорных случаев. Topaz — не обязательное решение модели.
+4. `readiness.evaluate/get` остаются; **массовой переоценки без ограничений
+   для agent/n8n нет** (операции — по одному `asset_id`; цикл в n8n — только с
+   лимитом за запуск).
+
+### Реализовано (шаг 6a)
+
+- `app/enhancement.py` (`enhancement-rules-v1`): метрики, не зависящие от
+  разрешения, — резкость (лапласиан на копии 2048 px), шум (Immerkær по плоским
+  участкам), блочность JPEG (граница блока 8×8 / середина, не путается с шагом
+  увеличения), мегапиксели; `detail_ratio` — информационно. Уровни ok /
+  borderline / issue / severe; решение: severe → `enhancement_risky`, issue →
+  `enhancement_recommended` (+ операции), только borderline → `disputed` (для
+  Qwen), иначе `enhancement_not_needed`.
+- `app/enhancement_decision.py`: события `ENHANCEMENT/ASSESSED` / `FAILED`,
+  идемпотентность по `file_hash` + версии правил, проверка SHA256 оригинала,
+  файл только читается.
+- Worker: оценка после QC, до Vision; сбой не останавливает pipeline.
+- Операции `enhancement.assess` (pipeline) / `enhancement.get` (read) для
+  human, агента, `workflow:n8n`; `pipeline.enhancement` в `asset.get`; skill
+  OpenClaw обновлён (копия сверена по SHA256).
+
+### Найдено
+
+- `qc.sharpness` (дисперсия градиента на полном разрешении) зависит от
+  размера кадра: 50 MP — 12–73, 12.6 MP — 240–337; для enhancement не годится.
+- **50 MP снимки телефона мягкие на 100 %:** `detail_ratio` 0.11–0.16, как у
+  12.6 MP снимка, увеличенного вдвое (0.14); настоящие 12.6 MP — 0.34–0.76.
+  Эффективная детализация ≈ ¼ номинальной. Это не повод для Topaz — заметка
+  `SOFT_AT_NATIVE_RESOLUTION`. Уменьшать ли такие файлы при экспорте — вопрос
+  пользователю.
+- **QC требует ≥ 4000×3000 (12 MP), площадки — ≥ 4 MP.** Объекты 4–12 MP
+  отсекаются QC до Enhancement, поэтому `resolution → upscale` на практике не
+  срабатывает. Вопрос пользователю.
+
+### Проверка
+
+- Калибровка на 7 реальных снимках и искусственно испорченных копиях: реальные —
+  `not_needed`; размытие r2 → `recommended` (sharpness), r5 → `risky`; шум σ4 →
+  `disputed`, σ8 → `recommended`; JPEG q30 → `recommended` (artifacts), q5 →
+  `risky`; 3 MP → `recommended` (resolution).
+- `pytest`: 403 passed, 3 skipped (`test_enhancement.py` — 28,
+  `test_enhancement_service.py` — 11).
+- Реальный сервер, HTTP API (`workflow:n8n`): assets 3–9 → `ASSESSED`,
+  `enhancement_not_needed`, у 50 MP — `SOFT_AT_NATIVE_RESOLUTION`; повтор →
+  `UNCHANGED`; журнал `API op=enhancement.assess ...`.
+
+### Статус
+
+🟢 Шаг 6a DONE; следующий — 6b (Qwen для `disputed`)
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3209,7 +3272,7 @@ STOCK READINESS (metadata + требования Adobe Stock / Shutterstock, б�
        осталось: worker, фильтр ready_for, digest
 
 ENHANCEMENT DECISION (качество изображения; not_needed / recommended / risky + причины)
-    ⚪ NEXT — приоритет 1 (§35ZC); v1 — локальная модель, только рекомендация
+    🟡 IN PROGRESS — метрики QC и решение правилами DONE (§35ZD); далее Qwen только для disputed
 
 CREATIVE REVIEW ADVISOR (первичные признаки + commercial_score, необязательный)
     ⚪ PLANNED — после Enhancement decision (§3A.7, §35ZC)

@@ -60,6 +60,7 @@ def test_tiff_passes_ingest_qc_and_ai(stocker_root):
     assert [(s, st) for s, st, _ in events(stocker_root, asset_id)] == [
         ("INGEST", "DONE"),
         ("QC", "PASSED"),
+        ("ENHANCEMENT", "ASSESSED"),
         ("AI", "PASSED"),
         ("METADATA_AI", "PASSED"),
         ("METADATA", "DRAFTED"),

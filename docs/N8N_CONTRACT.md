@@ -92,6 +92,11 @@ Content-Type: application/json
 | `metadata.build` | ✅ | только `force=false` (создать или дозаполнить partial; существующие metadata не заменяются) |
 | `metadata.gate` | ✅ | gate не меняет решения человека |
 | `readiness.evaluate`, `readiness.get` | ✅ | оценка по правилам площадок; решений не принимает, metadata и файл не меняет |
+| `enhancement.assess`, `enhancement.get` | ✅ | метрики качества и рекомендация; ничего не улучшает |
+
+Операции оценки адресуются одним `asset_id`; пакетной переоценки нет. Workflow,
+вызывающий их в цикле, обязан ограничивать число объектов за запуск (как
+`stocker-retry`, §6.1).
 | `notification.record` | ✅ | только факт доставки (`NOTIFY/SENT`); pipeline и review не меняет. Агентам недоступна |
 | `metadata.edit`, `metadata.rebuild`, `metadata.escalate` | ❌ `FORBIDDEN` | |
 | `metadata.approve`, `metadata.reject` | ❌ `FORBIDDEN` | |

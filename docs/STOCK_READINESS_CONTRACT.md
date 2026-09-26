@@ -222,6 +222,17 @@ Review gate (`gate-v1.1`) по-прежнему отправляет любой 
 | `blocked` | есть blocker-ы; причины в `checks` |
 | `stale` | после оценки изменился вход (fingerprint, §3.6) — требуется повторная оценка |
 
+**`ready` ≠ `ready_for_export`** (решение 26.09.2026):
+
+| Статус | Значит | Кто ставит |
+|---|---|---|
+| `ready` | объект **соответствует правилам** площадки; план экспорта известен | Stock Readiness (этот контракт) |
+| `ready_for_export` | **подготовлено всё** для отправки: sRGB-конвертация и другие операции выполнены, derivative-файл создан и проверен, final metadata зафиксированы (снимок полей для площадки), собран export package (файл + поля + категория + hash) | будущий этап подготовки экспорта (`export.prepare`), не Readiness |
+
+`ready_for_export` возможен только из `ready` с тем же fingerprint; любое
+изменение входов возвращает объект в `stale`. Отправка на площадку (Export) —
+только из `ready_for_export`.
+
 Общее поле `ready_for` — список площадок в статусе `ready`.
 `pipeline.ready` из `SERVICE_CONTRACT.md` §4.1 **не меняется** (это готовность
 metadata); готовность к площадкам — отдельный ключ `pipeline.stock_readiness`.
@@ -381,6 +392,12 @@ ready_for, event_id}` (без checks — они в `readiness.get`). `allowed_ac
 Следующие шаги (§6): фильтр `asset.list ready_for=<platform>`, счётчики в
 `review.queue.summary`, вызов из worker после gate и после `metadata.approve`.
 
+**Без массовой переоценки для agent и n8n** (решение 26.09.2026): операции
+адресуются **одним** `asset_id`; пакетной операции («переоценить всё») нет.
+Если она понадобится — только с явным лимитом на вызов (как `stocker-retry`:
+не более N объектов за запуск) и с записью в контракт. Workflow n8n, вызывающий
+`readiness.evaluate` в цикле, обязан иметь такой же лимит за запуск.
+
 ---
 
 ## 4. AI Advisors (место в архитектуре)
@@ -400,28 +417,87 @@ ready_for, event_id}` (без checks — они в `readiness.get`). `allowed_ac
 - **История — события.** Каждый вызов → событие с provenance; результат
   разных моделей сравним по событиям.
 
-### 4.2. Enhancement Advisor
+### 4.2. Enhancement decision
 
-Решает, нужно ли улучшение (Topaz) **до** Vision. Topaz не считается
-обязательным.
+Решает, нужно ли улучшение (Topaz) **до** Vision. Topaz **не обязателен** и
+**не является обязательным решением модели**. Два слоя (решение 26.09.2026):
 
-| Вход | QC-метрики (`sharpness`, `dark_ratio`, `bright_ratio`, разрешение, размер) + изображение |
+```text
+QC deterministic metrics (всегда, без модели)
+   noise · sharpness · artifacts · resolution  →  уровни ok / borderline / issue / severe
+        │
+        ├── явный случай → решение правилами (provider = rules), модель не вызывается
+        │     все ok            → enhancement_not_needed
+        │     есть issue        → enhancement_recommended (+ причины, операции)
+        │     есть severe       → enhancement_risky (+ причины)
+        │
+        └── спорный случай (есть borderline, нет issue/severe)
+              → AI recommendation (Qwen, локально) — только здесь
+```
+
+**Метрики (`enhancement-rules-v1`, `app/enhancement.py`).** Не зависят от
+разрешения файла, в отличие от `qc.sharpness` (там дисперсия градиента на
+полном разрешении: у 50 MP снимков 12–73, у 12.6 MP — 240–337, сравнивать
+нельзя).
+
+| reason | Метрика | Как считается |
+|---|---|---|
+| `sharpness` | `sharpness` | дисперсия лапласиана на копии с длинной стороной 2048 px |
+| `noise` | `noise_sigma` | оценка σ шума (Immerkær) по «плоским» пикселям (30 % с наименьшим градиентом) в 5 кропах 1024 px исходного разрешения, медиана |
+| `artifacts` | `blockiness` | блочность JPEG: средний перепад на границе блоков 8×8 / перепад в середине блока (та же чётность — не путается с шагом 2 от увеличения), те же кропы |
+| `resolution` | `megapixels` | ширина × высота |
+| — (info) | `detail_ratio` | энергия лапласиана в исходном разрешении / в половинном; < 0.2 — «мягко на 100 %» (эффективная детализация ниже номинальной) |
+
+**Пороги v1** (калибровка 26.09.2026: 7 реальных снимков + искусственно
+испорченные копии; пересматриваются по статистике):
+
+| reason | ok | borderline | issue → recommended | severe → risky | Операция |
+|---|---|---|---|---|---|
+| `sharpness` | ≥ 150 | 50–150 | 15–50 | < 15 (сильный размыв: Topaz «придумает» детали) | `sharpen` |
+| `noise` | < 3 | 3–5 | 5–12 | ≥ 12 | `denoise` |
+| `artifacts` | < 1.2 | 1.2–1.5 | 1.5–3 | ≥ 3 | `remove_compression_artifacts` |
+| `resolution` | ≥ 6 MP | 4–6 MP | 1–4 MP | < 1 MP | `upscale` |
+
+Калибровка: реальные — резкость 161–1708, шум 0.27–1.72, блочность 0.99–1.06
+(все `ok`); размытие r2 — 44 (`issue`), r5 — 4.8 (`severe`); шум σ8 — 6.1
+(`issue`), σ20 — 13.2 (`severe`); JPEG q30 — 1.7–3.4, q15 — 2.2–4.6, q5 — 4.6–7.9.
+
+**Находка — «мягкие» 50 MP:** все 50 MP снимки телефона имеют
+`detail_ratio` 0.11–0.16 — как 12.6 MP снимок, увеличенный вдвое (0.14), тогда
+как настоящие 12.6 MP — 0.34–0.76. Эффективная детализация ≈ ¼ номинальной.
+Это **не** повод для Topaz (повышение резкости на 50 MP рискованно); это
+заметка `SOFT_AT_NATIVE_RESOLUTION` (info) с оценкой эффективных мегапикселей.
+Нужно ли уменьшать такие файлы при экспорте — отдельное решение (этап export
+derivative).
+
+**AI recommendation (спорные случаи).**
+
+| Вход | изображение + метрики и уровни правил |
 |---|---|
-| Выход | `decision` ∈ `enhancement_not_needed` \| `enhancement_recommended` \| `enhancement_risky`; `reasons[]` — `{reason, detail}`, `reason` ∈ `noise` \| `sharpness` \| `artifacts` \| `resolution` \| `other`; `operations[]` (например `denoise`, `sharpen`, `upscale`) — только для `recommended`; `confidence` |
-| Правило | для `recommended` и `risky` `reasons` **не пуст** (видно, почему Topaz рекомендован или опасен); `other` требует `detail` |
-| События | `ENHANCEMENT/ADVISED`, `ENHANCEMENT/FAILED` |
-| v1 | только записывается рекомендация; Topaz не запускается, Vision работает с оригиналом |
-| Будущее | `enhancement_recommended` → Topaz → derivative → QC → Vision (по отдельному решению) |
+| Выход | `decision` ∈ `enhancement_not_needed` \| `enhancement_recommended` \| `enhancement_risky`; `reasons[]` — `{reason, detail}`, `reason` ∈ `noise` \| `sharpness` \| `artifacts` \| `resolution` \| `other`; `operations[]` — только для `recommended`; `confidence` |
+| Правило | для `recommended` и `risky` `reasons` не пуст; `other` требует `detail` |
+| Границы | модель **не** отменяет явный результат правил; вызывается только при `disputed` |
 
-`enhancement_risky` — улучшение может исказить изображение (артефакты,
-«придуманные» детали, текст и мелкие надписи, лица). Такие объекты не
-улучшаются автоматически.
+**Результат и события.**
 
-Детерминированный предфильтр (без модели): если QC-метрики в норме и
-разрешение с запасом выше минимума, advisor не вызывается —
-`enhancement_not_needed`, `provider = rules`. Модель тратит время только на
-спорные объекты. Предфильтр тоже пишет `reasons` для пограничных метрик
-(например, `resolution`, если мегапикселей меньше запаса).
+| stage/status | Когда | message |
+|---|---|---|
+| `ENHANCEMENT/ASSESSED` | правила | `rules_version`, `metrics`, `findings[]` (`reason`, `level`, `value`), `decision` (или `null` при споре), `disputed`, `reasons[]`, `operations[]`, `notes[]`, `fingerprint` |
+| `ENHANCEMENT/ADVISED` | модель, только спорные | provenance (`provider`, `model`, `prompt_version`) + ответ |
+| `ENHANCEMENT/FAILED` | файл не читается или сбой модели | `stage` (`rules`/`advisor`), `error_type`, `error`, `raw_output` |
+
+- Итоговое решение = решение правил, иначе решение модели, иначе
+  `disputed` (виден человеку).
+- **Не блокирует pipeline:** v1 только записывает рекомендацию; Topaz не
+  запускается, Vision работает с оригиналом.
+- `enhancement_risky` — улучшение может исказить изображение (артефакты,
+  «придуманные» детали, мелкий текст, лица): такие объекты не улучшаются
+  автоматически.
+- Идемпотентно: fingerprint = `file_hash` + версия правил; тот же — `UNCHANGED`.
+- Операции `enhancement.assess` (pipeline) и `enhancement.get` (read) — по
+  **одному** `asset_id`, без массовой переоценки.
+- Будущее: `enhancement_recommended` → Topaz → derivative → QC → Vision (по
+  отдельному решению).
 
 ### 4.3. Creative Review Advisor
 
@@ -490,8 +566,12 @@ ready_for, event_id}` (без checks — они в `readiness.get`). `allowed_ac
    `workflow:n8n`; MCP (§35ZC). Осталось: фильтр `ready_for`, сводка.
 4. **Worker**: оценка после gate и после approve.
 5. **n8n**: digest показывает готовность по площадкам.
-6. **Enhancement Advisor**: интерфейс, предфильтр, локальный провайдер, события
-   (без Topaz).
+6. **Enhancement decision** (без Topaz):
+   - 6a ✅ метрики и решение правилами (`app/enhancement.py`), события
+     `ENHANCEMENT/*`, операции `enhancement.assess` / `enhancement.get`, вызов из
+     worker после QC (не блокирует) — паспорт §35ZD;
+   - 6b AI recommendation (Qwen) только для `disputed` — интерфейс, локальный
+     провайдер, `ENHANCEMENT/ADVISED`, реальный тест LM Studio.
 7. **Creative Review Advisor**: интерфейс, локальный провайдер, события, раздел
    `advice` в очереди.
 

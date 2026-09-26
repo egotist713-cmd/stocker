@@ -192,6 +192,13 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
         "metadata_completeness": "full",
         "ready": True,
         "review_reasons": [],
+        "enhancement": {
+            "assessed": True,
+            "stale": False,
+            "decision": "enhancement_risky",  # 64×48 px случайного шума: < 1 MP и сильный шум
+            "reasons": ["noise", "resolution"],
+            "event_id": envelope["data"]["pipeline"]["enhancement"]["event_id"],
+        },
         "stock_readiness": {
             "evaluated": False,
             "stale": False,

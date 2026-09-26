@@ -19,6 +19,7 @@ def test_new_file_runs_full_pipeline(stocker_root):
     assert [(stage, status) for stage, status, _ in events(stocker_root, asset_id)] == [
         ("INGEST", "DONE"),
         ("QC", "PASSED"),
+        ("ENHANCEMENT", "ASSESSED"),
         ("AI", "PASSED"),
         ("METADATA_AI", "PASSED"),
         ("METADATA", "DRAFTED"),
@@ -71,6 +72,7 @@ def test_failed_asset_can_be_retried_by_id(stocker_root):
 
     assert outcome == worker.AI_PASSED
     assert get_asset(asset_id)["ai_result"] is not None
+    # Файл не изменился — оценка enhancement не повторяется (UNCHANGED, без события).
     assert [(s, st) for s, st, _ in events(stocker_root, asset_id)][-6:] == [
         ("AI", "FAILED"),
         ("QC", "PASSED"),

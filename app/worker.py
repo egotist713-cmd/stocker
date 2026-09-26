@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app import enhancement_decision
 from app import metadata as metadata_service
 from app.ai.analyzer import AIAnalyzer, AIResponseError
 from app.ai.metadata_analyzer import MetadataAnalyzer
@@ -106,6 +107,21 @@ def run_metadata(asset_id: int, analyzer: MetadataAnalyzer | None = None) -> str
     return result["outcome"]
 
 
+def run_enhancement(asset_id: int) -> str | None:
+    """
+    Enhancement decision правилами (docs/STOCK_READINESS_CONTRACT.md §4.2).
+    Только рекомендация: не блокирует pipeline, Topaz не запускается.
+    """
+    try:
+        result = enhancement_decision.assess_asset(asset_id)
+    except Exception as exc:  # noqa: BLE001 — рекомендация не должна останавливать обработку
+        print(f"ENHANCEMENT: skipped ({type(exc).__name__}: {exc})")
+        return None
+    decision = enhancement_decision.effective_decision(result["assessment"])
+    print(f"ENHANCEMENT: {result['outcome']} ({decision})")
+    return result["outcome"]
+
+
 def process_asset(
     asset_id: int,
     force: bool = False,
@@ -141,6 +157,8 @@ def process_asset(
     if not qc_result["passed"]:
         print("AI: skipped because QC failed")
         return QC_FAILED
+
+    run_enhancement(asset_id)
 
     outcome = run_ai(asset_id, source_file(asset), analyzer or LocalAnalyzer())
 
