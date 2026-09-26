@@ -23,6 +23,30 @@ API_VERSION = "1"
 HUMAN = "human"
 _ACTOR = re.compile(r"^(human|agent:[a-z0-9_.-]+|workflow:[a-z0-9_.-]+)$")
 
+# Операции, которые меняют содержимое metadata и возвращают его в draft → gate.
+# Для агентов и workflow они запрещены над решениями человека: иначе правка
+# превратила бы rejected в auto_approved в обход человека.
+CONTENT_CHANGING = ("metadata.edit", "metadata.rebuild", "metadata.build")
+HUMAN_DECISIONS = ("approved", "rejected")
+
+
+def _human_decision_guard(operation: str, params: dict, actor: str) -> str | None:
+    """Сообщение об отказе, если не-человек трогает содержимое после решения человека."""
+    if actor == HUMAN or operation not in CONTENT_CHANGING or not isinstance(params, dict):
+        return None
+
+    asset_id = params.get("asset_id")
+    if not isinstance(asset_id, int):
+        return None  # ошибку параметров сообщит валидация
+
+    from app.service.views import asset_view
+
+    view = asset_view(asset_id)
+    state = (view or {}).get("pipeline", {}).get("metadata")
+    if state in HUMAN_DECISIONS:
+        return f"Asset {asset_id} metadata is '{state}' by a human decision; actor '{actor}' cannot change it"
+    return None
+
 
 def _envelope(operation: str, *, ok: bool, asset_id=None, outcome=None, data=None, error=None) -> dict:
     return {
@@ -65,6 +89,10 @@ def dispatch(operation: str, params: dict | None = None, actor: str = HUMAN) -> 
     # approve/reject — решения человека. auto_approved ставит только review gate.
     if spec.access == REVIEW and actor != HUMAN:
         return _error(operation, "FORBIDDEN", f"'{operation}' is a human decision; actor '{actor}' is not allowed", asset_id)
+
+    refusal = _human_decision_guard(operation, params, actor)
+    if refusal:
+        return _error(operation, "FORBIDDEN", refusal, asset_id)
 
     try:
         parsed = spec.params.model_validate(params)

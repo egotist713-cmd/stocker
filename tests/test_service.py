@@ -362,3 +362,45 @@ def test_review_queue_summary_covers_whole_catalog(stocker_root, monkeypatch):
     assert problems == {review_id: ["TRADEMARK"], partial_id: ["METADATA_PARTIAL"]}
     assert no_metadata_id not in problems  # просто ещё не обработан — не проблема
     assert [item["id"] for item in data["items"]] == [review_id]  # очередь как раньше
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+@pytest.mark.parametrize(
+    ("operation", "extra"),
+    [
+        ("metadata.edit", {"title": "Agent title"}),
+        ("metadata.rebuild", {}),
+        ("metadata.build", {"force": True}),
+    ],
+)
+@pytest.mark.parametrize("actor", [AGENT, "workflow:n8n"])
+def test_non_humans_cannot_change_human_decisions(stocker_root, decision, operation, extra, actor):
+    asset_id = _vision_asset(stocker_root)
+    dispatch("metadata.build", {"asset_id": asset_id})
+    params = {"asset_id": asset_id} if decision == "approve" else {"asset_id": asset_id, "reason": "no"}
+    dispatch(f"metadata.{decision}", params)
+    state = dispatch("asset.get", {"asset_id": asset_id})["data"]["pipeline"]["metadata"]
+    events_before = len(events(stocker_root, asset_id))
+
+    envelope = dispatch(operation, {"asset_id": asset_id, **extra}, actor=actor)
+
+    assert envelope["error"]["code"] == "FORBIDDEN"
+    assert dispatch("asset.get", {"asset_id": asset_id})["data"]["pipeline"]["metadata"] == state
+    assert len(events(stocker_root, asset_id)) == events_before
+
+
+def test_agent_can_edit_drafts_and_auto_approved(stocker_root):
+    asset_id = _vision_asset(stocker_root)
+    dispatch("metadata.build", {"asset_id": asset_id}, actor=AGENT)  # auto_approved
+
+    assert dispatch("metadata.edit", {"asset_id": asset_id, "title": "Agent title"}, actor=AGENT)["ok"]
+
+
+def test_human_can_change_after_own_decision(stocker_root):
+    asset_id = _vision_asset(stocker_root)
+    dispatch("metadata.build", {"asset_id": asset_id})
+    dispatch("metadata.reject", {"asset_id": asset_id, "reason": "no"})
+
+    envelope = dispatch("metadata.edit", {"asset_id": asset_id, "title": "Human fix"})
+
+    assert envelope["ok"] and envelope["data"]["pipeline"]["metadata"] != "rejected"
