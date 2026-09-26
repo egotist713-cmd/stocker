@@ -110,7 +110,7 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 |---|---|---|
 | `asset.get` | `asset_id` | asset view (§4.1) |
 | `asset.list` | `qc?`, `vision?`, `metadata_state?` (`none`/`draft`/`auto_approved`/`human_review`/`approved`/`rejected`), `ready?`, `limit=50`, `offset=0` | список кратких asset view |
-| `review.queue` | `limit=50`, `offset=0` | assets в `human_review` с причинами gate — очередь человека |
+| `review.queue` | `limit=50`, `offset=0` | `summary` по всему каталогу (`total_assets`, `ready`, `by_metadata_state`, `problem_assets` с причинами) + `items` — assets в `human_review` с причинами gate (очередь человека). Один вызов отвечает «что происходит» |
 | `asset.history` | `asset_id`, `stage?` | события, `message` распарсен из JSON (старые текстовые — как строка) |
 | `metadata.get` | `asset_id` | `metadata_json` |
 | `operations.list` | — | манифест операций с JSON Schema параметров |

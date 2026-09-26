@@ -206,12 +206,65 @@ def list_assets(
     return {"total": len(summaries), "limit": limit, "offset": offset, "items": summaries[offset:offset + limit]}
 
 
+METADATA_STATES = ("none", mb.DRAFT, mb.AUTO_APPROVED, mb.HUMAN_REVIEW, mb.APPROVED, mb.REJECTED)
+
+
+def _problems(pipeline: dict, metadata: dict | None) -> list[str]:
+    """Причины, по которым объект не движется дальше сам (для сводки review_queue)."""
+    problems = []
+    if pipeline["source"] == "changed":
+        problems.append("SOURCE_CHANGED")
+    elif pipeline["source"] == "missing":
+        problems.append("SOURCE_MISSING")
+    if pipeline["qc"] == "failed":
+        problems.append("QC_FAILED")
+    if pipeline["vision"] == "failed":
+        problems.append("VISION_FAILED")
+    if pipeline["metadata"] == mb.HUMAN_REVIEW:
+        problems.extend(pipeline["review_reasons"] or ["HUMAN_REVIEW"])
+    if pipeline["metadata"] == mb.DRAFT:
+        problems.append("METADATA_PARTIAL" if metadata and metadata["completeness"] == mb.PARTIAL else "METADATA_NOT_GATED")
+    return problems
+
+
 def review_queue(limit: int = 50, offset: int = 0) -> dict:
-    result = list_assets(metadata_state=mb.HUMAN_REVIEW, limit=limit, offset=offset)
-    for item in result["items"]:
-        gate = (asset_view(item["id"])["metadata"] or {}).get("review_gate") or {}
-        item["review_reasons"] = gate.get("reasons", [])
-    return result
+    """
+    Очередь человека (items — объекты в human_review, как раньше) и сводка по
+    всему каталогу: один вызов отвечает «сколько всего / готово / ждёт проверки
+    и что проблемно».
+    """
+    by_state = {state: 0 for state in METADATA_STATES}
+    ready = 0
+    problems = []
+    review_items = []
+
+    for asset_id in all_asset_ids():
+        view = asset_view(asset_id)
+        pipeline, metadata = view["pipeline"], view["metadata"]
+        by_state[pipeline["metadata"]] = by_state.get(pipeline["metadata"], 0) + 1
+        ready += pipeline["ready"]
+
+        codes = _problems(pipeline, metadata)
+        if codes:
+            problems.append({"id": view["id"], "filename": view["filename"], "problems": codes})
+
+        if pipeline["metadata"] == mb.HUMAN_REVIEW:
+            item = asset_summary(view)
+            item["review_reasons"] = ((metadata or {}).get("review_gate") or {}).get("reasons", [])
+            review_items.append(item)
+
+    return {
+        "summary": {
+            "total_assets": sum(by_state.values()),
+            "ready": ready,
+            "by_metadata_state": by_state,
+            "problem_assets": problems,
+        },
+        "total": len(review_items),
+        "limit": limit,
+        "offset": offset,
+        "items": review_items[offset:offset + limit],
+    }
 
 
 def history(asset_id: int, stage: str | None = None) -> list[dict]:

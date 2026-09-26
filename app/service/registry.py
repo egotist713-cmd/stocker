@@ -120,7 +120,11 @@ DESCRIPTIONS = {
         'Example: {"ready": true}. Use {} for all assets. For what waits for a human, use review_queue.'
     ),
     "asset.history": 'Processing events of an asset (JSON messages parsed). Args: {"asset_id": 5}, optional "stage": "METADATA"',
-    "review.queue": "Assets waiting for a human decision (human_review) with the reasons. Use for 'what needs my review / attention'. Args: {}",
+    "review.queue": (
+        "Overview in one call: summary (total_assets, ready, counts by metadata state, problem_assets with reasons) "
+        "and items waiting for a human decision (human_review) with reasons. "
+        "Use for 'what is going on', 'how many are ready', 'what needs my review / attention'. Args: {}"
+    ),
     "metadata.get": 'Metadata of an asset: title, description, keywords, validation, review gate. Args: {"asset_id": 5}',
     "operations.list": "All operations with JSON Schema of their parameters. Args: {}",
     "asset.process_file": 'Ingest a new image inside the project and run QC, Vision, metadata and review gate. Args: {"path": "data/incoming/IMG_1.jpg"}',

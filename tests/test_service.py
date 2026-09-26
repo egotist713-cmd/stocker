@@ -336,3 +336,29 @@ def test_descriptions_carry_argument_examples():
     for operation in build_registry().values():
         if operation.access != "review":
             assert "Args:" in operation.description or "Example:" in operation.description, operation.name
+
+
+def test_review_queue_summary_covers_whole_catalog(stocker_root, monkeypatch):
+    from app import worker
+
+    ready_id = _vision_asset(stocker_root, name="a.jpg", seed=1)
+    review_id = _vision_asset(stocker_root, name="b.jpg", seed=2, vision=VISION.model_copy(update={"brands": ["Acme"]}))
+    no_metadata_id = _vision_asset(stocker_root, name="c.jpg", seed=3)
+    partial_id = _vision_asset(stocker_root, name="d.jpg", seed=4)
+    dispatch("metadata.build", {"asset_id": ready_id})
+    dispatch("metadata.build", {"asset_id": review_id})
+    monkeypatch.setattr(metadata_service, "LMStudioMetadataAnalyzer", lambda: OfflineMetadataAnalyzer(error=ConnectionError("down")))
+    dispatch("metadata.build", {"asset_id": partial_id})
+
+    data = dispatch("review.queue", {}, actor=AGENT)["data"]
+
+    summary = data["summary"]
+    assert summary["total_assets"] == 4
+    assert summary["ready"] == 1
+    assert summary["by_metadata_state"] == {
+        "none": 1, "draft": 1, "auto_approved": 1, "human_review": 1, "approved": 0, "rejected": 0,
+    }
+    problems = {item["id"]: item["problems"] for item in summary["problem_assets"]}
+    assert problems == {review_id: ["TRADEMARK"], partial_id: ["METADATA_PARTIAL"]}
+    assert no_metadata_id not in problems  # просто ещё не обработан — не проблема
+    assert [item["id"] for item in data["items"]] == [review_id]  # очередь как раньше

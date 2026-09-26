@@ -324,6 +324,28 @@ HTTP API (FastAPI)          ← n8n HTTP Request, OpenClaw tools
 
 FastAPI — только после стабилизации внутреннего сервисного слоя.
 
+### 5. AI и OpenClaw только инициируют действия; истина — Stocker Core и события
+
+Принят 26.09.2026. AI-модели и агент OpenClaw могут только **инициировать**
+операции через service layer / MCP. Истинное состояние определяют только
+Stocker Core и события `processing_events` в SQLite:
+
+- ответ агента (текст) — не доказательство: локальная модель может выдумать
+  результат или неверно пересказать его (подтверждено в §35P, §35S);
+- факт действия проверяется журналом вызовов MCP-сервера
+  (`logs/mcp_http.log`) и событиями Stocker с `actor`;
+- решения человека (`approved`/`rejected`) принимает только человек;
+  `auto_approved` ставит только детерминированный review gate.
+
+### 6. Одна локальная модель для всего AI-контура
+
+Принят 26.09.2026. `qwen3-vl-8b-instruct` (Q5_K_M + `mmproj-F16` + KV `q8_0`
++ контекст 32768) — единая локальная модель для всех ролей: Vision, Metadata
+AI, агент OpenClaw, tool use. Роли разделены архитектурно (свои провайдеры и
+конфигурации), но исполняются одной моделью: 12 GB VRAM не позволяют держать
+несколько моделей без постоянных перезагрузок. Новые модели не добавляются без
+отдельного доказанного требования и решения пользователя.
+
 ---
 
 # ЧАСТЬ II. ФАКТИЧЕСКОЕ СОСТОЯНИЕ ПРОЕКТА
@@ -2435,7 +2457,54 @@ OpenClaw отдаёт MCP-инструменты через мета-инстр�
 ### Статус
 
 🟢 DONE — агент сам выбирает инструменты для чтения, очереди и отказа в
-approve; 🟡 составные вопросы — частично
+approve; составные вопросы закрыты сводкой `review_queue` (§35T)
+
+---
+
+# 35T. 2026-09-26 — Интеграция OpenClaw завершена
+
+### Реализовано
+
+- **Сводка в `review_queue`** (один вызов закрывает вопрос «что происходит»):
+  `data.summary` = `total_assets`, `ready`, `by_metadata_state` (none / draft /
+  auto_approved / human_review / approved / rejected), `problem_assets` (id,
+  filename, причины: `SOURCE_CHANGED`, `SOURCE_MISSING`, `QC_FAILED`,
+  `VISION_FAILED`, причины review gate, `METADATA_PARTIAL`,
+  `METADATA_NOT_GATED`). `items` — очередь `human_review`, как раньше
+  (совместимо). Описание инструмента и skill обновлены.
+- **Workspace OpenClaw очищен.** Устаревшие копии кода Stocker (`app/`,
+  `local_analyzer.py` от 21.09; все отличались от текущего кода) перенесены
+  из `~/.openclaw/workspace` в `~/.openclaw/archive/workspace-stocker-copies-20260926/`
+  (с README; безвозвратное удаление — на усмотрение пользователя). В workspace
+  остались инструкции (`AGENTS.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`),
+  `skills/` и собственная память OpenClaw (`memory/`, `DREAMS.md`).
+  Источник истины кода — только `F:\stock\stocker`.
+- **Принципы §3A.5 и §3A.6** зафиксированы: AI/OpenClaw только инициирует,
+  истина — Stocker Core и события; одна локальная модель `qwen3-vl-8b-instruct`
+  для всех ролей.
+
+### Проверка
+
+- Production (только чтение): `total_assets` 7, `ready` 5, `auto_approved` 5,
+  `human_review` 1, `none` 1; проблемные — asset 2 (`SOURCE_CHANGED`) и asset 5
+  (`TEXT_BRAND_OR_LEGAL`). Ответ ≈ 230 токенов.
+- Агент, составной вопрос «что происходит, сколько готово, что ждёт
+  проверки» (без имён инструментов): вызовы `operations_list` + `review_queue`;
+  ответ полный и совпадает с БД (7 / 5 / 1, причины, оба проблемных объекта).
+- `python -m pytest`: 277 passed, 3 skipped.
+
+### Итог интеграции OpenClaw
+
+```text
+OpenClaw (qwen3-vl-8b-instruct, skill stocker)
+   → MCP HTTP (172.26.192.1:8765, токен, actor agent:openclaw)
+   → Stocker Service Layer (dispatch, права: без approve/reject)
+   → Stocker Core → SQLite events (истина)
+```
+
+### Статус
+
+🟢 DONE — интеграция OpenClaw завершена. Следующий этап — n8n (роль — §35M).
 
 ---
 
@@ -2581,6 +2650,9 @@ SERVICE LAYER + JSON CLI (app.service, python -m app.api)
 MCP ДЛЯ OPENCLAW
     🟢 DONE — OpenClaw → MCP HTTP (NAT, адрес WSL, токен) → Stocker (§35P)
 
+OPENCLAW INTEGRATION (skill, одна модель qwen3-vl, сводка review_queue)
+    🟢 DONE (§35S, §35T)
+
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
 
@@ -2622,8 +2694,9 @@ OPENCLAW AUTONOMY
 3. ~~MCP-адаптер для OpenClaw~~ — 🟢 DONE (§35O, §35P). Сервер:
    `python -m app.service.mcp_http` (`STOCKER_MCP_HOST=wsl`); журнал вызовов —
    `logs/mcp_http.log`.
-4. n8n (роль — §35M): Execute Command → `python -m app.api --actor workflow:n8n`,
-   позже HTTP поверх того же реестра.
+4. **n8n — следующий этап** (роль — §35M; интеграция OpenClaw завершена, §35T):
+   Execute Command → `python -m app.api --actor workflow:n8n`, позже HTTP поверх
+   того же реестра.
 5. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
    общий долгоживущий Windows-процесс (`SERVICE_CONTRACT.md` §7).
 
@@ -2720,7 +2793,11 @@ AI/PASSED
 > pipeline-операции; approve/reject ему недоступны. Истина — журнал сервера и
 > события Stocker, а не текст ответа агента.
 >
-> **Следующая задача: обсудить n8n (роль — §35M).**
+> С 26.09.2026 (§35T): интеграция OpenClaw завершена (skill `stocker`, одна
+> модель `qwen3-vl-8b-instruct` для всех ролей). Принцип §3A.5: AI и OpenClaw
+> только инициируют действия; истина — Stocker Core и события SQLite.
+>
+> **Следующая задача: n8n (роль — §35M).**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 
