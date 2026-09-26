@@ -67,6 +67,7 @@ class EnhancementAdvice(BaseModel):
     decision: Literal["enhancement_not_needed", "enhancement_recommended", "enhancement_risky"]
     reasons: list[EnhancementReason] = Field(default_factory=list)
     operations: list[Literal["sharpen", "denoise", "remove_compression_artifacts", "upscale"]] = Field(default_factory=list)
+    # Некалиброванный score модели, не вероятность; в автоматических решениях не используется.
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @model_validator(mode="after")

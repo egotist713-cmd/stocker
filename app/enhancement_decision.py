@@ -122,6 +122,7 @@ def summary(asset: dict, assessed_event: dict | None, advised_event: dict | None
     if result.get("decision"):
         decided_by, reasons, confidence = "rules", result.get("reasons", []), None
     elif advice:
+        # confidence — некалиброванный score модели, только для показа (паспорт §3A.8).
         decided_by, reasons, confidence = "advisor", advice["advice"]["reasons"], advice["advice"]["confidence"]
     else:
         decided_by, reasons, confidence = None, result.get("reasons", []), None
