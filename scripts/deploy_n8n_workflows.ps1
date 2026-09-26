@@ -1,12 +1,19 @@
 # Развернуть workflows Stocker в n8n (контейнер "n8n"). Токены не выводятся.
 #
-#   F:\stock\stocker\scripts\deploy_n8n_workflows.ps1
+#   F:\stock\stocker\scripts\deploy_n8n_workflows.ps1                    # все
+#   F:\stock\stocker\scripts\deploy_n8n_workflows.ps1 -Only stocker-retry  # выборочно
+#
+# ВНИМАНИЕ: импорт может снять публикацию (active) с перезаписываемых workflow.
+# После импорта проверьте `n8n list:workflow --active=true` и при необходимости
+# опубликуйте заново (publish:workflow + docker restart n8n).
 #
 # Требуется: в n8n создан владелец и credential типа Header Auth с именем "Stocker API"
 # (Name: Authorization, Value: Bearer <STOCKER_N8N_TOKEN>). Скрипт находит id этого
 # credential, подставляет его вместо __STOCKER_CREDENTIAL_ID__ и импортирует
 # integrations/n8n/workflows/*.json. Workflows импортируются выключенными:
 # включение — осознанное действие в UI n8n.
+
+param([string[]]$Only = @())
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -29,7 +36,9 @@ Write-Host "Credential '$CredentialName': id=$credentialId"
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) "stocker-n8n-workflows"
 Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
 New-Item -ItemType Directory $staging | Out-Null
-foreach ($file in Get-ChildItem $Source -Filter *.json) {
+$files = Get-ChildItem $Source -Filter *.json | Where-Object { $Only.Count -eq 0 -or $Only -contains $_.BaseName }
+if (-not $files) { throw "No workflow files selected (Only: $($Only -join ', '))." }
+foreach ($file in $files) {
     $text = (Get-Content $file.FullName -Raw -Encoding UTF8).Replace("__STOCKER_CREDENTIAL_ID__", $credentialId)
     [System.IO.File]::WriteAllText((Join-Path $staging $file.Name), $text, (New-Object System.Text.UTF8Encoding $false))
 }
@@ -42,3 +51,5 @@ Remove-Item -Recurse -Force $staging
 
 Write-Host "=== workflows in n8n"
 docker exec $Container n8n list:workflow
+Write-Host "=== active (published)"
+docker exec $Container n8n list:workflow --active=true

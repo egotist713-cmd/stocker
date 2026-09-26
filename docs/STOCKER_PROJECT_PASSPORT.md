@@ -265,6 +265,10 @@ source
 - Решение «улучшать или нет» принимает Stocker Core по правилам (как review
   gate), а не агент или workflow. n8n/OpenClaw только запускают операцию.
 - Пока **не реализуется**.
+- Кратко (решение 26.09.2026, §35X): **QC → Topaz (если требуется) → QC → Vision**.
+
+**Экспорт на стоки** — следующий слой после стабильной работы pipeline; пока
+не реализуется (§35X).
 
 ---
 
@@ -2730,6 +2734,44 @@ allowlist `workflow:n8n`, операция `incoming.list`, workflows v1
 
 ---
 
+# 35X. 2026-09-26 — Расписания n8n включены поэтапно; ограничители retry
+
+### Решения пользователя
+
+1. Включить `stocker-ingest` и `stocker-digest`.
+2. `stocker-retry` — выключен до накопления статистики; перед включением —
+   ограничители: максимум объектов за запуск, уведомление при повторных
+   ошибках, защита от бесконечных повторов.
+3. Image Enhancement — будущий этап: **QC → Topaz (если требуется) → QC →
+   Vision** (подробно — §2).
+4. **Экспорт на стоки не реализуется** — следующий слой после стабильной
+   работы pipeline.
+
+### Реализовано и проверено
+
+- `stocker-ingest`, `stocker-digest` опубликованы (`n8n publish:workflow` +
+  перезапуск контейнера); `stocker-notify` опубликован ранее; `stocker-retry`
+  не опубликован. Плановые вызовы `incoming.list` от `workflow:n8n` видны в
+  журнале Stocker.
+- `stocker-retry` перестроен в одну линейную цепочку (без Merge):
+  кандидаты (Vision failed + partial) → история → план (лимит 3 неудачи по
+  событиям Stocker) → не более 5 объектов за запуск → вызов с изоляцией сбоев
+  → отчёт; исчерпавшие лимит → уведомление только о новых (статические данные
+  workflow). Контракт n8n §6.1.
+- `integrations/n8n/tests/retry_logic.test.js` — проверка кода узлов из JSON
+  workflow в Node.js контейнера n8n: все сценарии проходят.
+- Реальный запуск нового `stocker-retry` в n8n — без ошибок (повторять нечего).
+- `deploy_n8n_workflows.ps1 -Only <имя>` — выборочное развёртывание; скрипт
+  печатает опубликованные workflow. Выборочный импорт `stocker-retry` не
+  снял публикацию с `ingest` / `digest` / `notify`.
+
+### Статус
+
+🟢 DONE — `ingest` и `digest` работают по расписанию; ⚪ `retry` готов, ждёт
+решения о включении
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -2879,10 +2921,13 @@ OPENCLAW INTEGRATION (skill, одна модель qwen3-vl, сводка review
     🟢 DONE (§35U)
 
 N8N (Docker Desktop, HTTP API, workflow:n8n, уведомления через n8n)
-    🟡 IN PROGRESS — контракт docs/N8N_CONTRACT.md (§35V)
+    🟢 DONE — ingest и digest по расписанию (§35W, §35X); retry готов, выключен
 
-IMAGE ENHANCEMENT (enhancement decision → Topaz → QC, производные файлы)
-    ⚪ PLANNED (§2, §35V)
+IMAGE ENHANCEMENT (QC → Topaz при необходимости → QC → Vision; производные файлы)
+    ⚪ PLANNED (§2, §35V, §35X)
+
+EXPORT / STOCK PLATFORMS
+    ⚪ PLANNED — следующий слой после стабильной работы pipeline (§35X)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
@@ -2900,12 +2945,6 @@ DECISION ENGINE
     ⚪ PLANNED
 
 TOPAZ / COMFYUI
-    ⚪ PLANNED
-
-EXPORT / STOCK APIs
-    ⚪ PLANNED
-
-N8N AUTOMATION
     ⚪ PLANNED
 
 OPENCLAW AUTONOMY
