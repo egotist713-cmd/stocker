@@ -102,7 +102,7 @@ $B = "D:\backup\stocker\$(Get-Date -Format yyyy-MM-dd)"; New-Item -ItemType Dire
    - файлы модели (§4), проверить SHA256;
    - сервер: `ops\lmstudio\http-server-config.json` (порт 1234, `0.0.0.0`, JIT, автозапуск) — выставить в UI или скопировать в `%USERPROFILE%\.lmstudio\.internal\`;
    - настройки загрузки модели по умолчанию (§4) — в UI (My Models → шестерёнка → сохранить) или скопировать `ops\lmstudio\Qwen3-VL-8B-Instruct-Q5_K_M.load-config.json` в `%USERPROFILE%\.lmstudio\.internal\user-concrete-model-default-config\unsloth\Qwen3-VL-8B-Instruct-GGUF\Qwen3-VL-8B-Instruct-Q5_K_M.gguf.json`;
-   - в настройках LM Studio: запуск при входе и локальный сервис (`enableLocalService`); разрешить LM Studio в firewall при первом запуске.
+   - в настройках LM Studio: запуск при входе и локальный сервис (`enableLocalService`); разрешить LM Studio в firewall при первом запуске. Автозапуск работает через ключ `HKCU\...\Run` → `LM Studio.exe --run-as-service` (задача `LMStudioAutoServer` на этой машине устаревшая и не используется).
 8. **WSL и OpenClaw:**
 
    ```powershell
@@ -175,7 +175,15 @@ Register-ScheduledTask -TaskName "OpenClaw WSL keep-alive" -Action (New-Schedule
 Register-ScheduledTask -TaskName "Stocker MCP" -Action (New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless F:\stock\stocker\scripts\start_mcp_http.cmd" -WorkingDirectory "F:\stock\stocker") -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries)
 ```
 
-`LMStudioAutoServer` создаёт сам LM Studio. Все задачи запускаются **при входе пользователя** в Windows.
+LM Studio запускается ключом `Run` (`--run-as-service`), а не задачей: задача
+`LMStudioAutoServer` на этой машине ссылается на несуществующий путь и
+падает (`0x80070002`) — её можно удалить:
+
+```powershell
+Unregister-ScheduledTask -TaskName "LMStudioAutoServer" -Confirm:$false
+```
+
+Все задачи запускаются **при входе пользователя** в Windows.
 
 ---
 

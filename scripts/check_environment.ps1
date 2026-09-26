@@ -59,10 +59,18 @@ $wslHost = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
 Check ($null -ne $wslHost) "vEthernet (WSL) address" "$wslHost"
 $listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 Check ($null -ne $listener -and $listener.LocalAddress -eq $wslHost) "Stocker MCP listening on WSL host:8765" "$($listener.LocalAddress)"
-foreach ($task in "Stocker MCP", "OpenClaw WSL keep-alive", "LMStudioAutoServer") {
+foreach ($task in "Stocker MCP", "OpenClaw WSL keep-alive") {
     $t = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
-    $expectRunning = $task -ne "LMStudioAutoServer"
-    Check ($null -ne $t -and (-not $expectRunning -or $t.State -eq "Running")) "scheduled task '$task'" "$($t.State)"
+    Check ($null -ne $t -and $t.State -eq "Running") "scheduled task '$task'" "$($t.State)"
+}
+# LM Studio стартует через ключ Run (--run-as-service); задача LMStudioAutoServer — устаревшая.
+$lmRun = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue)."electron.app.LM Studio"
+$lmExe = [regex]::Match([string]$lmRun, '^"?([^"]+?\.exe)').Groups[1].Value
+Check ($lmExe -and (Test-Path -LiteralPath $lmExe)) "LM Studio autostart (Run key)" "$lmRun"
+$lmTask = Get-ScheduledTask -TaskName "LMStudioAutoServer" -ErrorAction SilentlyContinue
+if ($lmTask) {
+    $taskExe = $lmTask.Actions[0].Execute
+    Check (Test-Path -LiteralPath $taskExe) "task 'LMStudioAutoServer' target exists" "stale path: $taskExe" "WARN"
 }
 $wslconfig = if (Test-Path "$env:USERPROFILE\.wslconfig") { Get-Content "$env:USERPROFILE\.wslconfig" -Raw } else { "" }
 Check ($wslconfig -notmatch 'networkingMode\s*=\s*mirrored') ".wslconfig without mirrored networking" "(mirrored fails on this machine, 0x8007054f)"
