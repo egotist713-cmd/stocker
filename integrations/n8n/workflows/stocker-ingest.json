@@ -1,0 +1,90 @@
+{
+  "id": "StockerIngest001",
+  "name": "stocker-ingest",
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "nodes": [
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 5}]}}
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000002",
+      "name": "incoming.list",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/incoming.list",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {"timeout": 60000}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000003",
+      "name": "New files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Новые файлы без дубликатов. Пустой список — workflow на этом заканчивается.\nconst envelope = $input.first().json;\nif (!envelope.ok) {\n  throw new Error(`incoming.list: ${JSON.stringify(envelope.error)}`);\n}\nreturn envelope.data.items\n  .filter(item => item.duplicate_of === null)\n  .map(item => ({ json: { path: item.path } }));"
+      }
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000004",
+      "name": "asset.process_file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0],
+      "notes": "По одному файлу (batch 1): Stocker и так обрабатывает изменяющие операции последовательно.",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/asset.process_file",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ path: $json.path }) }}",
+        "options": {"timeout": 600000, "batching": {"batch": {"batchSize": 1, "batchInterval": 0}}}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000005",
+      "name": "Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Итог приёма для слоя уведомлений. Состояние берётся из ответа Stocker, не вычисляется здесь.\nconst results = $input.all().map(item => {\n  const e = item.json;\n  return {\n    asset_id: e.asset_id,\n    ok: e.ok,\n    outcome: e.outcome,\n    error: e.error ? e.error.code : null,\n    state: e.data && e.data.pipeline ? e.data.pipeline.metadata : null,\n    reasons: e.data && e.data.pipeline ? e.data.pipeline.review_reasons : [],\n  };\n});\nconst failed = results.filter(r => !r.ok);\nconst review = results.filter(r => r.state === 'human_review');\nconst ready = results.filter(r => r.state === 'auto_approved');\nconst lines = [\n  `Обработано новых файлов: ${results.length}`,\n  `Готово автоматически: ${ready.length}`,\n  `Ждут проверки: ${review.length}` + (review.length ? ` (${review.map(r => `#${r.asset_id} ${r.reasons.join(', ')}`).join('; ')})` : ''),\n  `Ошибки: ${failed.length}` + (failed.length ? ` (${failed.map(r => `#${r.asset_id} ${r.error || r.outcome}`).join('; ')})` : ''),\n];\nreturn [{ json: {\n  severity: failed.length ? 'warning' : review.length ? 'attention' : 'info',\n  title: 'Stocker: новые фотографии',\n  text: lines.join('\\n'),\n  data: { results },\n} }];"
+      }
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000006",
+      "name": "Notify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1100, 0],
+      "parameters": {"source": "database", "workflowId": "StockerNotify001"}
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {"main": [[{"node": "incoming.list", "type": "main", "index": 0}]]},
+    "incoming.list": {"main": [[{"node": "New files", "type": "main", "index": 0}]]},
+    "New files": {"main": [[{"node": "asset.process_file", "type": "main", "index": 0}]]},
+    "asset.process_file": {"main": [[{"node": "Report", "type": "main", "index": 0}]]},
+    "Report": {"main": [[{"node": "Notify", "type": "main", "index": 0}]]}
+  }
+}

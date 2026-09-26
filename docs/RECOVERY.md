@@ -6,7 +6,7 @@
 > Проверка после восстановления (и после любой перезагрузки):
 > `F:\stock\stocker\scripts\check_environment.ps1` — все пункты должны быть `PASS`.
 >
-> Состояние на 26 сентября 2026.
+> Состояние на 26 сентября 2026 (включая n8n).
 
 ---
 
@@ -27,6 +27,9 @@
 | Дистрибутив OpenClaw | WSL `OpenClawGateway`: OpenClaw 2026.9.5, `/etc/wsl.conf`, служба `openclaw-gateway` (systemd user) | ❌ | **да** (внутри конфиг с токенами) | `wsl --export` (§2) |
 | Конфиг и память OpenClaw | `~/.openclaw/` (`openclaw.json`, `agents/`, `workspace/`, `memory/`) | ❌ | **да**: `openclaw.json` содержит Bearer-токен Stocker MCP и учётные данные провайдеров | `openclaw backup create` (§2) |
 | Skill Stocker | `~/.openclaw/workspace/skills/stocker/SKILL.md` | исходник ✅ `integrations/openclaw/skills/stocker/SKILL.md` | нет | из git |
+| n8n: workflows | `integrations/n8n/workflows/*.json` (без токенов) | ✅ | нет | из git; развёртывание `scripts/deploy_n8n_workflows.ps1` |
+| n8n: данные | Docker volume `n8n_data` (владелец, credential «Stocker API», история выполнений, **ключ шифрования n8n**) | ❌ | **да** | копия volume (§2) |
+| Секрет n8n-канала | `.env`: `STOCKER_N8N_TOKEN` | ❌ | **да** | вместе с `.env` |
 
 ---
 
@@ -73,6 +76,12 @@ $B = "D:\backup\stocker\$(Get-Date -Format yyyy-MM-dd)"; New-Item -ItemType Dire
 
 6. **Модель** (≈ 6,5 GB) — копия каталога или повторная загрузка (§4).
 
+7. **n8n** — volume с данными (содержит ключ шифрования credential):
+
+   ```powershell
+   docker run --rm -v n8n_data:/data -v "${B}:/backup" busybox:latest tar czf /backup/n8n_data.tgz -C /data .
+   ```
+
 ---
 
 ## 3. Порядок восстановления
@@ -111,7 +120,10 @@ $B = "D:\backup\stocker\$(Get-Date -Format yyyy-MM-dd)"; New-Item -ItemType Dire
     и обновить в OpenClaw оба адреса (LM Studio и Stocker MCP), §6.
 11. **Skill:** скопировать `integrations/openclaw/skills/stocker/SKILL.md` в `~/.openclaw/workspace/skills/stocker/`.
 12. **Задачи Планировщика** (§5); перезайти в Windows или запустить задачи вручную.
-13. **Проверка:** `scripts\check_environment.ps1` → все `PASS`.
+13. **n8n** (§7): Docker Desktop → образ по digest → контейнер → восстановить
+    volume `n8n_data` из копии (или создать владельца и credential заново) →
+    `scripts\deploy_n8n_workflows.ps1` → включить workflows в UI.
+14. **Проверка:** `scripts\check_environment.ps1` → все `PASS`.
 
 ---
 
@@ -194,9 +206,42 @@ wsl -d OpenClawGateway --exec openclaw config set models.providers.lmstudio.base
 
 ---
 
-## 7. Известные эксплуатационные риски
+## 7. n8n (Docker Desktop)
+
+Образ **n8n 2.40.7**, запуск строго по digest:
+
+```powershell
+docker volume create n8n_data
+```
+
+```powershell
+docker run -d --name n8n --restart unless-stopped -p 127.0.0.1:5678:5678 -v n8n_data:/home/node/.n8n -e GENERIC_TIMEZONE=Asia/Barnaul -e TZ=Asia/Barnaul -e STOCKER_URL=http://172.26.192.1:8765 -e N8N_BLOCK_ENV_ACCESS_IN_NODE=false -e N8N_DIAGNOSTICS_ENABLED=false -e N8N_VERSION_NOTIFICATIONS_ENABLED=false n8nio/n8n@sha256:ffeb52485f78b1b06c9a832205853cf75da72a07a514c9a27724df85979d6c34
+```
+
+- UI только на `http://127.0.0.1:5678` (не виден из LAN).
+- В окружении контейнера секретов нет. `STOCKER_URL` — адрес WSL-хоста (как у
+  OpenClaw); при смене адреса контейнер пересоздаётся с новым значением
+  (данные в volume сохраняются).
+- Восстановление volume из копии:
+
+  ```powershell
+  docker run --rm -v n8n_data:/data -v "<копия>:/backup" busybox:latest sh -c "cd /data && tar xzf /backup/n8n_data.tgz"
+  ```
+
+- Credential «Stocker API» (Header Auth: `Authorization` = `Bearer <STOCKER_N8N_TOKEN>`)
+  создаёт пользователь в UI; workflows ссылаются на него по id (подставляет
+  `deploy_n8n_workflows.ps1`).
+- Docker Desktop запускается при входе в Windows (`AutoStart`), контейнер —
+  политикой `unless-stopped`.
+
+---
+
+## 8. Известные эксплуатационные риски
 
 - **Адрес WSL-хоста (NAT) может смениться** — OpenClaw потеряет LM Studio и Stocker MCP. Обнаруживается `check_environment.ps1` (FAIL «url host»), исправляется по §6.
 - **Всё стартует при входе пользователя**, не при загрузке Windows.
 - **Обновление LM Studio** может сбросить настройки загрузки модели — проверять `check_environment.ps1` после обновления.
 - **Неотправленные коммиты** — единственная копия кода на `F:` до `git push`.
+- **n8n:** без копии volume `n8n_data` credential придётся создать заново (он
+  зашифрован ключом из этого volume).
+- **Смена адреса WSL-хоста** затрагивает и n8n (`STOCKER_URL`).

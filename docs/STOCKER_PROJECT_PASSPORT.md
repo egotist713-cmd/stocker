@@ -2668,6 +2668,44 @@ allowlist `workflow:n8n`, операция `incoming.list`, workflows v1
 
 ---
 
+# 35W. 2026-09-26 — n8n: канал Stocker, контейнер, workflows v1 (до включения)
+
+### Реализовано и проверено
+
+- **Stocker:** HTTP API `/api/v1/{operation}` (тот же процесс, что MCP), токены
+  по каналам (`STOCKER_MCP_TOKEN` → только `/mcp`, `agent:openclaw`;
+  `STOCKER_N8N_TOKEN` → только `/api/v1`, `workflow:n8n`; одинаковые токены
+  отвергаются), allowlist `workflow:*`, операция `incoming.list`. 305 тестов.
+- **Production-проверка канала** из контейнера `busybox` с настоящими токенами:
+  `review.queue` / `incoming.list` — ok; `metadata.edit`, `metadata.approve`,
+  `asset.process` с `force` → `FORBIDDEN`; токен OpenClaw на `/api/v1`, токен
+  n8n на `/mcp`, запрос без токена → 401. Журнал сервера: `API op=...
+  actor=workflow:n8n`.
+- **n8n 2.40.7** в Docker Desktop (с подтверждения пользователя; образ ~1,04 GB,
+  digest `sha256:ffeb5248…6c34`, запуск по digest): контейнер `n8n`,
+  `restart unless-stopped`, UI только `127.0.0.1:5678`, volume `n8n_data`,
+  `TZ=Asia/Barnaul`, `STOCKER_URL=http://172.26.192.1:8765`; секретов в окружении
+  нет. Из контейнера n8n Stocker API → 401 без токена.
+- **Workflows v1** в `integrations/n8n/workflows/` (без токенов):
+  `stocker-ingest` (5 мин), `stocker-retry` (30 мин, ≤3 неудачи по событиям
+  Stocker), `stocker-digest` (09:00), `stocker-notify` (тестовый канал).
+  Развёртывание — `scripts/deploy_n8n_workflows.ps1` (id credential
+  подставляется; зашифрованные данные не выводятся; импорт выключенными).
+- **Эксплуатация:** n8n в `RECOVERY.md` (§1, §2, §3, §7, §8) и в
+  `check_environment.ps1` (контейнер, UI только loopback, доступ к Stocker,
+  `STOCKER_URL`, импорт workflows).
+
+### Ожидает пользователя
+
+Создание владельца n8n и credential «Stocker API» (Header Auth) — учётные
+данные вводит пользователь.
+
+### Статус
+
+🟡 IN PROGRESS — осталось: credential → импорт → включение → проверка на новом файле
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

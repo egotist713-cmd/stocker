@@ -1,0 +1,31 @@
+{
+  "id": "StockerNotify001",
+  "name": "stocker-notify",
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "nodes": [
+    {
+      "id": "3b8c1f0e-1a1a-4c1e-9a01-000000000001",
+      "name": "Called by other workflows",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "3b8c1f0e-1a1a-4c1e-9a01-000000000002",
+      "name": "Test channel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0],
+      "notes": "Слой уведомлений (docs/N8N_CONTRACT.md §6). Stocker не знает о мессенджерах. v1 — тестовый канал: сообщение фиксируется в журнале выполнения n8n. Позже этот узел заменяется на Telegram / e-mail / MAX, остальные workflow не меняются.",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Вход: {severity, title, text, data}. Выход: запись о доставке в тестовый канал.\nreturn $input.all().map(item => ({\n  json: {\n    channel: 'test',\n    delivered_at: new Date().toISOString(),\n    severity: item.json.severity || 'info',\n    title: item.json.title || 'Stocker',\n    text: item.json.text || '',\n    data: item.json.data || null,\n  },\n}));"
+      }
+    }
+  ],
+  "connections": {
+    "Called by other workflows": {"main": [[{"node": "Test channel", "type": "main", "index": 0}]]}
+  }
+}

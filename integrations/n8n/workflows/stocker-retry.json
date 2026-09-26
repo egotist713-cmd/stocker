@@ -1,0 +1,182 @@
+{
+  "id": "StockerRetry0001",
+  "name": "stocker-retry",
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "nodes": [
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000001",
+      "name": "Every 30 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 100],
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 30}]}}
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000002",
+      "name": "Vision failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/asset.list",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"vision\": \"failed\"}",
+        "options": {"timeout": 60000}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000003",
+      "name": "Vision candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const envelope = $input.first().json;\nif (!envelope.ok) throw new Error(`asset.list: ${JSON.stringify(envelope.error)}`);\nreturn envelope.data.items.map(a => ({ json: { asset_id: a.id, stage: 'AI' } }));"
+      }
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000004",
+      "name": "Vision history",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/asset.history",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id, stage: $json.stage }) }}",
+        "options": {"timeout": 60000}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000005",
+      "name": "Vision under limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Не более 3 неудачных попыток на asset — считаются по событиям Stocker.\nconst MAX_FAILED = 3;\nreturn $input.all()\n  .map(item => item.json)\n  .filter(e => e.ok && e.data.filter(ev => ev.status === 'FAILED').length < MAX_FAILED)\n  .map(e => ({ json: { asset_id: e.asset_id } }));"
+      }
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000006",
+      "name": "asset.process",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/asset.process",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id }) }}",
+        "options": {"timeout": 600000, "batching": {"batch": {"batchSize": 1, "batchInterval": 0}}}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000007",
+      "name": "Draft metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 220],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/asset.list",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"metadata_state\": \"draft\"}",
+        "options": {"timeout": 60000}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000008",
+      "name": "Partial candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 220],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Только partial (Metadata AI не отработал). Неоценённые записи v1 сюда не попадают.\nconst envelope = $input.first().json;\nif (!envelope.ok) throw new Error(`asset.list: ${JSON.stringify(envelope.error)}`);\nreturn envelope.data.items\n  .filter(a => a.pipeline.metadata_completeness === 'partial')\n  .map(a => ({ json: { asset_id: a.id, stage: 'METADATA_AI' } }));"
+      }
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000009",
+      "name": "Metadata history",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 220],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/asset.history",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id, stage: $json.stage }) }}",
+        "options": {"timeout": 60000}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000010",
+      "name": "Metadata under limit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 220],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MAX_FAILED = 3;\nreturn $input.all()\n  .map(item => item.json)\n  .filter(e => e.ok && e.data.filter(ev => ev.status === 'FAILED').length < MAX_FAILED)\n  .map(e => ({ json: { asset_id: e.asset_id } }));"
+      }
+    },
+    {
+      "id": "9d3f2e33-4d4d-4f40-8d04-000000000011",
+      "name": "metadata.build",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 220],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/metadata.build",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id }) }}",
+        "options": {"timeout": 600000, "batching": {"batch": {"batchSize": 1, "batchInterval": 0}}}
+      },
+      "credentials": {"httpHeaderAuth": {"id": "__STOCKER_CREDENTIAL_ID__", "name": "Stocker API"}}
+    }
+  ],
+  "connections": {
+    "Every 30 minutes": {"main": [[
+      {"node": "Vision failed", "type": "main", "index": 0},
+      {"node": "Draft metadata", "type": "main", "index": 0}
+    ]]},
+    "Vision failed": {"main": [[{"node": "Vision candidates", "type": "main", "index": 0}]]},
+    "Vision candidates": {"main": [[{"node": "Vision history", "type": "main", "index": 0}]]},
+    "Vision history": {"main": [[{"node": "Vision under limit", "type": "main", "index": 0}]]},
+    "Vision under limit": {"main": [[{"node": "asset.process", "type": "main", "index": 0}]]},
+    "Draft metadata": {"main": [[{"node": "Partial candidates", "type": "main", "index": 0}]]},
+    "Partial candidates": {"main": [[{"node": "Metadata history", "type": "main", "index": 0}]]},
+    "Metadata history": {"main": [[{"node": "Metadata under limit", "type": "main", "index": 0}]]},
+    "Metadata under limit": {"main": [[{"node": "metadata.build", "type": "main", "index": 0}]]}
+  }
+}

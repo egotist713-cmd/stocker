@@ -74,6 +74,23 @@ foreach ($line in $lines) {
     if ($line -match '^(PASS|WARN|FAIL) (.+?): (.*)$') { Report $Matches[1] $Matches[2] $Matches[3] } else { Write-Host "  $line" }
 }
 
+Write-Host "=== n8n (Docker Desktop)"
+$n8nState = docker inspect -f "{{.State.Status}} {{.HostConfig.RestartPolicy.Name}}" n8n 2>$null
+Check ($n8nState -eq "running unless-stopped") "n8n container" "$n8nState"
+try {
+    $health = (Invoke-WebRequest -Uri "http://127.0.0.1:5678/healthz" -TimeoutSec 5 -UseBasicParsing).StatusCode
+    Check ($health -eq 200) "n8n UI 127.0.0.1:5678" "$health"
+} catch { Report "FAIL" "n8n UI 127.0.0.1:5678" $_.Exception.Message }
+$exposed = Get-NetTCPConnection -LocalPort 5678 -State Listen -ErrorAction SilentlyContinue | Where-Object LocalAddress -notin @("127.0.0.1", "::1")
+Check ($null -eq $exposed) "n8n not exposed to LAN" "$($exposed.LocalAddress)"
+$fromN8n = docker exec n8n node -e "fetch(process.env.STOCKER_URL + '/api/v1/review.queue', {method: 'POST', body: '{}'}).then(r => console.log(r.status)).catch(() => console.log('ERR'))" 2>$null
+Check ($fromN8n -eq "401") "n8n container -> Stocker API (401 without token)" "$fromN8n"
+$n8nUrl = docker exec n8n printenv STOCKER_URL 2>$null
+Check ($n8nUrl -eq "http://${wslHost}:8765") "n8n STOCKER_URL matches WSL host" "$n8nUrl"
+$workflows = (docker exec n8n n8n list:workflow 2>$null) -join " "
+$missing = @("stocker-ingest", "stocker-retry", "stocker-digest", "stocker-notify") | Where-Object { $workflows -notmatch $_ }
+Check ($missing.Count -eq 0) "n8n workflows imported" "missing: $($missing -join ', ')" "WARN"
+
 Write-Host ""
 if ($script:Failures -eq 0) { Write-Host "All checks passed." -ForegroundColor Green } else { Write-Host "$($script:Failures) check(s) FAILED." -ForegroundColor Red }
 exit $script:Failures
