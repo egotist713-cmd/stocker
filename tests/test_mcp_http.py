@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import subprocess
@@ -18,6 +19,7 @@ from tests.conftest import make_image
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "t" * 40
+N8N_TOKEN = "n" * 40
 
 
 # --- конфигурация ------------------------------------------------------------------
@@ -126,6 +128,7 @@ def http_server(stocker_root, tmp_path):
         "STOCKER_MCP_ACTOR": "agent:openclaw",
         # Рабочий .env задаёт STOCKER_MCP_HOST=wsl; тестовый сервер — только loopback.
         "STOCKER_MCP_HOST": "127.0.0.1",
+        "STOCKER_N8N_TOKEN": N8N_TOKEN,
     }
     process = subprocess.Popen(
         [sys.executable, str(launcher), str(stocker_root), str(PROJECT_ROOT)],
@@ -187,3 +190,82 @@ def test_real_http_session(http_server):
     assert got.structured_content["data"]["pipeline"]["vision"] == "done"
     assert escalated.structured_content["data"]["pipeline"]["metadata"] == "human_review"
     assert approve.is_error is True
+
+
+
+# --- HTTP API для n8n (/api/v1) ---------------------------------------------------------
+
+
+
+def _api(base_mcp_url: str, operation: str, params=None, token: str | None = N8N_TOKEN, raw: bytes | None = None):
+    url = base_mcp_url.rsplit("/mcp", 1)[0] + f"/api/v1/{operation}"
+    body = raw if raw is not None else json.dumps(params or {}).encode()
+    request = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        return error.code, None
+
+
+def test_api_workflow_flow_and_rights(http_server):
+    status, listed = _api(http_server, "incoming.list")
+    assert status == 200 and listed["data"]["items"][0]["path"] == "data/incoming/photo.jpg"
+
+    status, processed = _api(http_server, "asset.process_file", {"path": "data/incoming/photo.jpg"})
+    assert status == 200 and processed["ok"]
+    asset_id = processed["asset_id"]
+    assert processed["data"]["pipeline"]["metadata"] == "auto_approved"
+
+    for operation, params in [
+        ("metadata.edit", {"asset_id": asset_id, "title": "n8n"}),
+        ("metadata.approve", {"asset_id": asset_id}),
+        ("metadata.reject", {"asset_id": asset_id, "reason": "x"}),
+        ("asset.process", {"asset_id": asset_id, "force": True}),
+    ]:
+        status, envelope = _api(http_server, operation, params)
+        assert status == 200 and envelope["error"]["code"] == "FORBIDDEN", operation
+
+    status, history = _api(http_server, "asset.history", {"asset_id": asset_id, "stage": "METADATA"})
+    assert {event["message"]["actor"] for event in history["data"]} == {"workflow:n8n"}
+
+
+def test_api_tokens_are_per_channel(http_server):
+    assert _api(http_server, "review.queue", token=None)[0] == 401
+    assert _api(http_server, "review.queue", token=TOKEN)[0] == 401  # токен OpenClaw не подходит к API
+
+    request = urllib.request.Request(http_server, data=b"{}", method="POST", headers={"Authorization": f"Bearer {N8N_TOKEN}"})
+    with pytest.raises(urllib.error.HTTPError) as info:  # токен n8n не подходит к MCP
+        urllib.request.urlopen(request, timeout=5)
+    assert info.value.code == 401
+
+
+def test_api_bad_requests(http_server):
+    assert _api(http_server, "review.queue", raw=b"not json")[0] == 400
+    assert _api(http_server, "review.queue", raw=b"[1, 2]")[0] == 400
+    status, envelope = _api(http_server, "no.such.operation")
+    assert status == 200 and envelope["error"]["code"] == "UNKNOWN_OPERATION"
+
+    url = http_server.rsplit("/mcp", 1)[0] + "/other"
+    with pytest.raises(urllib.error.HTTPError) as info:
+        urllib.request.urlopen(urllib.request.Request(url, data=b"{}", method="POST"), timeout=5)
+    assert info.value.code == 404
+
+
+def test_api_token_rules(monkeypatch):
+    monkeypatch.delenv("STOCKER_N8N_TOKEN", raising=False)
+    assert mcp_http.resolve_api_token(TOKEN) is None
+
+    monkeypatch.setenv("STOCKER_N8N_TOKEN", "short")
+    with pytest.raises(SystemExit):
+        mcp_http.resolve_api_token(TOKEN)
+
+    monkeypatch.setenv("STOCKER_N8N_TOKEN", TOKEN)
+    with pytest.raises(SystemExit):  # тот же токен, что у MCP
+        mcp_http.resolve_api_token(TOKEN)
+
+    monkeypatch.setenv("STOCKER_API_ACTOR", "human")
+    with pytest.raises(SystemExit):
+        mcp_http.resolve_api_actor()

@@ -67,6 +67,10 @@ def metadata_get(params) -> dict:
     return _result(params.asset_id, None, view["metadata"])
 
 
+def incoming_list(params) -> dict:
+    return _result(None, None, views.incoming_files())
+
+
 def operations_list(params) -> dict:
     from app.service import registry
 

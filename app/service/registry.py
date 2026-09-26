@@ -127,6 +127,10 @@ DESCRIPTIONS = {
     ),
     "metadata.get": 'Metadata of an asset: title, description, keywords, validation, review gate. Args: {"asset_id": 5}',
     "operations.list": "All operations with JSON Schema of their parameters. Args: {}",
+    "incoming.list": (
+        "New files in data/incoming that are not registered in Stocker yet; duplicate_of = id of an asset "
+        "with the same content (no need to process). Args: {}"
+    ),
     "asset.process_file": 'Ingest a new image inside the project and run QC, Vision, metadata and review gate. Args: {"path": "data/incoming/IMG_1.jpg"}',
     "asset.process": 'Re-run source check, QC, Vision and metadata for a registered asset. Args: {"asset_id": 5}, optional "force": true',
     "metadata.build": 'Create metadata with Metadata AI (partial draft if it fails), then review gate. Args: {"asset_id": 5}',
@@ -152,6 +156,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("review.queue", DESCRIPTIONS["review.queue"], PageParams, READ, ops.review_queue),
         Operation("metadata.get", DESCRIPTIONS["metadata.get"], AssetParams, READ, ops.metadata_get),
         Operation("operations.list", DESCRIPTIONS["operations.list"], NoParams, READ, ops.operations_list),
+        Operation("incoming.list", DESCRIPTIONS["incoming.list"], NoParams, READ, ops.incoming_list),
         Operation("asset.process_file", DESCRIPTIONS["asset.process_file"], ProcessFileParams, PIPELINE, ops.asset_process_file),
         Operation("asset.process", DESCRIPTIONS["asset.process"], ProcessParams, PIPELINE, ops.asset_process),
         Operation("metadata.build", DESCRIPTIONS["metadata.build"], BuildParams, PIPELINE, ops.metadata_build),

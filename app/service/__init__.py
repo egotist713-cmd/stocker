@@ -30,6 +30,36 @@ CONTENT_CHANGING = ("metadata.edit", "metadata.rebuild", "metadata.build")
 HUMAN_DECISIONS = ("approved", "rejected")
 
 
+# Workflow (n8n) — урезанные права, уже чем у агента (docs/N8N_CONTRACT.md §4).
+WORKFLOW_ALLOWED = frozenset(
+    {
+        "asset.get",
+        "asset.list",
+        "asset.history",
+        "metadata.get",
+        "review.queue",
+        "operations.list",
+        "incoming.list",
+        "asset.process_file",
+        "asset.process",
+        "metadata.build",
+        "metadata.gate",
+    }
+)
+WORKFLOW_NO_FORCE = frozenset({"asset.process", "metadata.build"})
+
+
+def _workflow_guard(operation: str, params: dict, actor: str) -> str | None:
+    """Сообщение об отказе, если workflow выходит за свой allowlist."""
+    if not actor.startswith("workflow:"):
+        return None
+    if operation not in WORKFLOW_ALLOWED:
+        return f"'{operation}' is not allowed for workflow actor '{actor}'"
+    if operation in WORKFLOW_NO_FORCE and isinstance(params, dict) and params.get("force"):
+        return f"'{operation}' with force is not allowed for workflow actor '{actor}'"
+    return None
+
+
 def _human_decision_guard(operation: str, params: dict, actor: str) -> str | None:
     """Сообщение об отказе, если не-человек трогает содержимое после решения человека."""
     if actor == HUMAN or operation not in CONTENT_CHANGING or not isinstance(params, dict):
@@ -90,7 +120,7 @@ def dispatch(operation: str, params: dict | None = None, actor: str = HUMAN) -> 
     if spec.access == REVIEW and actor != HUMAN:
         return _error(operation, "FORBIDDEN", f"'{operation}' is a human decision; actor '{actor}' is not allowed", asset_id)
 
-    refusal = _human_decision_guard(operation, params, actor)
+    refusal = _workflow_guard(operation, params, actor) or _human_decision_guard(operation, params, actor)
     if refusal:
         return _error(operation, "FORBIDDEN", refusal, asset_id)
 

@@ -83,6 +83,30 @@ def tools() -> list[types.Tool]:
     return result
 
 
+def log_call(label: str, actor: str, envelope: dict) -> None:
+    """
+    Журнал вызовов в stderr: доказательство, что вызов действительно был
+    (чтения не оставляют событий в БД). Аргументы и токены не пишутся.
+    """
+    error = envelope["error"]["code"] if envelope["error"] else None
+    print(
+        f"{datetime.now().isoformat(timespec='seconds')} {label} actor={actor} "
+        f"asset_id={envelope['asset_id']} ok={envelope['ok']} outcome={envelope['outcome']} error={error}",
+        file=sys.__stderr__,
+        flush=True,
+    )
+
+
+def execute(operation: str, arguments: dict | None, actor: str) -> dict:
+    """dispatch для внешних каналов (MCP, HTTP API): изменяющие операции — по одному."""
+    spec = build_registry().get(operation)
+    if spec is not None and spec.mutating:
+        # Одна GPU для AI и один writer SQLite.
+        with _MUTATION_LOCK:
+            return dispatch(operation, arguments or {}, actor=actor)
+    return dispatch(operation, arguments or {}, actor=actor)
+
+
 def call(name: str, arguments: dict | None, actor: str) -> types.CallToolResult:
     operations = exposed_operations()
 
@@ -96,22 +120,10 @@ def call(name: str, arguments: dict | None, actor: str) -> types.CallToolResult:
             "data": None,
             "error": {"code": "UNKNOWN_OPERATION", "message": f"Unknown or not allowed tool: {name}"},
         }
-    elif operations[name].mutating:
-        # Изменяющие вызовы — по одному: одна GPU для AI и один writer SQLite.
-        with _MUTATION_LOCK:
-            envelope = dispatch(operations[name].name, arguments or {}, actor=actor)
     else:
-        envelope = dispatch(operations[name].name, arguments or {}, actor=actor)
+        envelope = execute(operations[name].name, arguments, actor)
 
-    # Журнал вызовов в stderr: доказательство, что агент действительно вызвал
-    # инструмент (чтения не оставляют событий в БД). Аргументы не пишутся.
-    error = envelope["error"]["code"] if envelope["error"] else None
-    print(
-        f"{datetime.now().isoformat(timespec='seconds')} MCP tool={name} actor={actor} "
-        f"asset_id={envelope['asset_id']} ok={envelope['ok']} outcome={envelope['outcome']} error={error}",
-        file=sys.__stderr__,
-        flush=True,
-    )
+    log_call(f"MCP tool={name}", actor, envelope)
 
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(envelope, ensure_ascii=False))],

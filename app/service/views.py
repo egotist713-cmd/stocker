@@ -273,3 +273,40 @@ def history(asset_id: int, stage: str | None = None) -> list[dict]:
         for event in _events(asset_id)
         if stage is None or event["stage"] == stage
     ]
+
+
+def incoming_files() -> dict:
+    """
+    Файлы data/incoming поддерживаемых форматов, которых ещё нет в Stocker
+    (нет asset с таким source_path). Для них считается SHA256: совпадение с
+    зарегистрированным hash → duplicate_of (обрабатывать не нужно).
+    """
+    from app import ingest
+
+    connection = get_connection()
+    try:
+        rows = connection.execute("SELECT id, source_path, file_hash FROM assets").fetchall()
+    finally:
+        connection.close()
+
+    known_paths = {row["source_path"].replace("\\", "/") for row in rows}
+    known_hashes = {row["file_hash"]: row["id"] for row in rows if row["file_hash"]}
+
+    incoming = ingest.ROOT / "data" / "incoming"
+    items = []
+    for path in sorted(incoming.iterdir()) if incoming.exists() else []:
+        if not path.is_file() or path.suffix.lower() not in ingest.SUPPORTED_EXTENSIONS:
+            continue
+        source_path = ingest.to_source_path(path)
+        if source_path in known_paths:
+            continue
+        items.append(
+            {
+                "path": source_path,
+                "filename": path.name,
+                "file_size": path.stat().st_size,
+                "duplicate_of": known_hashes.get(ingest.sha256_file(path)),
+            }
+        )
+
+    return {"total": len(items), "items": items}
