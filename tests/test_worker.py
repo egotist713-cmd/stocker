@@ -134,7 +134,7 @@ def test_missing_source_is_recorded(stocker_root):
 def test_qc_failure_skips_ai(stocker_root, monkeypatch):
     from app import qc
 
-    monkeypatch.setattr(qc, "MIN_WIDTH", 10_000)
+    monkeypatch.setattr(qc, "MIN_MEGAPIXELS", 1_000.0)
     analyzer = FakeAnalyzer()
 
     asset_id = worker.process_file(make_image(stocker_root), analyzer=analyzer)
@@ -180,7 +180,7 @@ def test_no_metadata_when_ai_or_qc_failed(stocker_root, monkeypatch):
     failed_ai = worker.process_file(make_image(stocker_root, name="a.jpg", seed=1), analyzer=FakeAnalyzer(error=RuntimeError("x")))
 
     from app import qc
-    monkeypatch.setattr(qc, "MIN_WIDTH", 10_000)
+    monkeypatch.setattr(qc, "MIN_MEGAPIXELS", 1_000.0)
     failed_qc = worker.process_file(make_image(stocker_root, name="b.jpg", seed=2), analyzer=FakeAnalyzer())
 
     assert _metadata(failed_ai) is None

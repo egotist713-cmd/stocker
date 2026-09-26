@@ -5,11 +5,12 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app import ingest, qc
+from app import enhancement_decision, ingest, qc
 from app import metadata as metadata_service
 from app.ai.analyzer import AIAnalyzer
+from app.ai.enhancement_advisor import EnhancementAdvisor
 from app.ai.metadata_analyzer import MetadataAnalyzer
-from app.ai.schema import AIAnalysis, MetadataSuggestion
+from app.ai.schema import AIAnalysis, EnhancementAdvice, MetadataSuggestion
 from app.database import db
 
 
@@ -25,8 +26,7 @@ def stocker_root(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr(db, "DEFAULT_DB_PATH", db_path)
 
     # Маленькие тестовые изображения должны проходить QC.
-    monkeypatch.setattr(qc, "MIN_WIDTH", 10)
-    monkeypatch.setattr(qc, "MIN_HEIGHT", 10)
+    monkeypatch.setattr(qc, "MIN_MEGAPIXELS", 0.0)
     monkeypatch.setattr(qc, "MIN_FILE_SIZE", 0)
 
     db.init_database()
@@ -87,7 +87,27 @@ class OfflineMetadataAnalyzer(MetadataAnalyzer):
         )
 
 
+class OfflineEnhancementAdvisor(EnhancementAdvisor):
+    """Enhancement Advisor для тестов: без сети, фиксированный ответ."""
+
+    provider = "offline"
+    model = "offline-advisor"
+    prompt_version = "enhancement-test"
+
+    def __init__(self, advice: EnhancementAdvice | None = None, error: Exception | None = None):
+        self.advice = advice or EnhancementAdvice(decision="enhancement_not_needed", confidence=0.7)
+        self.error = error
+        self.calls = 0
+
+    def advise(self, image_path, assessment) -> EnhancementAdvice:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.advice
+
+
 @pytest.fixture(autouse=True)
 def no_real_metadata_ai(monkeypatch):
-    """Ни один unit-тест не должен обращаться к настоящему LM Studio через metadata-слой."""
+    """Ни один unit-тест не должен обращаться к настоящему LM Studio через metadata-слой и advisor."""
     monkeypatch.setattr(metadata_service, "LMStudioMetadataAnalyzer", OfflineMetadataAnalyzer)
+    monkeypatch.setattr(enhancement_decision, "LMStudioEnhancementAdvisor", OfflineEnhancementAdvisor)

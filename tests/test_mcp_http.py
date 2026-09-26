@@ -98,7 +98,7 @@ LAUNCHER = textwrap.dedent(
 
     ingest.ROOT = qc.ROOT = root
     qc.DB_PATH = db.DEFAULT_DB_PATH = root / "data" / "db" / "stocker.db"
-    qc.MIN_WIDTH = qc.MIN_HEIGHT = 10
+    qc.MIN_MEGAPIXELS = 0.0
     qc.MIN_FILE_SIZE = 0
     worker.LocalAnalyzer = FakeAnalyzer
     metadata_service.LMStudioMetadataAnalyzer = OfflineMetadataAnalyzer

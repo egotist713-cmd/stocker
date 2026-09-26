@@ -3104,6 +3104,67 @@ Topaz не обязателен; результат анализа — `enhancem
 
 ---
 
+# 35ZE. 2026-09-26 — Enhancement Advisor (Qwen) для спорных случаев; QC 4 MP
+
+### Решения пользователя
+
+1. **50 MP soft at native** — не уменьшать автоматически; оставить warning;
+   resize / upscale / параметры экспорта — позже по статистике отказов.
+2. **QC: технический минимум отдельно от рекомендаций.** QC блокирует только
+   ниже требований площадок (4 MP); 4–12 MP — warning, дальше решают
+   Enhancement и Readiness.
+3. **Enhancement Advisor:** Qwen не может отменять детерминированный QC;
+   только рекомендация `recommended` / `not_needed` / `risky` с причинами и
+   confidence.
+
+### Реализовано
+
+- `app/qc.py`: `MIN_MEGAPIXELS = 4.0` (ошибка `RESOLUTION_TOO_LOW`),
+  `RECOMMENDED_MEGAPIXELS = 12.0` (warning `RESOLUTION_BELOW_RECOMMENDED`);
+  вместо `MIN_WIDTH/MIN_HEIGHT` 4000×3000.
+- `SOFT_AT_NATIVE_RESOLUTION` — уровень `warning`, операций нет.
+- `EnhancementAdvice` (`app/ai/schema.py`) и `app/ai/enhancement_advisor.py`
+  (`LMStudioEnhancementAdvisor`, `enhancement-advice-v1`): обзор кадра +
+  фрагмент 100 % + метрики правил; strict schema; `temperature=0`;
+  выключатель `STOCKER_ENHANCEMENT_ADVISOR=0`.
+- `app/enhancement_decision.py`: `advise_asset` — только для `disputed`
+  (иначе `NOT_DISPUTED` без вызова модели), `ENHANCEMENT/ADVISED` с
+  provenance и `assessment_event_id`, сбой → `ENHANCEMENT/FAILED`
+  (`stage=advisor`, `raw_output`); итог — правила → модель → `disputed`,
+  `decided_by`.
+- Worker: модель вызывается только для `disputed`, не блокирует pipeline.
+- Операция `enhancement.advise` (pipeline; human, агент, `workflow:n8n`);
+  skill OpenClaw.
+
+### Найдено
+
+- Strict schema со служебным полем `advice_version`: модель записала туда
+  `enhancement_recommended` — служебные поля убраны из ответа модели.
+- Без `temperature=0` один и тот же пограничный кадр (JPEG q45) получил
+  `recommended`, затем `not_needed`; с `temperature=0` — 3 из 3 одинаковы.
+- `confidence` модели всегда 0.85 — не откалибрована (ограничение §8).
+- Лёгкое размытие (r1.2 на 12.6 MP) правило резкости на копии 2048 px не
+  видит (176 — ok); его показывает warning `SOFT_AT_NATIVE_RESOLUTION`
+  (`detail_ratio` 0.12).
+
+### Проверка
+
+- `pytest`: 425 passed, 4 skipped; `tests/test_enhancement_advisor.py` — 18,
+  `tests/test_qc.py` — 4; LM Studio-тест
+  (`STOCKER_LMSTUDIO_TESTS=1`) — passed.
+- Реальный LM Studio на копиях asset 3 (без БД): JPEG q45 / q60 и шум σ2.5 —
+  `disputed` → модель `enhancement_not_needed` (0.85); шум σ4 и размытие —
+  решены правилами, модель не вызывалась.
+- Реальный сервер: `enhancement.advise` для asset 4 → `NOT_DISPUTED`,
+  `decided_by=rules`, модель не вызывалась.
+
+### Статус
+
+🟢 Enhancement decision v1 DONE (правила + рекомендация модели для спорных).
+Topaz не запускается.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3272,7 +3333,7 @@ STOCK READINESS (metadata + требования Adobe Stock / Shutterstock, б�
        осталось: worker, фильтр ready_for, digest
 
 ENHANCEMENT DECISION (качество изображения; not_needed / recommended / risky + причины)
-    🟡 IN PROGRESS — метрики QC и решение правилами DONE (§35ZD); далее Qwen только для disputed
+    🟢 DONE v1 — правила (§35ZD) + рекомендация Qwen только для disputed (§35ZE); Topaz не запускается
 
 CREATIVE REVIEW ADVISOR (первичные признаки + commercial_score, необязательный)
     ⚪ PLANNED — после Enhancement decision (§3A.7, §35ZC)

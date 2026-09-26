@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "db" / "stocker.db"
 
 
-MIN_WIDTH = 4000
-MIN_HEIGHT = 3000
+# Технический минимум — требования площадок (Adobe Stock и Shutterstock: 4 MP).
+# Ниже рекомендации — только warning: дальше решают Enhancement и Readiness.
+MIN_MEGAPIXELS = 4.0
+RECOMMENDED_MEGAPIXELS = 12.0
 MIN_FILE_SIZE = 100 * 1024
 MAX_FILE_SIZE = 45 * 1024 * 1024
 
@@ -98,9 +100,12 @@ def check_asset(asset):
             result["metrics"]["height"] = height
             result["metrics"]["format"] = image_format
 
-            if width < MIN_WIDTH or height < MIN_HEIGHT:
+            megapixels = width * height / 1_000_000
+            if megapixels < MIN_MEGAPIXELS:
                 result["passed"] = False
                 result["errors"].append("RESOLUTION_TOO_LOW")
+            elif megapixels < RECOMMENDED_MEGAPIXELS:
+                result["warnings"].append("RESOLUTION_BELOW_RECOMMENDED")
 
             sharpness = calculate_sharpness(image)
             dark_ratio, bright_ratio = calculate_extreme_pixels(image)

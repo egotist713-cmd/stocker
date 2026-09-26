@@ -7,6 +7,7 @@ from pathlib import Path
 from app import enhancement_decision
 from app import metadata as metadata_service
 from app.ai.analyzer import AIAnalyzer, AIResponseError
+from app.ai.enhancement_advisor import advisor_enabled
 from app.ai.metadata_analyzer import MetadataAnalyzer
 from app.ai.local_analyzer import LocalAnalyzer
 from app.database.db import add_event, get_asset, save_ai_result
@@ -114,11 +115,17 @@ def run_enhancement(asset_id: int) -> str | None:
     """
     try:
         result = enhancement_decision.assess_asset(asset_id)
+        decision = enhancement_decision.effective_decision(result["assessment"])
+        print(f"ENHANCEMENT: {result['outcome']} ({decision})")
+
+        # Модель — только для спорных случаев; её ответ — рекомендация.
+        if decision == enhancement_decision.DISPUTED and advisor_enabled():
+            advice = enhancement_decision.advise_asset(asset_id)
+            detail = (advice.get("advice") or {}).get("advice", {}).get("decision") or advice.get("error", {}).get("error_type")
+            print(f"ENHANCEMENT ADVISOR: {advice['outcome']} ({detail})")
     except Exception as exc:  # noqa: BLE001 — рекомендация не должна останавливать обработку
         print(f"ENHANCEMENT: skipped ({type(exc).__name__}: {exc})")
         return None
-    decision = enhancement_decision.effective_decision(result["assessment"])
-    print(f"ENHANCEMENT: {result['outcome']} ({decision})")
     return result["outcome"]
 
 

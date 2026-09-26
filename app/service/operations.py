@@ -150,6 +150,21 @@ def enhancement_assess(params) -> dict:
     return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != enhancement_decision.ENHANCEMENT_FAILED)
 
 
+def enhancement_advise(params) -> dict:
+    """Рекомендация модели для спорного случая; решённые правилами — NOT_DISPUTED без вызова модели."""
+    try:
+        result = enhancement_decision.assess_asset(params.asset_id)
+        if result["outcome"] == enhancement_decision.ENHANCEMENT_FAILED:
+            return _result(params.asset_id, result["outcome"], {"error": result["error"]}, ok=False)
+        advice = enhancement_decision.advise_asset(params.asset_id)
+    except enhancement_decision.EnhancementError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    data = {"advice": advice.get("advice"), **enhancement_decision.get(params.asset_id)}
+    if "error" in advice:
+        data["error"] = advice["error"]
+    return _result(params.asset_id, advice["outcome"], data, ok=advice["outcome"] != enhancement_decision.ADVISOR_FAILED)
+
+
 def enhancement_get(params) -> dict:
     try:
         data = enhancement_decision.get(params.asset_id)

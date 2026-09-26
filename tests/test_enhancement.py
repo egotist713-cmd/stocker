@@ -142,8 +142,9 @@ def test_sharpness_boundaries(value, level):
 def test_soft_at_native_is_note_not_topaz():
     result = en.assess(metrics(megapixels=50.3, detail_ratio=0.12), "hash")
     assert result["decision"] == en.NOT_NEEDED
-    assert [n["code"] for n in result["notes"]] == ["SOFT_AT_NATIVE_RESOLUTION"]
+    assert [(n["code"], n["level"]) for n in result["notes"]] == [("SOFT_AT_NATIVE_RESOLUTION", "warning")]
     assert "12.6 MP" in result["notes"][0]["detail"]
+    assert result["operations"] == []  # ничего не уменьшается автоматически
 
 
 def test_assess_structure_and_fingerprint():

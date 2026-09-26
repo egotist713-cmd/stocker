@@ -115,7 +115,9 @@ Shutterstock в отношении AI-контента; правила обеи�
 улучшенных Topaz.
 
 Совместимость с текущими правилами Stocker: builder держит 7–49 keywords
-(подходит обеим площадкам), `title` и `description` ≤ 200, QC — ≥ 4000×3000 и
+(подходит обеим площадкам), `title` и `description` ≤ 200, QC — ≥ 4 MP (с
+26.09.2026: блокирует только ниже минимума площадок; 4–12 MP —
+warning `RESOLUTION_BELOW_RECOMMENDED`, дальше решают Enhancement и Readiness) и
 ≤ 45 MB. Stock Readiness не дублирует эти проверки молча: нарушение профиля
 площадки сообщается отдельным кодом.
 
@@ -466,17 +468,31 @@ QC deterministic metrics (всегда, без модели)
 `detail_ratio` 0.11–0.16 — как 12.6 MP снимок, увеличенный вдвое (0.14), тогда
 как настоящие 12.6 MP — 0.34–0.76. Эффективная детализация ≈ ¼ номинальной.
 Это **не** повод для Topaz (повышение резкости на 50 MP рискованно); это
-заметка `SOFT_AT_NATIVE_RESOLUTION` (info) с оценкой эффективных мегапикселей.
-Нужно ли уменьшать такие файлы при экспорте — отдельное решение (этап export
-derivative).
+**warning** `SOFT_AT_NATIVE_RESOLUTION` с оценкой эффективных мегапикселей.
+**Автоматически ничего не уменьшается** (решение 26.09.2026): resize, upscale и
+параметры экспорта решаются позже по статистике отказов площадок. Тот же warning
+ловит лёгкое размытие, которое метрика резкости на копии 2048 px не видит
+(размытие r1.2 на 12.6 MP: резкость 176 — `ok`, `detail_ratio` 0.12 — warning).
 
-**AI recommendation (спорные случаи).**
+**AI recommendation (спорные случаи, реализовано 26.09.2026).**
+`app/ai/enhancement_advisor.py`, `LMStudioEnhancementAdvisor`, `enhancement-advice-v1`.
 
-| Вход | изображение + метрики и уровни правил |
+| Вход | кадр целиком (длинная сторона 1536 px) + центральный фрагмент 1024 px в масштабе 100 % (шум и артефакты на уменьшенной копии не видны) + метрики и уровни правил |
 |---|---|
-| Выход | `decision` ∈ `enhancement_not_needed` \| `enhancement_recommended` \| `enhancement_risky`; `reasons[]` — `{reason, detail}`, `reason` ∈ `noise` \| `sharpness` \| `artifacts` \| `resolution` \| `other`; `operations[]` — только для `recommended`; `confidence` |
-| Правило | для `recommended` и `risky` `reasons` не пуст; `other` требует `detail` |
-| Границы | модель **не** отменяет явный результат правил; вызывается только при `disputed` |
+| Выход (`EnhancementAdvice`) | `decision` ∈ `enhancement_not_needed` \| `enhancement_recommended` \| `enhancement_risky`; `reasons[]` — `{reason, detail}`, `reason` ∈ `noise` \| `sharpness` \| `artifacts` \| `resolution` \| `other`; `operations[]` — только для `recommended`; `confidence` |
+| Правило | для `recommended` и `risky` `reasons` не пуст; `other` требует `detail`; нарушение → `AIResponseError` с `raw_output` |
+| Границы | **модель не отменяет детерминированный QC и правила Enhancement**: вызывается только при `disputed`; для решённых правилами — исход `NOT_DISPUTED` без вызова модели. Только рекомендация |
+| Параметры | strict JSON schema **без служебных полей** (иначе модель заполняет их мусором: `advice_version` получил значение `enhancement_recommended`); `temperature=0` — без неё один и тот же пограничный кадр получал разные ответы, с ней 3 из 3 одинаковы |
+| Итог | итоговое решение: правила → иначе модель → иначе `disputed`; `pipeline.enhancement.decided_by` = `rules` \| `advisor` |
+| Выключатель | `STOCKER_ENHANCEMENT_ADVISOR=0` — worker не вызывает модель |
+
+Рекомендация действует только для той оценки правил, к которой дана
+(`assessment_event_id`); новая оценка (другой файл или версия правил) требует
+новой рекомендации. Исходы `enhancement.advise`: `ADVISED`, `UNCHANGED`,
+`NOT_DISPUTED`, `ADVISOR_FAILED`.
+
+**Ограничение:** `confidence` модели не откалибрована (на всех проверках 0.85);
+использовать как информацию, не как порог.
 
 **Результат и события.**
 
@@ -570,8 +586,9 @@ derivative).
    - 6a ✅ метрики и решение правилами (`app/enhancement.py`), события
      `ENHANCEMENT/*`, операции `enhancement.assess` / `enhancement.get`, вызов из
      worker после QC (не блокирует) — паспорт §35ZD;
-   - 6b AI recommendation (Qwen) только для `disputed` — интерфейс, локальный
-     провайдер, `ENHANCEMENT/ADVISED`, реальный тест LM Studio.
+   - 6b ✅ AI recommendation (Qwen) только для `disputed` — интерфейс, локальный
+     провайдер, `ENHANCEMENT/ADVISED`, операция `enhancement.advise`, реальный
+     тест LM Studio (паспорт §35ZE).
 7. **Creative Review Advisor**: интерфейс, локальный провайдер, события, раздел
    `advice` в очереди.
 
@@ -608,6 +625,8 @@ derivative).
 | **Заметность бренда** — по тексту Vision (`subject`/`title`), а не по площади в кадре | Vision описывает главное в кадре; ошибка возможна в обе стороны | то же; детектор может переклассифицировать уровень без изменения кодов |
 | **Категории Shutterstock** — только подтверждённые названия | обязательная категория блокирует, а не угадывается | перед этапом Export — сверка с порталом/CSV-шаблоном |
 | **Релизы** не хранятся | узнаваемые люди в industrial stock редки | когда понадобится экспорт таких объектов (`release.attach`) |
+| **Лёгкое размытие на 100 %** правило резкости (копия 2048 px) не видит; его показывает только warning `SOFT_AT_NATIVE_RESOLUTION` | решение по мягкости — по статистике отказов, не автоматически | по статистике отказов «focus / quality» |
+| **`confidence` Enhancement Advisor** не откалибрована (всегда 0.85) | модель только рекомендует, спорные случаи редки | когда накопятся рекомендации и итоги отказов |
 | **Правила площадок** — снимок 26.09.2026 | профиль версионирован и ссылается на источник | при изменении правил площадки или отказе по неизвестному правилу |
 
 ## 9. Приоритеты развития (26.09.2026)

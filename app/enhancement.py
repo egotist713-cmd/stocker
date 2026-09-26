@@ -141,10 +141,12 @@ def findings(metrics: dict) -> list[dict]:
 
 
 def notes(metrics: dict) -> list[dict]:
+    """Предупреждения без действия: ничего не уменьшается автоматически (решение — по статистике отказов)."""
     if metrics["detail_ratio"] >= SOFT_DETAIL_RATIO:
         return []
     return [{
         "code": "SOFT_AT_NATIVE_RESOLUTION",
+        "level": "warning",
         "detail": f"detail_ratio {metrics['detail_ratio']} < {SOFT_DETAIL_RATIO}: "
                   f"effective detail about {metrics['megapixels'] / 4:.1f} MP of {metrics['megapixels']} MP",
     }]

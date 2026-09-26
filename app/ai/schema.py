@@ -1,4 +1,6 @@
-﻿from pydantic import BaseModel, Field
+﻿from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class PeopleInfo(BaseModel):
@@ -47,3 +49,32 @@ class MetadataSuggestion(BaseModel):
     description: str = ""
 
     keywords: list[str] = Field(default_factory=list)
+
+
+class EnhancementReason(BaseModel):
+    reason: Literal["noise", "sharpness", "artifacts", "resolution", "other"]
+    detail: str = ""
+
+
+class EnhancementAdvice(BaseModel):
+    """
+    Рекомендация модели по улучшению для спорного случая
+    (docs/STOCK_READINESS_CONTRACT.md §4.2). Только рекомендация: решение правил
+    она не отменяет и ничего не запускает. Версия — в provenance (prompt_version):
+    служебных полей в ответе модели нет, иначе strict-схема заставляет их заполнять.
+    """
+
+    decision: Literal["enhancement_not_needed", "enhancement_recommended", "enhancement_risky"]
+    reasons: list[EnhancementReason] = Field(default_factory=list)
+    operations: list[Literal["sharpen", "denoise", "remove_compression_artifacts", "upscale"]] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        if self.decision != "enhancement_not_needed" and not self.reasons:
+            raise ValueError(f"{self.decision} requires at least one reason")
+        if any(r.reason == "other" and not r.detail.strip() for r in self.reasons):
+            raise ValueError("reason 'other' requires detail")
+        if self.operations and self.decision != "enhancement_recommended":
+            raise ValueError("operations are allowed only for enhancement_recommended")
+        return self

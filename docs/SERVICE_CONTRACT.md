@@ -129,6 +129,7 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 | `metadata.gate` | `asset_id` | повторная оценка review gate (детерминированно; `approved`/`rejected` не трогает) |
 | `metadata.escalate` | `asset_id`, `reason` | → `human_review` (`MANUAL_ESCALATION`). Агент может только **поднять** риск, но не снять его |
 | `enhancement.assess` | `asset_id` | `app.enhancement_decision.assess_asset`: метрики качества (шум, резкость, артефакты, разрешение) и решение правилами, событие `ENHANCEMENT/ASSESSED` (идемпотентно; исходы `ASSESSED` / `UNCHANGED` / `ENHANCEMENT_FAILED`). Только рекомендация: ничего не улучшает. `data = {assessment, decision}` |
+| `enhancement.advise` | `asset_id` | рекомендация локальной модели **только для `disputed`** (правила не решили); для решённых правилами — `NOT_DISPUTED` без вызова модели; событие `ENHANCEMENT/ADVISED` (исходы `ADVISED` / `UNCHANGED` / `NOT_DISPUTED` / `ADVISOR_FAILED`). Модель не отменяет QC и правила; ничего не улучшает |
 | `readiness.evaluate` | `asset_id` | `app.stock_readiness.evaluate_asset`: правила Adobe Stock / Shutterstock, событие `READINESS/EVALUATED` (идемпотентно по fingerprint; исходы `EVALUATED` / `UNCHANGED` / `NOT_EVALUATED` / `READINESS_FAILED`). Metadata, файл и решения человека не меняет. `data = {readiness}` — результат оценки, а не asset view |
 | `notification.record` | `channel`, `kind`, `severity=info` (`info`/`attention`/`warning`), `title`, `items: [{asset_id, key}]` (1–200) | фиксирует факт доставки уведомления событиями `NOTIFY/SENT` (см. ниже). **Недоступна агентам** (`FORBIDDEN`, скрыта из MCP) — факт доставки пишет тот, кто доставляет (workflow) |
 
@@ -200,7 +201,7 @@ title, key, actor}`. Идемпотентность: если у asset уже е
 | `metadata_completeness` | `full` \| `partial` \| null | `metadata_json.completeness` |
 | `ready` | bool | `metadata ∈ {auto_approved, approved}`: объект может двигаться дальше (экспорт) без человека |
 | `review_reasons` | list[code] | `review_gate.reasons` для `human_review`, иначе `[]` |
-| `enhancement` | obj | `{assessed, stale, decision (enhancement_not_needed\|enhancement_recommended\|enhancement_risky\|disputed), reasons, event_id}` — последнее `ENHANCEMENT/ASSESSED` (с 26.09.2026) |
+| `enhancement` | obj | `{assessed, stale, decision (enhancement_not_needed\|enhancement_recommended\|enhancement_risky\|disputed), decided_by (rules\|advisor\|null), reasons, confidence, event_id}` — последнее `ENHANCEMENT/ASSESSED` и рекомендация к нему (с 26.09.2026) |
 | `stock_readiness` | obj | `{evaluated, stale, platforms: {adobe, shutterstock → not_evaluated\|ready\|blocked\|stale}, ready_for, event_id}` — последнее `READINESS/EVALUATED` и сравнение fingerprint (с 26.09.2026, `STOCK_READINESS_CONTRACT.md` §3.9) |
 
 **`allowed_actions`** — операции, которые сейчас имеют смысл для asset, с

@@ -162,6 +162,11 @@ DESCRIPTIONS = {
         "borderline cases are 'disputed'. Recommendation only: nothing is enhanced. "
         'Args: {"asset_id": 5}'
     ),
+    "enhancement.advise": (
+        "Ask the local model for a recommendation only when the quality rules could not decide (disputed). "
+        "Cases decided by the rules return NOT_DISPUTED without calling the model; the model never overrides them. "
+        'Recommendation only: nothing is enhanced. Args: {"asset_id": 5}'
+    ),
     "enhancement.get": (
         "Last enhancement decision of an asset: decision, reasons (noise/sharpness/artifacts/resolution), "
         'metrics and notes. Read only. Args: {"asset_id": 5}'
@@ -205,6 +210,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
         Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
         Operation("enhancement.assess", DESCRIPTIONS["enhancement.assess"], AssetParams, PIPELINE, ops.enhancement_assess),
+        Operation("enhancement.advise", DESCRIPTIONS["enhancement.advise"], AssetParams, PIPELINE, ops.enhancement_advise),
         Operation("enhancement.get", DESCRIPTIONS["enhancement.get"], AssetParams, READ, ops.enhancement_get),
         Operation("readiness.evaluate", DESCRIPTIONS["readiness.evaluate"], AssetParams, PIPELINE, ops.readiness_evaluate),
         Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),
