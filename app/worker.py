@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app import enhancement_decision
 from app import metadata as metadata_service
+from app import review_gate
 from app.ai.analyzer import AIAnalyzer, AIResponseError
 from app.ai.enhancement_advisor import advisor_enabled
 from app.ai.metadata_analyzer import MetadataAnalyzer
@@ -85,6 +86,13 @@ def run_ai(asset_id: int, path: Path, analyzer: AIAnalyzer) -> str:
         print(f"AI: FAILED ({failure['error_type']}: {failure['error']})")
         return AI_FAILED
 
+    # Документ с персональными данными: распознанный текст не хранится (gate-v1.2).
+    privacy = None
+    document = review_gate.personal_document(ai_result)
+    if document and ai_result.text_visible:
+        privacy = {"reason": "PERSONAL_DOCUMENT", "terms": document, "text_visible_removed": len(ai_result.text_visible)}
+        ai_result = ai_result.model_copy(update={"text_visible": []})
+
     save_ai_result(asset_id, ai_result.model_dump_json())
 
     passed = {
@@ -92,6 +100,8 @@ def run_ai(asset_id: int, path: Path, analyzer: AIAnalyzer) -> str:
         "analyzed_at": _now(),
         "duration_s": round(time.perf_counter() - started, 2),
     }
+    if privacy:
+        passed["privacy"] = privacy
     add_event(asset_id, "AI", "PASSED", json.dumps(passed, ensure_ascii=False))
     print("AI: PASSED")
     return AI_PASSED

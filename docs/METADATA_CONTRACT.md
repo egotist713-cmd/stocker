@@ -474,6 +474,7 @@ Gate выполняется над текущими `fields`, `validation`, `gro
 | `TEXT_BRAND_OR_LEGAL` | элемент `text_visible` классифицирован как `brand_or_legal` (§6A.4) |
 | `LEGAL_CLAIM` | в `title`, `description` или keywords юридически значимое утверждение (§6A.5) |
 | `PEOPLE_RECOGNIZABLE` | уровень риска людей `recognizable` (§6A.4a): видно лицо или человек — главный объект, возможен model release |
+| `PERSONAL_DOCUMENT` | (`gate-v1.2`) в subject / title / description / keywords Vision — документ с персональными данными: `passport`, `identity document`, `identity card`, `id card`, `national id`, `driver's license/licence`, `driving license/licence`, `residence permit`, `residential registration`, `propiska`, `birth/marriage certificate`, `bank/credit/debit card`, `social security card`, `personal details`, `personal data`. Распознанный текст такого документа **не хранится**: worker удаляет `text_visible` до сохранения Vision (событие `AI/PASSED` → `privacy`) |
 | `EDITORIAL_RISK` | Vision `editorial_risk` не пуст |
 | `AI_GENERATED` | Vision `ai_generated = true` |
 | `MANUAL_ESCALATION` | вызван `escalate` (действует до решения человека) |
@@ -523,6 +524,7 @@ Asset 5 показывает, зачем нужно правило 1: назва
 | people_risk | Правило | Gate |
 |---|---|---|
 | `none` | `present = false` и `count = 0` | — |
+| `recognizable` (дети, `gate-v1.2`) | люди есть и в subject / title / description есть `child`, `children`, `kid(s)`, `baby`, `toddler`, `infant`, `boy`, `girl`, `schoolboy`, `schoolgirl`, `teen(ager)` — проверяется **первым**, даже при признаках частичного присутствия; keywords не учитываются (концепт `children's playground` без ребёнка в описании не срабатывает) | `PEOPLE_RECOGNIZABLE` → review |
 | `recognizable` | есть признак узнаваемости (`face`, `faces`, `facial`, `portrait`, `headshot`, `smiling`, `looking at camera`, `eyes`) **или** в `subject` человек (`person`, `people`, `man`, `woman`, `worker`, `engineer`, `technician`, `operator`, `electrician`, `builder`, `welder`, `mechanic`) без признаков частичного присутствия | `PEOPLE_RECOGNIZABLE` → review |
 | `partial` | есть признак неидентифицируемого присутствия (`hand`, `hands`, `glove`, `gloved`, `arm`, `arms`, `finger(s)`, `legs`, `feet`, `from behind`, `back view`, `rear view`, `silhouette(d)`, `faceless`, `face not visible`, `face obscured`, `face hidden`, `face covered`, `unrecognizable`, `anonymous`, `blurred figure`) и нет признаков узнаваемости | note `PEOPLE_PARTIAL` |
 | `unclear` | люди есть, признаков нет (рабочий случайно в кадре) | note `PEOPLE_INCIDENTAL` — **не блокирует** (с `gate-v1.1`) |

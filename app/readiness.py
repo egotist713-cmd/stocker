@@ -372,6 +372,10 @@ def rights_checks(vision: AIAnalysis, brands: list[dict]) -> list[dict]:
         if terms:
             checks.append(_check(code, level, f"{label}: {', '.join(terms)}"))
 
+    document = rg.personal_document(vision)
+    if document:
+        checks.append(_check("PERSONAL_DOCUMENT", BLOCKER, f"Document with personal data: {', '.join(document)}"))
+
     if vision.editorial_risk:
         checks.append(_check("EDITORIAL_ONLY", BLOCKER, f"Editorial risk: {', '.join(vision.editorial_risk)}"))
     if vision.ai_generated:

@@ -16,7 +16,9 @@ from app.textnorm import normalize_text
 
 
 # gate-v1.1 (26.09.2026): неясное присутствие людей больше не отправляет в review.
-POLICY_VERSION = "gate-v1.1"
+# gate-v1.2 (26.09.2026, аудит): дети — всегда review; документы с персональными
+# данными — причина PERSONAL_DOCUMENT.
+POLICY_VERSION = "gate-v1.2"
 METADATA_VERSION = "2"
 
 AUTO_APPROVED = "auto_approved"
@@ -129,9 +131,27 @@ def _without(text: str, phrases) -> str:
     return text
 
 
+# Дети в кадре — всегда к человеку (релиз законного представителя). Ищутся в
+# subject/title/description, а не в keywords: концепт «children's playground»
+# без ребёнка в описании не должен срабатывать.
+CHILD_WORDS = (
+    "child", "children", "child's", "children's", "kid", "kids", "baby", "babies", "toddler", "toddlers",
+    "infant", "infants", "boy", "boys", "girl", "girls", "schoolboy", "schoolgirl", "teenager", "teenagers", "teen",
+)
+
+
+def _child_markers(vision: AIAnalysis) -> list[str]:
+    text = normalize_text(" . ".join([vision.subject, vision.title, vision.description])).casefold()
+    return [f"child:{word}" for word in CHILD_WORDS if _contains(text, word)]
+
+
 def people_risk(vision: AIAnalysis) -> dict:
     if not vision.people.present and vision.people.count == 0:
         return {"level": "none", "markers": []}
+
+    children = _child_markers(vision)
+    if children:
+        return {"level": "recognizable", "markers": children}
 
     parts = [
         vision.title, vision.description, vision.subject, vision.commercial_context,
@@ -181,6 +201,25 @@ def legal_claims(fields: dict) -> list[dict]:
 # --- Решение (§6A.3) ------------------------------------------------------------
 
 
+# --- Документы с персональными данными (gate-v1.2) --------------------------------
+
+# Удостоверения личности и подобные документы не продаются на стоках и содержат
+# персональные данные: всегда к человеку; распознанный текст не хранится
+# (worker удаляет text_visible до сохранения Vision).
+DOCUMENT_TERMS = (
+    "passport", "identity document", "identity card", "id card", "national id", "driver's license",
+    "driver's licence", "driving license", "driving licence", "residence permit", "residential registration",
+    "propiska", "birth certificate", "marriage certificate", "bank card", "credit card", "debit card",
+    "social security card", "personal details", "personal data",
+)
+
+
+def personal_document(vision: AIAnalysis) -> list[str]:
+    """Термины документа с персональными данными в описании Vision (без text_visible)."""
+    text = normalize_text(" . ".join([vision.subject, vision.title, vision.description, *vision.keywords])).casefold()
+    return [term for term in DOCUMENT_TERMS if _contains(text, term)]
+
+
 def evaluate(metadata: dict, vision: AIAnalysis, auto_approve_enabled: bool = True) -> dict:
     """Вычислить блок review_gate. Не меняет state (это делает apply_gate)."""
     reasons, notes = [], []
@@ -224,6 +263,10 @@ def evaluate(metadata: dict, vision: AIAnalysis, auto_approve_enabled: bool = Tr
         note("PEOPLE_INCIDENTAL", f"people.count={vision.people.count}")
     elif people["level"] == "partial":
         note("PEOPLE_PARTIAL", ", ".join(people["markers"]))
+
+    document = personal_document(vision)
+    if document:
+        reason("PERSONAL_DOCUMENT", ", ".join(document))
 
     if vision.editorial_risk:
         reason("EDITORIAL_RISK", ", ".join(vision.editorial_risk))

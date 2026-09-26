@@ -172,10 +172,11 @@ sRGB-профилей, **а не по подстроке `sRGB` в описан�
 
 | code | Условие | Уровень |
 |---|---|---|
-| `MODEL_RELEASE_REQUIRED` | `people_risk` = `recognizable`, релиза нет | blocker |
+| `MODEL_RELEASE_REQUIRED` | `people_risk` = `recognizable` (в т.ч. дети, `gate-v1.2`), релиза нет | blocker |
 | `DOMINANT_BRAND` | бренд или логотип — главный объект кадра (§3.3a); нужен property release или другой кадр | blocker |
 | `COMPONENT_BRAND` | бренд на оборудовании, не главный объект (Siemens на щите, §3.3a) | warning |
 | `INCIDENTAL_MARKING` | маркировка, шильдик, юрлицо в надписи (§3.3a) | info |
+| `PERSONAL_DOCUMENT` | документ с персональными данными (`gate-v1.2`, `METADATA_CONTRACT.md` §6A.3) — не экспортируется никогда | blocker |
 | `EDITORIAL_ONLY` | `editorial_risk` не пуст (узнаваемое место, событие, объект; editorial не поддерживается в v1) | blocker |
 | `AI_GENERATED` | Vision `ai_generated = true` | blocker (правила площадок для AI-контента — отдельное решение) |
 | `PEOPLE_NOT_RECOGNIZABLE` | `people_risk` ∈ {`partial`, `unclear`} | warning (релиз не требуется для неузнаваемых людей) |

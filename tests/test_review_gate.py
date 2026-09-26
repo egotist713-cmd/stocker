@@ -56,7 +56,7 @@ def test_low_risk_is_auto_approved():
 
     assert m["state"] == "auto_approved"
     assert m["metadata_version"] == "2"
-    assert m["review_gate"]["policy_version"] == "gate-v1.1"
+    assert m["review_gate"]["policy_version"] == "gate-v1.2"
     assert m["review_gate"]["decision"] == "auto_approved"
     assert reason_codes(m) == []
 
