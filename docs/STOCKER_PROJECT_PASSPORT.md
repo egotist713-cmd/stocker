@@ -245,6 +245,27 @@ Stocker Core / n8n / Browser / Tools
 
 Не следует сразу реализовывать весь верхний уровень автономности.
 
+### Будущий этап: Image Enhancement (зафиксирован 26.09.2026, §35V)
+
+```text
+source
+ → QC
+ → enhancement decision      (Stocker Core, детерминированно)
+ → Topaz (при необходимости)
+ → QC повторно
+ → Vision
+ → Metadata
+ → Review
+ → Export
+```
+
+- **Оригиналы не изменяются.** Topaz создаёт производные файлы; asset хранит
+  связь оригинал → производный файл (provenance как у AI: инструмент, версия,
+  параметры, время).
+- Решение «улучшать или нет» принимает Stocker Core по правилам (как review
+  gate), а не агент или workflow. n8n/OpenClaw только запускают операцию.
+- Пока **не реализуется**.
+
 ---
 
 # 3. Основной принцип безопасности архитектуры
@@ -2610,6 +2631,43 @@ Stocker Core + события SQLite — единственный источни
 
 ---
 
+# 35V. 2026-09-26 — Решения по n8n; контракт n8n; Image Enhancement в архитектуре
+
+### Решения пользователя
+
+1. **n8n в Docker Desktop** — изоляция, переносимость и восстановление,
+   разделение компонентов, перенос workflow.
+2. **Права n8n (урезанные):** читать состояние, очереди, статусы; запускать
+   pipeline и обработку новых файлов; `metadata.build` / `metadata.gate`.
+   **Не может:** approve/reject, менять решения человека, выдавать себя за
+   `human`.
+3. **Уведомления** — слой в n8n; Stocker не привязывается к мессенджеру.
+   Начать с тестового канала; позже Telegram, e-mail, MAX.
+4. **Image Enhancement** (Topaz) — будущий этап в архитектуре (§2); оригиналы
+   не изменяются, Topaz создаёт производные файлы. Пока не реализуется.
+
+### Проверка до реализации
+
+Контейнер `busybox` (локальный образ, без загрузки; сеть `bridge`):
+`http://172.26.192.1:8765/mcp` → `401` без токена (Stocker доступен);
+`host.docker.internal:8765` → нет ответа (сервер слушает только адрес
+WSL-адаптера — так и остаётся); LM Studio через `host.docker.internal:1234` → 200.
+n8n обращается к Stocker по тому же адресу, что и OpenClaw.
+
+### Контракт
+
+`docs/N8N_CONTRACT.md`: роль, топология, HTTP API `POST /api/v1/{operation}`
+(envelope, HTTP 200), токены по каналам (`STOCKER_MCP_TOKEN` → `agent:openclaw`
+только `/mcp`; `STOCKER_N8N_TOKEN` → `workflow:n8n` только `/api/v1`),
+allowlist `workflow:n8n`, операция `incoming.list`, workflows v1
+(ingest, retry, digest, notify), эксплуатация, порядок реализации.
+
+### Статус
+
+🟢 DONE — решения и контракт; 🟡 IN PROGRESS — реализация (§8 контракта)
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -2758,6 +2816,12 @@ OPENCLAW INTEGRATION (skill, одна модель qwen3-vl, сводка review
 СТАБИЛИЗАЦИЯ (права, RECOVERY.md, check_environment.ps1)
     🟢 DONE (§35U)
 
+N8N (Docker Desktop, HTTP API, workflow:n8n, уведомления через n8n)
+    🟡 IN PROGRESS — контракт docs/N8N_CONTRACT.md (§35V)
+
+IMAGE ENHANCEMENT (enhancement decision → Topaz → QC, производные файлы)
+    ⚪ PLANNED (§2, §35V)
+
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
 
@@ -2799,9 +2863,9 @@ OPENCLAW AUTONOMY
 3. ~~MCP-адаптер для OpenClaw~~ — 🟢 DONE (§35O, §35P). Сервер:
    `python -m app.service.mcp_http` (`STOCKER_MCP_HOST=wsl`); журнал вызовов —
    `logs/mcp_http.log`.
-4. **n8n — следующий этап** (роль — §35M; интеграция OpenClaw завершена, §35T):
-   Execute Command → `python -m app.api --actor workflow:n8n`, позже HTTP поверх
-   того же реестра.
+4. **n8n — текущий этап**: контракт `docs/N8N_CONTRACT.md` (§35V). Docker
+   Desktop, HTTP API `/api/v1/*` с actor `workflow:n8n` от сервера (не JSON CLI:
+   там actor задаёт вызывающий, §3B).
 5. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
    общий долгоживущий Windows-процесс (`SERVICE_CONTRACT.md` §7).
 
