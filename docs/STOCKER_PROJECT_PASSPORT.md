@@ -2260,9 +2260,49 @@ MCP-адаптер поверх реестра для OpenClaw (`SERVICE_CONTRAC
 Целевое состояние — агент OpenClaw тоже на `qwen3-vl-8b-instruct`. Переключение
 меняет конфиг OpenClaw и выполняется после подтверждения пользователя.
 
+### Переключение (выполнено с подтверждением пользователя)
+
+- LM Studio (пользователь): контекст загрузки `qwen3-vl-8b-instruct` = 16384.
+- OpenClaw: резервная копия `~/.openclaw/openclaw.json.bak-before-qwen3vl`;
+  в `models.providers.lmstudio.models` добавлена `qwen3-vl-8b-instruct`
+  (`contextWindow` 16384, `maxTokens` 8192, `supportsTools`);
+  `agents.defaults.model.primary = lmstudio/qwen3-vl-8b-instruct`. Применено
+  без перезапуска gateway; MCP-сервер `stocker` на месте.
+- В LM Studio после вызова агента загружена одна модель —
+  `qwen3-vl-8b-instruct` (ctx 16384). Цель «одна модель в VRAM» достигнута.
+
+### Блокер: промпт агента OpenClaw не помещается в 16k
+
+Журнал OpenClaw (`/tmp/openclaw/openclaw-2026-09-26.log`):
+
+- `asset_get` вызван реально (журнал Stocker `11:49:43 tool=asset_get ... ok=True`),
+  но ответ оборван: `insufficient_output_budget ... effectiveContext=16384
+  estimatedInput=18201`;
+- даже с маленьким результатом (`review_queue`): `context-pressure-diagnostic
+  route=compact_only estimatedPromptTokens=16174 promptBudgetBeforeReserve=12288`.
+  В этом режиме `qwen3-vl` вызвала несуществующий инструмент `stocker` вместо
+  `stocker__review_queue` и честно сообщила об ошибке, ничего не выдумав.
+
+Вклад Stocker небольшой: 13 определений инструментов ≈ 1,9k токенов,
+`asset_get` ≈ 1,6k, `review_queue` ≈ 150. Основной объём (~14k) — собственный
+промпт агента OpenClaw (13 плагинов, файлы workspace, их инструменты).
+
+VRAM RTX 3080 Ti: занято 11,57 из 12,29 GB при `qwen3-vl` + 16k. Контекст 32k
+в VRAM не помещается без квантования KV-кеша.
+
+`qwen3.8` работала в том же бюджете (16384 в LM Studio, в OpenClaw указано
+`contextWindow` 262144 / `contextTokens` 16384). Выдуманный результат в §35P,
+вероятно, связан с той же нехваткой контекста.
+
+**Вывод:** надёжный агентский цикл на локальной модели 12 GB требует
+компактного промпта агента. Это задача конфигурации OpenClaw, а не Stocker и не
+выбора модели. Серверные гарантии Stocker (approve/reject недоступны, actor,
+журнал) от модели не зависят.
+
 ### Статус
 
-🟢 DONE — факты зафиксированы; ⚪ PLANNED — переключение агента OpenClaw
+🟢 DONE — факты и переключение; 🔴 BLOCKED — надёжный агентский цикл
+(промпт агента OpenClaw > контекста 16k), решение пользователя
 
 ---
 
