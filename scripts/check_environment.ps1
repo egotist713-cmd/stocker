@@ -35,7 +35,8 @@ Check ($token.Length -ge 32) ".env STOCKER_MCP_TOKEN" "length $($token.Length)"
 Check ($envText -match '(?m)^STOCKER_MCP_HOST=wsl\s*$') ".env STOCKER_MCP_HOST=wsl"
 $db = Join-Path $Root "data\db\stocker.db"
 if (Test-Path $db) {
-    $integrity = & $Python -c "import sqlite3; print(sqlite3.connect(r'file:$db?mode=ro', uri=True).execute('pragma quick_check').fetchone()[0])"
+    # Путь — отдельным аргументом: встроенный в код "?mode=ro" Windows разбирал как перенаправление.
+    $integrity = & $Python -c "import pathlib, sqlite3, sys; uri = pathlib.Path(sys.argv[1]).as_uri() + chr(63) + 'mode' + chr(61) + 'ro'; print(sqlite3.connect(uri, uri=True).execute('pragma quick_check').fetchone()[0])" $db
     Check ($integrity -eq "ok") "SQLite quick_check" $integrity
 } else { Report "FAIL" "SQLite database" "missing: $db" }
 
