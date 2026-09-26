@@ -156,6 +156,15 @@ DESCRIPTIONS = {
     "metadata.escalate": 'Send to human review (raises risk; cannot lower it). Args: {"asset_id": 5, "reason": "..."}',
     "metadata.approve": "Human decision: approve. Human actors only.",
     "metadata.reject": "Human decision: reject with a reason. Human actors only.",
+    "readiness.evaluate": (
+        "Check an asset against Adobe Stock and Shutterstock rules (no upload): status per platform, "
+        "blockers, warnings and the export plan. Only for metadata auto_approved/approved; "
+        'repeats with unchanged inputs return UNCHANGED. Args: {"asset_id": 5}'
+    ),
+    "readiness.get": (
+        "Last Stock Readiness result of an asset: status per platform (ready/blocked/stale/not_evaluated), "
+        'ready_for, checks and export plan. Read only. Args: {"asset_id": 5}'
+    ),
     "notification.record": (
         "Record that a notification was delivered: event NOTIFY/SENT on each listed asset. "
         "Idempotent per (asset, kind, key): repeats return already_sent. "
@@ -185,6 +194,8 @@ def build_registry() -> dict[str, Operation]:
         Operation("metadata.escalate", DESCRIPTIONS["metadata.escalate"], ReasonParams, PIPELINE, ops.metadata_escalate),
         Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
         Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
+        Operation("readiness.evaluate", DESCRIPTIONS["readiness.evaluate"], AssetParams, PIPELINE, ops.readiness_evaluate),
+        Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),
         Operation("notification.record", DESCRIPTIONS["notification.record"], NotificationParams, PIPELINE, ops.notification_record),
     ]
     return {operation.name: operation for operation in operations}

@@ -31,6 +31,7 @@ STALE = "stale"
 BLOCKER = "blocker"
 DERIVATIVE = "derivative"
 WARNING = "warning"
+INFO = "info"
 
 MB = 1024 * 1024
 
@@ -155,6 +156,10 @@ def read_file_facts(path: Path) -> dict:
 
 # --- Бренды (§3.3a) ----------------------------------------------------------------
 
+DOMINANT = "dominant"              # бренд или логотип — главный объект → blocker
+COMPONENT = "component_brand"      # бренд на оборудовании (Siemens на щите) → warning
+INCIDENTAL = "incidental_marking"  # маркировка, шильдик, юрлицо в надписи → info
+
 DOMINANCE_WORDS = ("logo", "logotype", "brand", "branding", "signage", "trademark")
 
 
@@ -167,7 +172,12 @@ def _fold(text: str) -> str:
 
 
 def brand_presence(vision: AIAnalysis) -> list[dict]:
-    """Бренд-термины Vision и надписи brand_or_legal с уровнем dominant / minor."""
+    """Бренд-термины Vision и надписи brand_or_legal с уровнем заметности.
+
+    v1 без OCR и детекторов брендов: уровень выводится из текста Vision.
+    dominant — термин в subject/title; иначе бренд или логотип, распознанный
+    Vision, — component_brand; надпись brand_or_legal — incidental_marking.
+    """
     terms = [(name, "brand") for name in vision.brands] + [(name, "logo") for name in vision.logos]
     terms += [
         (item["text"], f"text:{item['rule']}")
@@ -185,8 +195,13 @@ def brand_presence(vision: AIAnalysis) -> list[dict]:
         if not folded or folded in seen:
             continue
         seen.add(folded)
-        dominant = subject_is_brand or _contains(main, folded)
-        result.append({"term": normalize_text(term), "source": source, "prominence": "dominant" if dominant else "minor"})
+        if subject_is_brand or _contains(main, folded):
+            prominence = DOMINANT
+        elif source in ("brand", "logo"):
+            prominence = COMPONENT
+        else:
+            prominence = INCIDENTAL
+        result.append({"term": normalize_text(term), "source": source, "prominence": prominence})
     return result
 
 
@@ -348,12 +363,14 @@ def rights_checks(vision: AIAnalysis, brands: list[dict]) -> list[dict]:
     elif people["level"] in ("partial", "unclear"):
         checks.append(_check("PEOPLE_NOT_RECOGNIZABLE", WARNING, f"People present but not recognizable ({people['level']})"))
 
-    dominant = [b["term"] for b in brands if b["prominence"] == "dominant"]
-    minor = [b["term"] for b in brands if b["prominence"] == "minor"]
-    if dominant:
-        checks.append(_check("DOMINANT_BRAND", BLOCKER, f"Brand is the main subject: {', '.join(dominant)}"))
-    if minor:
-        checks.append(_check("MINOR_BRAND_PRESENCE", WARNING, f"Secondary brand marking: {', '.join(minor)}"))
+    for prominence, code, level, label in (
+        (DOMINANT, "DOMINANT_BRAND", BLOCKER, "Brand is the main subject"),
+        (COMPONENT, "COMPONENT_BRAND", WARNING, "Brand on a component"),
+        (INCIDENTAL, "INCIDENTAL_MARKING", INFO, "Incidental marking"),
+    ):
+        terms = [b["term"] for b in brands if b["prominence"] == prominence]
+        if terms:
+            checks.append(_check(code, level, f"{label}: {', '.join(terms)}"))
 
     if vision.editorial_risk:
         checks.append(_check("EDITORIAL_ONLY", BLOCKER, f"Editorial risk: {', '.join(vision.editorial_risk)}"))
@@ -366,13 +383,17 @@ def rights_checks(vision: AIAnalysis, brands: list[dict]) -> list[dict]:
 # --- Оценка -------------------------------------------------------------------------
 
 def fingerprint(facts: dict, metadata: dict | None, platforms: list[str]) -> str:
-    """Отпечаток входов (§3.6): изменение любого из них делает результат stale."""
+    """Отпечаток входов (§3.6): изменение любого из них делает результат stale.
+
+    Только данные БД (hash из assets, QC, metadata): представление считает его без
+    чтения файла. Целостность файла проверяет сама оценка (SOURCE_NOT_OK).
+    """
     metadata = metadata or {}
     payload = {
         "readiness_version": READINESS_VERSION,
         "profiles": [PROFILES[p].version for p in sorted(platforms)],
         "file_hash": facts.get("file_hash"),
-        "source": facts.get("source"),
+        "source_event_id": facts.get("source_event_id"),  # последнее SOURCE/INVALID
         "qc_passed": facts.get("qc_passed"),
         "state": metadata.get("state"),
         "completeness": metadata.get("completeness"),
@@ -454,7 +475,8 @@ def evaluate(facts: dict, metadata: dict | None, vision: AIAnalysis | None, plat
 def current_status(result: dict | None, current_fingerprint: str) -> dict:
     """Статусы для представления: stale, если входы изменились после оценки."""
     if not result:
-        return {"evaluated": False, "stale": False, "platforms": {}, "ready_for": []}
+        platforms = dict.fromkeys(sorted(PROFILES), NOT_EVALUATED)
+        return {"evaluated": False, "stale": False, "platforms": platforms, "ready_for": []}
     stale = result["fingerprint"] != current_fingerprint
     platforms = {
         name: (STALE if stale else data["status"]) for name, data in result["platforms"].items()

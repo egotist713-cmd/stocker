@@ -118,7 +118,8 @@ $B = "D:\backup\stocker\$(Get-Date -Format yyyy-MM-dd)"; New-Item -ItemType Dire
     ```
 
     и обновить в OpenClaw оба адреса (LM Studio и Stocker MCP), §6.
-11. **Skill:** скопировать `integrations/openclaw/skills/stocker/SKILL.md` в `~/.openclaw/workspace/skills/stocker/`.
+11. **Skill:** скопировать `integrations/openclaw/skills/stocker/SKILL.md` в `~/.openclaw/workspace/skills/stocker/`. Копировать через монтирование диска в WSL, а не конвейером PowerShell (он меняет концы строк):
+    `wsl -d OpenClawGateway --exec sh -c 'cp /mnt/f/stock/stocker/integrations/openclaw/skills/stocker/SKILL.md ~/.openclaw/workspace/skills/stocker/SKILL.md'`
 12. **Задачи Планировщика** (§5); перезайти в Windows или запустить задачи вручную.
 13. **n8n** (§7): Docker Desktop → образ по digest → контейнер → восстановить
     volume `n8n_data` из копии (или создать владельца и credential заново) →
@@ -185,6 +186,20 @@ Unregister-ScheduledTask -TaskName "LMStudioAutoServer" -Confirm:$false
 
 Все задачи запускаются **при входе пользователя** в Windows.
 
+**Перезапуск сервера Stocker (после изменения кода или `.env`).**
+`Stop-ScheduledTask` останавливает только обёртку `conhost`/`cmd`: процесс
+`python -m app.service.mcp_http` продолжает держать порт 8765, а новый запуск
+тихо завершается (задача — `Ready`, результат 0), и отвечает **старый код**
+(например, `UNKNOWN_OPERATION` для новых операций; найдено 26.09.2026).
+Правильный перезапуск:
+
+```powershell
+Stop-ScheduledTask -TaskName "Stocker MCP"; Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object CommandLine -match "app.service.mcp_http" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; Start-ScheduledTask -TaskName "Stocker MCP"
+```
+
+Проверка: процесс, слушающий 8765, создан после перезапуска
+(`Get-NetTCPConnection -LocalPort 8765 -State Listen`).
+
 ---
 
 ## 6. OpenClaw: значимые настройки (без секретов)
@@ -210,7 +225,7 @@ wsl -d OpenClawGateway --exec openclaw config set models.providers.lmstudio.base
 
 и повторная регистрация `stocker` с новым адресом (`openclaw mcp unset stocker`, затем команда выше).
 
-**Смена токена:** новый `STOCKER_MCP_TOKEN` в `.env` → перезапуск задачи `Stocker MCP` → повторная регистрация `stocker` в OpenClaw.
+**Смена токена:** новый `STOCKER_MCP_TOKEN` в `.env` → перезапуск сервера Stocker (§5, с остановкой процесса) → повторная регистрация `stocker` в OpenClaw.
 
 ---
 

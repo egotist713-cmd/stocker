@@ -9,6 +9,7 @@ import json
 
 from app import metadata_builder as mb
 from app import review_gate as rg
+from app import stock_readiness
 from app.database.db import get_asset, get_connection
 
 READY_STATES = (mb.AUTO_APPROVED, mb.APPROVED)
@@ -112,6 +113,10 @@ def allowed_actions(pipeline: dict, metadata: dict | None) -> list[dict]:
     if state in mb.REJECTABLE_STATES:
         allow("metadata.reject", "review")
 
+    readiness = pipeline.get("stock_readiness") or {}
+    if pipeline["ready"] and (not readiness.get("evaluated") or readiness.get("stale")):
+        allow("readiness.evaluate", "pipeline")
+
     return actions
 
 
@@ -140,6 +145,7 @@ def asset_view(asset_id: int) -> dict | None:
     events = _events(asset_id)
     metadata = _parse_json(asset["metadata_json"])
     pipeline = pipeline_state(asset, events, metadata)
+    pipeline["stock_readiness"] = stock_readiness.summary(asset, events, metadata)
 
     return {
         "id": asset["id"],

@@ -192,6 +192,13 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
         "metadata_completeness": "full",
         "ready": True,
         "review_reasons": [],
+        "stock_readiness": {
+            "evaluated": False,
+            "stale": False,
+            "platforms": {"adobe": "not_evaluated", "shutterstock": "not_evaluated"},
+            "ready_for": [],
+            "event_id": None,
+        },
     }
 
 

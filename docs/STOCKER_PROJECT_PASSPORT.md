@@ -2982,6 +2982,65 @@ Topaz не обязателен; результат анализа — `enhancem
 
 ---
 
+# 35ZC. 2026-09-26 — READINESS/EVALUATED, readiness.evaluate / readiness.get
+
+### Решения пользователя
+
+1. **Creative Review** хранит первичные признаки: `composition`,
+   `uniqueness`, `commercial_use_cases`, `demand`, `quality_notes`;
+   `commercial_score` рассчитывается отдельно (Python, `creative-score-v1`).
+   Остаётся советником, экспорт не блокирует.
+2. **Бренды — без OCR и детекторов в v1.** Уровни: `dominant_brand/logo` →
+   blocker, `component_brand` (Siemens на оборудовании) → warning,
+   `incidental_marking` → info. Ограничение зафиксировано: Vision может не
+   увидеть мелкий текст или производителя; для industrial stock это не
+   критично (маркировки — часть объекта, редкие отказы — через обратную связь и
+   ручную очередь). Детекторы — только если статистика отказов покажет
+   необходимость.
+3. **Приоритеты развития:** 1) качество изображения и Enhancement decision;
+   2) metadata; 3) Stock Readiness; 4) экспорт.
+
+### Реализовано
+
+- `app/readiness.py`: уровень `info`; бренды `dominant` / `component_brand` /
+  `incidental_marking`; fingerprint только из данных БД (hash, последнее
+  `SOURCE/INVALID`, QC, metadata, Vision) — `stale` считается без чтения файла.
+- `app/stock_readiness.py`: входы из БД и файла (SHA256 оригинала сверяется при
+  оценке; файл только читается), события `READINESS/EVALUATED` / `FAILED`,
+  исходы `EVALUATED` / `UNCHANGED` / `NOT_EVALUATED` / `READINESS_FAILED`.
+- Service layer: `readiness.evaluate` (pipeline), `readiness.get` (read);
+  разрешены human, агенту и `workflow:n8n`; `pipeline.stock_readiness` в
+  `asset.get`; `allowed_actions` предлагает оценку, если её нет или она `stale`.
+- Skill OpenClaw: инструменты `readiness_get` / `readiness_evaluate`, копия в
+  workspace сверена по SHA256.
+- Контракт: §3.3a (три уровня), §3.8 (исходы, fingerprint), §3.9, §4.3
+  (признаки Creative Review и формула), §8 (ограничения v1), §9 (приоритеты).
+  `SERVICE_CONTRACT.md`, `N8N_CONTRACT.md`, `RECOVERY.md` обновлены.
+
+### Найдено
+
+- **Перезапуск сервера Stocker:** `Stop-ScheduledTask` не останавливает
+  процесс `python -m app.service.mcp_http`; новый запуск тихо завершается, и
+  отвечает старый код (`UNKNOWN_OPERATION`). Правильная команда — в
+  `RECOVERY.md` §5.
+
+### Проверка
+
+- `pytest`: 364 passed, 3 skipped (`tests/test_readiness_service.py` — 14:
+  событие и actor, `UNCHANGED`, metadata и статус не меняются, изменённый и
+  нечитаемый файл, stale после правки, права, MCP).
+- Реальный сервер, HTTP API (`workflow:n8n`): assets 3, 4, 6, 7, 8, 9 →
+  `EVALUATED`, `ready` для обеих площадок, события 58–63 с
+  `actor=workflow:n8n`; 2 и 5 → `NOT_EVALUATED` без событий; повтор 3 и 4 →
+  `UNCHANGED`; журнал `API op=readiness.evaluate ... outcome=...`.
+
+### Статус
+
+🟢 Шаги 2–3 DONE. По приоритетам следующий — Enhancement decision (шаг 6);
+шаги 4–5 Readiness (worker, digest) — попутно
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3146,10 +3205,14 @@ NOTIFICATION STATE IN STOCKER EVENTS (NOTIFY/SENT)
     🟢 DONE (§35Z)
 
 STOCK READINESS (metadata + требования Adobe Stock / Shutterstock, без загрузки)
-    🟡 IN PROGRESS — контракт согласован; шаг 1 (правила, app/readiness.py) DONE (§35ZB)
+    🟡 IN PROGRESS — правила, READINESS/EVALUATED, readiness.evaluate/get DONE (§35ZB, §35ZC);
+       осталось: worker, фильтр ready_for, digest
 
-AI ADVISORS (Enhancement decision, Creative Review; необязательные)
-    ⚪ PLANNED — после Stock Readiness; v1 — локальная модель (§3A.7, §35ZA)
+ENHANCEMENT DECISION (качество изображения; not_needed / recommended / risky + причины)
+    ⚪ NEXT — приоритет 1 (§35ZC); v1 — локальная модель, только рекомендация
+
+CREATIVE REVIEW ADVISOR (первичные признаки + commercial_score, необязательный)
+    ⚪ PLANNED — после Enhancement decision (§3A.7, §35ZC)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
@@ -3189,9 +3252,14 @@ OPENCLAW AUTONOMY
 4. ~~n8n~~ — 🟢 DONE (§35V–§35X), контракт `docs/N8N_CONTRACT.md`;
    уведомления — события `NOTIFY/SENT` (§35Z). `stocker-retry` выключен до
    накопления статистики.
-5. **Stock Readiness — следующий этап** (§35Z): сначала контракт проверок
-   metadata и требований Adobe Stock / Shutterstock (актуальные правила
-   платформ проверить), без загрузки. Экспорт через API — только после него.
+5. **Stock Readiness** — контракт `docs/STOCK_READINESS_CONTRACT.md`;
+   правила и операции `readiness.evaluate` / `readiness.get` работают (§35ZC).
+   Экспорт через API — только после него.
+
+**Приоритеты развития (решение 26.09.2026):** 1) качество изображения и
+Enhancement decision; 2) metadata; 3) Stock Readiness; 4) экспорт.
+Следующий шаг — Enhancement decision (контракт §4.2): локальная модель,
+только рекомендация с причинами, Topaz не запускается.
 6. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
    общий долгоживущий Windows-процесс (`SERVICE_CONTRACT.md` §7).
 

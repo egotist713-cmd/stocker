@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app import ingest
 from app import metadata as metadata_service
+from app import stock_readiness
 from app import worker
 from app.database.db import get_connection, insert_event, transaction
 from app.service import views
@@ -134,6 +135,26 @@ def metadata_gate(params) -> dict:
 
 def metadata_escalate(params) -> dict:
     return _metadata_call(metadata_service.escalate, params.asset_id, params.reason)
+
+
+def _readiness_call(function, asset_id: int) -> dict:
+    try:
+        return function(asset_id)
+    except stock_readiness.ReadinessError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+
+
+def readiness_evaluate(params) -> dict:
+    """Оценка Stock Readiness; данные — результат оценки, а не asset view (он компактен в pipeline)."""
+    result = _readiness_call(stock_readiness.evaluate_asset, params.asset_id)
+    data = {"readiness": result["readiness"]}
+    if "error" in result:
+        data["error"] = result["error"]
+    return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != stock_readiness.READINESS_FAILED)
+
+
+def readiness_get(params) -> dict:
+    return _result(params.asset_id, None, _readiness_call(stock_readiness.get, params.asset_id))
 
 
 def notification_record(params) -> dict:

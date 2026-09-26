@@ -287,7 +287,7 @@ def test_minor_second_category_is_dropped():
 
 # --- Бренды (§3.3a) ------------------------------------------------------------
 
-def test_manufacturer_marking_is_minor_warning():
+def test_manufacturer_marking_is_incidental_info():
     # asset 5: юрлицо на замке, главный объект — механизм
     v = vision(
         title="Mechanical door locking mechanism",
@@ -297,8 +297,8 @@ def test_manufacturer_marking_is_minor_warning():
     )
     result = run(v, metadata_for(v, state=mb.APPROVED))
 
-    assert [b["prominence"] for b in rd.brand_presence(v)] == ["minor"]
-    assert codes(result, "adobe")["MINOR_BRAND_PRESENCE"] == rd.WARNING
+    assert [b["prominence"] for b in rd.brand_presence(v)] == [rd.INCIDENTAL]
+    assert codes(result, "adobe")["INCIDENTAL_MARKING"] == rd.INFO
     assert result["ready_for"] == ["adobe", "shutterstock"]
 
 
@@ -312,15 +312,19 @@ def test_brand_as_main_subject_is_blocker():
 
 def test_logo_subject_makes_brand_dominant():
     v = vision(logos=["Acme"], subject="Company logo on a wall")
-    assert rd.brand_presence(v)[0]["prominence"] == "dominant"
+    assert rd.brand_presence(v)[0]["prominence"] == rd.DOMINANT
 
 
-def test_brand_seen_but_secondary_is_minor():
+def test_brand_on_equipment_is_component_warning():
     v = vision(brands=["Siemens"], subject="Electrical junction box")
-    assert rd.brand_presence(v) == [{"term": "Siemens", "source": "brand", "prominence": "minor"}]
+    result = run(v, metadata_for(v, state=mb.APPROVED))
+
+    assert rd.brand_presence(v) == [{"term": "Siemens", "source": "brand", "prominence": rd.COMPONENT}]
+    assert codes(result, "adobe")["COMPONENT_BRAND"] == rd.WARNING
+    assert result["ready_for"] == ["adobe", "shutterstock"]
 
 
-def test_brand_in_metadata_blocks_even_when_minor():
+def test_brand_in_metadata_blocks_even_when_component():
     v = vision(brands=["Siemens"])
     metadata = metadata_for(v, state=mb.APPROVED)
     metadata["fields"]["keywords"] = [*metadata["fields"]["keywords"][:-1], "siemens"]
@@ -328,7 +332,7 @@ def test_brand_in_metadata_blocks_even_when_minor():
     result = run(v, metadata)
 
     assert codes(result, "adobe")["TRADEMARK_IN_METADATA"] == rd.BLOCKER
-    assert codes(result, "adobe")["MINOR_BRAND_PRESENCE"] == rd.WARNING
+    assert codes(result, "adobe")["COMPONENT_BRAND"] == rd.WARNING
 
 
 # --- Люди, editorial, AI ----------------------------------------------------------
@@ -369,7 +373,9 @@ def test_fingerprint_changes_with_inputs_and_marks_stale():
     assert status == {"evaluated": True, "stale": True, "platforms": {"adobe": rd.STALE, "shutterstock": rd.STALE}, "ready_for": []}
 
     assert rd.fingerprint(facts(file_hash="other"), metadata, platforms) != result["fingerprint"]
-    assert rd.current_status(None, "x")["evaluated"] is False
+    empty = rd.current_status(None, "x")
+    assert empty["evaluated"] is False
+    assert empty["platforms"] == {"adobe": rd.NOT_EVALUATED, "shutterstock": rd.NOT_EVALUATED}
 
 
 # --- Цветовой профиль файла ---------------------------------------------------------

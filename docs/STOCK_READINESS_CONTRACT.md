@@ -128,12 +128,13 @@ Shutterstock в отношении AI-контента; правила обеи�
 | `blocker` | нарушение правила площадки; нужен человек или новые данные | `blocked` |
 | `derivative` | нарушение исправляется механически при экспорте (конвертация), оригинал не меняется | не блокирует; попадает в план файла (§3.5) |
 | `warning` | рекомендация площадки не выполнена | `ready` с примечанием |
+| `info` | факт для человека, не нарушение (например, маркировка производителя) | не влияет |
 
 **Файл**
 
 | code | Условие | Уровень |
 |---|---|---|
-| `SOURCE_NOT_OK` | `pipeline.source` ≠ `ok` (файл изменён или отсутствует) | blocker |
+| `SOURCE_NOT_OK` | файл отсутствует или его SHA256 не совпадает с `assets.file_hash` (проверяется при оценке) | blocker |
 | `QC_NOT_PASSED` | QC не пройден | blocker |
 | `RESOLUTION_TOO_LOW` | мегапикселей меньше минимума площадки | blocker |
 | `RESOLUTION_TOO_HIGH` | больше максимума (Adobe 100 MP) | derivative (уменьшение) |
@@ -171,7 +172,8 @@ sRGB-профилей, **а не по подстроке `sRGB` в описан�
 |---|---|---|
 | `MODEL_RELEASE_REQUIRED` | `people_risk` = `recognizable`, релиза нет | blocker |
 | `DOMINANT_BRAND` | бренд или логотип — главный объект кадра (§3.3a); нужен property release или другой кадр | blocker |
-| `MINOR_BRAND_PRESENCE` | маркировка производителя, шильдик, юрлицо — второстепенно (§3.3a) | warning |
+| `COMPONENT_BRAND` | бренд на оборудовании, не главный объект (Siemens на щите, §3.3a) | warning |
+| `INCIDENTAL_MARKING` | маркировка, шильдик, юрлицо в надписи (§3.3a) | info |
 | `EDITORIAL_ONLY` | `editorial_risk` не пуст (узнаваемое место, событие, объект; editorial не поддерживается в v1) | blocker |
 | `AI_GENERATED` | Vision `ai_generated = true` | blocker (правила площадок для AI-контента — отдельное решение) |
 | `PEOPLE_NOT_RECOGNIZABLE` | `people_risk` ∈ {`partial`, `unclear`} | warning (релиз не требуется для неузнаваемых людей) |
@@ -179,35 +181,37 @@ sRGB-профилей, **а не по подстроке `sRGB` в описан�
 Human approve metadata **не** снимает blocker-ы прав: approve подтверждает
 текст, релиз — это отдельный юридический факт.
 
-### 3.3a. Бренды: второстепенные и главные
+### 3.3a. Бренды: три уровня
 
-Промышленная фотография часто содержит маркировки производителей. Само их
-присутствие **не** причина блокировки.
+Промышленная фотография часто содержит маркировки производителей: они часть
+объекта, и само их присутствие **не** причина блокировки.
 
 Бренд-термины: Vision `brands`, Vision `logos` и надписи `text_visible`,
-которые gate отнёс к `brand_or_legal` (`METADATA_CONTRACT.md` §6A.4). Для
-каждого термина — уровень:
+которые gate отнёс к `brand_or_legal` (`METADATA_CONTRACT.md` §6A.4). Уровень
+(первое совпадение):
 
-| prominence | Правило | Код |
+| prominence | Правило v1 | Код |
 |---|---|---|
-| `dominant` | термин встречается в Vision `subject` или `title` (Vision считает его главным в кадре), **или** в `subject` есть слово `logo`, `logotype`, `brand`, `branding`, `signage`, `trademark` | `DOMINANT_BRAND` → blocker |
-| `minor` | иначе (шильдик, маркировка, название юрлица на оборудовании) | `MINOR_BRAND_PRESENCE` → warning |
+| `dominant` | термин встречается в Vision `subject` или `title` (Vision считает его главным в кадре), **или** в `subject` есть слово `logo`, `logotype`, `brand`, `branding`, `signage`, `trademark` | `DOMINANT_BRAND` → **blocker** |
+| `component_brand` | бренд или логотип, распознанный Vision (`brands`/`logos`), но не главный — например, Siemens на промышленном оборудовании | `COMPONENT_BRAND` → **warning** |
+| `incidental_marking` | только надпись `brand_or_legal` (шильдик, юрлицо, контакт) | `INCIDENTAL_MARKING` → **info** |
 
 Независимо от уровня бренд **не должен** попадать в metadata:
 `TRADEMARK_IN_METADATA` → blocker.
 
 Проверка на данных: asset 5 (`АО "ШПЗ"` на замке, `subject` — «Mechanical door
-locking system») → `minor`.
+locking system») → `incidental_marking`.
 
-**Известное ограничение:** уровень определяется по тексту Vision. Производитель,
-которого ни Vision, ни правила gate не распознали как бренд (asset 8: `Вектор
-Технологий` классифицирован как `descriptive`), не виден ни gate, ни
-Readiness. Определение заметности бренда по изображению — возможная задача
-Creative Review Advisor (он может только поднять внимание).
+**v1 — без OCR и детекторов брендов.** Уровень выводится только из того, что
+уже дал Vision. Три уровня — точка расширения: будущий детектор (OCR, brand
+detection, анализ площади в кадре) может переклассифицировать термин, не меняя
+кодов, уровней и статусов. Детекторы добавляются **только если реальные отказы
+площадок покажут необходимость** (§8).
 
 Review gate (`gate-v1.1`) по-прежнему отправляет любой бренд человеку
 (`TRADEMARK`, `TEXT_BRAND_OR_LEGAL`); Readiness gate не меняет. Смягчение gate для
-`minor` — отдельное решение (возможный `gate-v1.2`), когда накопится статистика.
+`component_brand` / `incidental_marking` — отдельное решение (возможный
+`gate-v1.2`), когда накопится статистика.
 
 ### 3.4. Статусы (по каждой площадке)
 
@@ -348,21 +352,34 @@ fingerprint текущих данных отличается, представл
 
 Хранение — **только события**, без новой колонки и без миграции:
 представление берёт последнее `READINESS/EVALUATED` и сравнивает fingerprint.
-Повторная оценка с тем же fingerprint не пишет новое событие (исход
-`UNCHANGED`).
 
-### 3.9. Операции и права
+Fingerprint строится **только из данных БД** — `assets.file_hash`, id последнего
+`SOURCE/INVALID`, `QC passed`, `state`/`completeness`/`fields` metadata, id
+Vision-события, версии правил и профилей. Поэтому `stale` в представлении
+считается без чтения файла. Целостность файла (SHA256) проверяет сама оценка.
+
+Исходы `readiness.evaluate`:
+
+| outcome | ok | Событие | Когда |
+|---|---|---|---|
+| `EVALUATED` | ✅ | `READINESS/EVALUATED` | новая оценка (входы изменились или оценки не было) |
+| `UNCHANGED` | ✅ | — | fingerprint совпадает с последней оценкой; возвращается сохранённый результат |
+| `NOT_EVALUATED` | ✅ | — | metadata не `auto_approved`/`approved` или нет Vision; история не засоряется черновиками |
+| `READINESS_FAILED` | ❌ | `READINESS/FAILED` | файл не читается |
+
+### 3.9. Операции и права (реализовано 26.09.2026)
 
 | Операция | Уровень | human | agent | workflow | Описание |
 |---|---|---|---|---|---|
-| `readiness.evaluate` | pipeline | ✅ | ✅ | ✅ | оценить объект (`asset_id`, `platforms?`); детерминирована, решений не принимает |
-| `readiness.get` | read | ✅ | ✅ | ✅ | последний результат + `stale` |
-| `asset.list` | read | ✅ | ✅ | ✅ | новый фильтр `ready_for=<platform>` |
+| `readiness.evaluate` | pipeline | ✅ | ✅ | ✅ | `{asset_id}` — оценка для всех площадок сразу; детерминирована, решений не принимает, metadata и файл не меняет. `data = {readiness}` (результат §3.7), не asset view |
+| `readiness.get` | read | ✅ | ✅ | ✅ | `{asset_id}` → `{evaluated, stale, platforms, ready_for, event_id, result}` |
 
-`review.queue.summary` дополняется счётчиками `ready_for` по площадкам и
-причинами `blocked`. Worker запускает `readiness.evaluate` после gate, если
-metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объект, который
-одобрил человек, сразу получает оценку).
+`asset.get` → `pipeline.stock_readiness` = `{evaluated, stale, platforms,
+ready_for, event_id}` (без checks — они в `readiness.get`). `allowed_actions`
+предлагает `readiness.evaluate`, если metadata готова, а оценки нет или она `stale`.
+
+Следующие шаги (§6): фильтр `asset.list ready_for=<platform>`, счётчики в
+`review.queue.summary`, вызов из worker после gate и после `metadata.approve`.
 
 ---
 
@@ -412,13 +429,25 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 
 | Вход | изображение + `AIAnalysis` + `fields` metadata |
 |---|---|
-| Выход | `commercial_score` — целое 0–100; `commercial_potential` ∈ `high` \| `medium` \| `low`; `composition` ∈ `good` \| `acceptable` \| `weak`; `recommendation` ∈ `proceed` \| `attention` \| `skip_suggested`; `reasons[]`; `confidence` |
-| `commercial_potential` | выводится из `commercial_score` **детерминированно** в Python (не моделью): `high` ≥ 70, `medium` 40–69, `low` < 40. Пороги — константы, изменение — новая версия |
+| Выход модели — **первичные признаки** | `composition` ∈ `good` \| `acceptable` \| `weak` (+ `composition_notes`); `uniqueness` ∈ `high` \| `medium` \| `low` (насколько кадр отличается от типовых на стоках); `commercial_use_cases[]` — конкретные сценарии использования (например, «статья о техобслуживании лифтов», «презентация электромонтажной компании»); `demand` ∈ `high` \| `medium` \| `low` (спрос на тему); `quality_notes[]` — замечания о качестве (шум, резкость, свет); `recommendation` ∈ `proceed` \| `attention` \| `skip_suggested`; `confidence` |
+| Производные — Python | `commercial_score` (0–100) рассчитывается **отдельно** из первичных признаков формулой с версией (`creative-score-v1`); `commercial_potential`: `high` ≥ 70, `medium` 40–69, `low` < 40. Модель score не выставляет |
+| Хранение | событие хранит **и признаки, и** производные с версией формулы: при изменении формулы score пересчитывается по сохранённым признакам без нового вызова модели |
 | События | `CREATIVE_REVIEW/ADVISED`, `CREATIVE_REVIEW/FAILED` |
-| Влияние | **только рекомендация**: видно в `asset.get`, сводке и уведомлениях; `commercial_score` и `commercial_potential` **никогда не блокируют экспорт** |
+| Влияние | **только рекомендация**: видно в `asset.get`, сводке и уведомлениях; признаки, `commercial_score` и `commercial_potential` **никогда не блокируют экспорт** |
+
+Начальная формула `creative-score-v1` (калибруется по статистике продаж и
+отказов, изменение — новая версия):
+
+| Признак | Баллы |
+|---|---|
+| `composition` | good 35, acceptable 20, weak 5 |
+| `demand` | high 30, medium 18, low 5 |
+| `uniqueness` | high 25, medium 15, low 5 |
+| `commercial_use_cases` | 2 балла за сценарий, не более 10 |
 
 `commercial_score` позволяет сортировать очередь (что обрабатывать и
-экспортировать первым) и сравнивать модели по одним и тем же объектам.
+экспортировать первым) и сравнивать модели по одним и тем же объектам;
+первичные признаки объясняют, **почему** score такой.
 
 `attention` и `skip_suggested` не отклоняют объект: они только добавляют его в
 отдельный список человека (`review.queue`, раздел `advice`). Как их учитывать при
@@ -455,10 +484,10 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 1. ✅ **Профили и чистые функции** (`app/readiness.py`): профили площадок, проверки
    §3.3, план §3.5, fingerprint — unit-тесты; прогон на реальных assets 2–9
    (26.09.2026, паспорт §35ZB).
-2. **События и представление**: `READINESS/*`, `pipeline.stock_readiness`,
-   `stale`.
-3. **Service layer**: `readiness.evaluate`, `readiness.get`, фильтр `ready_for`,
-   сводка; allowlist `workflow:n8n`; MCP.
+2. ✅ **События и представление**: `READINESS/*`, `pipeline.stock_readiness`,
+   `stale` (§35ZC).
+3. ✅ **Service layer**: `readiness.evaluate`, `readiness.get`; allowlist
+   `workflow:n8n`; MCP (§35ZC). Осталось: фильтр `ready_for`, сводка.
 4. **Worker**: оценка после gate и после approve.
 5. **n8n**: digest показывает готовность по площадкам.
 6. **Enhancement Advisor**: интерфейс, предфильтр, локальный провайдер, события
@@ -481,6 +510,34 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
    только рекомендация (`commercial_score`), экспорт не блокирует.
 4. **Enhancement Advisor** — предфильтр правилами + модель только для спорных
    объектов; v1 — только рекомендация с причинами.
-5. **Бренды** — `minor` → warning, `dominant` → blocker (§3.3a).
+5. **Бренды** — `dominant_brand/logo` → blocker, `component_brand` →
+   warning, `incidental_marking` → info (§3.3a); без OCR и детекторов в v1.
 6. **Файлы** — original → derivative → platform export; оригиналы не
    изменяются (§3.5b).
+7. **Creative Review** хранит первичные признаки (`composition`,
+   `uniqueness`, `commercial_use_cases`, `demand`, `quality_notes`);
+   `commercial_score` рассчитывается отдельно (§4.3).
+
+---
+
+## 8. Известные ограничения v1
+
+| Ограничение | Почему приемлемо | Когда пересматривать |
+|---|---|---|
+| **Бренды и мелкий текст.** Vision может не увидеть мелкую надпись или производителя (asset 8: `Вектор Технологий` gate отнёс к `descriptive`) — тогда ни gate, ни Readiness его не видят. OCR и детектора брендов нет | в industrial stock маркировки часто — часть объекта; редкие отказы площадок дешевле обработать через обратную связь и ручную очередь, чем строить систему без статистики | когда статистика реальных отказов площадок покажет, что причина — бренды или надписи |
+| **Заметность бренда** — по тексту Vision (`subject`/`title`), а не по площади в кадре | Vision описывает главное в кадре; ошибка возможна в обе стороны | то же; детектор может переклассифицировать уровень без изменения кодов |
+| **Категории Shutterstock** — только подтверждённые названия | обязательная категория блокирует, а не угадывается | перед этапом Export — сверка с порталом/CSV-шаблоном |
+| **Релизы** не хранятся | узнаваемые люди в industrial stock редки | когда понадобится экспорт таких объектов (`release.attach`) |
+| **Правила площадок** — снимок 26.09.2026 | профиль версионирован и ссылается на источник | при изменении правил площадки или отказе по неизвестному правилу |
+
+## 9. Приоритеты развития (26.09.2026)
+
+1. **Качество изображения и Enhancement decision.**
+2. **Metadata.**
+3. **Stock Readiness.**
+4. **Экспорт.**
+
+Следствие для §6: после шагов 2–3 (оценка и операции) следующим идёт
+Enhancement decision (шаг 6) — он влияет на то, какой файл вообще стоит
+готовить. Небольшие шаги 4–5 Readiness (worker, digest) выполняются, когда они
+не отнимают время у приоритета 1.

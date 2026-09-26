@@ -91,6 +91,7 @@ Content-Type: application/json
 | `asset.process` | ✅ | только `force=false` |
 | `metadata.build` | ✅ | только `force=false` (создать или дозаполнить partial; существующие metadata не заменяются) |
 | `metadata.gate` | ✅ | gate не меняет решения человека |
+| `readiness.evaluate`, `readiness.get` | ✅ | оценка по правилам площадок; решений не принимает, metadata и файл не меняет |
 | `notification.record` | ✅ | только факт доставки (`NOTIFY/SENT`); pipeline и review не меняет. Агентам недоступна |
 | `metadata.edit`, `metadata.rebuild`, `metadata.escalate` | ❌ `FORBIDDEN` | |
 | `metadata.approve`, `metadata.reject` | ❌ `FORBIDDEN` | |
