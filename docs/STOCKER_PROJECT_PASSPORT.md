@@ -371,6 +371,23 @@ AI, агент OpenClaw, tool use. Роли разделены архитект�
 несколько моделей без постоянных перезагрузок. Новые модели не добавляются без
 отдельного доказанного требования и решения пользователя.
 
+### 7. Правила отдельно от советов AI (Stock Readiness и AI Advisors)
+
+Принят 26.09.2026 (§35ZA). Оценка пригодности фотографии разделена:
+
+- **Deterministic Stock Readiness** — соответствие требованиям площадок
+  (размер, формат, цвет, metadata, keywords, бренды, релизы, категории).
+  Правила Python, обязательный этап, может запретить экспорт.
+- **AI Advisors** — Enhancement decision (`enhancement_not_needed` /
+  `enhancement_recommended` / `enhancement_risky`) и Creative Review
+  (коммерческий потенциал, композиция). Необязательны, только советуют и могут
+  лишь **поднять внимание**; не снимают blocker-ы, не одобряют, не меняют
+  данные. Провайдер заменяем конфигурацией; v1 — та же локальная модель
+  (принцип 6), облачная модель — не зависимость.
+- Topaz не считается обязательным улучшением.
+
+Контракт — `docs/STOCK_READINESS_CONTRACT.md`.
+
 ---
 
 # 3B. Итоговая архитектура (проверена 26.09.2026)
@@ -2865,6 +2882,58 @@ baseline. `retry` — выключен до накопления статист�
 
 ---
 
+# 35ZA. 2026-09-26 — Границы Stock Readiness и AI Advisors (до реализации)
+
+### Решение пользователя
+
+Изначальная цель проекта — оценка пригодности фотографии для стокового
+рынка, а не только техническая валидация. Разделить:
+
+1. **Deterministic Stock Readiness** — технические требования площадок и
+   metadata, локально, правилами.
+2. **Commercial / Creative Review** — коммерческий потенциал, композиция,
+   стоит ли тратить время на обработку, нужен ли Topaz, нужна ли расширенная
+   проверка. Отдельный **необязательный** этап — место для будущего AI Advisor;
+   облачная модель не становится обязательной зависимостью.
+
+Порядок: QC → Enhancement decision → Vision → Metadata → Stock Readiness →
+(optional) Creative Review Advisor → Export.
+
+Topaz не обязателен; результат анализа — `enhancement_not_needed` /
+`enhancement_recommended` / `enhancement_risky`. Решение пока принимает
+локальная модель, с возможностью передать этап более сильной модели.
+
+Главная цель Stock Readiness — подготовить объект к автоматическому экспорту.
+
+### Зафиксировано
+
+- Принцип §3A.7 (правила отдельно от советов AI).
+- **`docs/STOCK_READINESS_CONTRACT.md`** (проект, `readiness-v1`): профили
+  Adobe Stock и Shutterstock с источниками (проверены 26.09.2026), проверки с
+  уровнями `blocker` / `derivative` / `warning`, статусы по площадкам
+  (`not_evaluated` / `ready` / `blocked` / `stale`), **план экспорта** (точные
+  поля, категория, операции над файлом), fingerprint, события
+  `READINESS/*`, операции `readiness.evaluate` / `readiness.get`; интерфейс
+  Advisor-ов, события `ENHANCEMENT/*` и `CREATIVE_REVIEW/*`, замена провайдера
+  конфигурацией.
+- Проверенные правила площадок: Adobe — 4–100 MP, ≤ 45 MB, JPEG sRGB, ≤ 49
+  keywords, title желательно ≤ 70; Shutterstock — ≥ 4 MP, ≤ 50 MB, JPEG/TIFF,
+  7–50 keywords, 1–2 категории, описание ≤ 2048. Текущие лимиты builder
+  (7–49 keywords) совместимы с обеими.
+- **Найдено:** все 8 файлов — Display P3 (ICC `sRGB EOTF with DCI-P3 Color
+  Gamut`), не sRGB. Экспорт потребует конвертации P3 → sRGB (derivative);
+  проверка профиля — по primaries, не по подстроке `sRGB`.
+
+### Открытые вопросы (контракт §7)
+
+Релизы, категории, включение Creative Review, предфильтр Enhancement.
+
+### Статус
+
+🟡 Контракт на согласовании; кода нет
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3029,7 +3098,10 @@ NOTIFICATION STATE IN STOCKER EVENTS (NOTIFY/SENT)
     🟢 DONE (§35Z)
 
 STOCK READINESS (metadata + требования Adobe Stock / Shutterstock, без загрузки)
-    ⚪ NEXT — сначала контракт; экспорт через API только после этого этапа (§35Z)
+    🟡 CONTRACT — docs/STOCK_READINESS_CONTRACT.md на согласовании (§35ZA)
+
+AI ADVISORS (Enhancement decision, Creative Review; необязательные)
+    ⚪ PLANNED — после Stock Readiness; v1 — локальная модель (§3A.7, §35ZA)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
