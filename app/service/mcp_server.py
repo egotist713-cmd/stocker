@@ -26,7 +26,7 @@ import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from app.service import dispatch
+from app.service import AGENT_FORBIDDEN, dispatch
 from app.service.registry import PIPELINE, READ, build_registry
 
 DEFAULT_ACTOR = "agent:openclaw"
@@ -58,7 +58,7 @@ def exposed_operations() -> dict:
     return {
         tool_name(operation.name): operation
         for operation in build_registry().values()
-        if operation.access in EXPOSED_ACCESS
+        if operation.access in EXPOSED_ACCESS and operation.name not in AGENT_FORBIDDEN
     }
 
 

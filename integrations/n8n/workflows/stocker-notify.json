@@ -2,14 +2,19 @@
   "id": "StockerNotify001",
   "name": "stocker-notify",
   "active": false,
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "nodes": [
     {
       "id": "3b8c1f0e-1a1a-4c1e-9a01-000000000001",
       "name": "Called by other workflows",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {}
     },
     {
@@ -17,15 +22,93 @@
       "name": "Test channel",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [260, 0],
-      "notes": "Слой уведомлений (docs/N8N_CONTRACT.md §6). Stocker не знает о мессенджерах. v1 — тестовый канал: сообщение фиксируется в журнале выполнения n8n. Позже этот узел заменяется на Telegram / e-mail / MAX, остальные workflow не меняются.",
+      "position": [
+        260,
+        0
+      ],
+      "notes": "Слой уведомлений (docs/N8N_CONTRACT.md §6). Stocker не знает о мессенджерах. v1 — тестовый канал. Позже этот узел заменяется на Telegram / e-mail / MAX; запись факта доставки в Stocker остаётся.",
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Вход: {severity, title, text, data}. Выход: запись о доставке в тестовый канал.\nreturn $input.all().map(item => ({\n  json: {\n    channel: 'test',\n    delivered_at: new Date().toISOString(),\n    severity: item.json.severity || 'info',\n    title: item.json.title || 'Stocker',\n    text: item.json.text || '',\n    data: item.json.data || null,\n  },\n}));"
+        "jsCode": "// Вход: {severity, title, text, data, kind, items:[{asset_id, key}]}.\n// v1 — тестовый канал: сообщение фиксируется в журнале выполнения n8n.\nreturn $input.all().map(item => ({\n  json: {\n    channel: 'test',\n    delivered_at: new Date().toISOString(),\n    severity: item.json.severity || 'info',\n    title: item.json.title || 'Stocker',\n    text: item.json.text || '',\n    kind: item.json.kind || 'general',\n    items: item.json.items || [],\n    data: item.json.data || null,\n  },\n}));"
+      }
+    },
+    {
+      "id": "3b8c1f0e-1a1a-4c1e-9a01-000000000003",
+      "name": "To record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "notes": "Факт доставки записывается в Stocker (события NOTIFY/SENT), а не только в n8n. Уведомления без объектов не записываются.",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all()\n  .map(item => item.json)\n  .filter(d => Array.isArray(d.items) && d.items.length > 0)\n  .map(d => ({ json: { channel: d.channel, kind: d.kind, severity: d.severity, title: d.title.slice(0, 200), items: d.items.slice(0, 200) } }));"
+      }
+    },
+    {
+      "id": "3b8c1f0e-1a1a-4c1e-9a01-000000000004",
+      "name": "notification.record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/notification.record",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__STOCKER_CREDENTIAL_ID__",
+          "name": "Stocker API"
+        }
       }
     }
   ],
   "connections": {
-    "Called by other workflows": {"main": [[{"node": "Test channel", "type": "main", "index": 0}]]}
+    "Called by other workflows": {
+      "main": [
+        [
+          {
+            "node": "Test channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test channel": {
+      "main": [
+        [
+          {
+            "node": "To record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To record": {
+      "main": [
+        [
+          {
+            "node": "notification.record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

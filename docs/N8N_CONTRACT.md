@@ -91,6 +91,7 @@ Content-Type: application/json
 | `asset.process` | ✅ | только `force=false` |
 | `metadata.build` | ✅ | только `force=false` (создать или дозаполнить partial; существующие metadata не заменяются) |
 | `metadata.gate` | ✅ | gate не меняет решения человека |
+| `notification.record` | ✅ | только факт доставки (`NOTIFY/SENT`); pipeline и review не меняет. Агентам недоступна |
 | `metadata.edit`, `metadata.rebuild`, `metadata.escalate` | ❌ `FORBIDDEN` | |
 | `metadata.approve`, `metadata.reject` | ❌ `FORBIDDEN` | |
 
@@ -123,7 +124,7 @@ Allowlist — константа в коде; изменение — измен�
 | `stocker-ingest` | каждые 5 минут | `incoming.list` → для каждого нового файла без `duplicate_of` → `asset.process_file` **последовательно** |
 | `stocker-retry` | каждые 30 минут (**выключен** до накопления статистики, §6.1) | `asset.list {"vision":"failed"}` → `asset.process`; partial-черновики → `metadata.build`. Ограничители — §6.1 |
 | `stocker-digest` | ежедневно + после ingest при изменениях | `review.queue` → сводка (`summary`) → `stocker-notify` |
-| `stocker-notify` | вызывается другими | слой уведомлений: `{severity, title, text, data}` → канал |
+| `stocker-notify` | вызывается другими | слой уведомлений: `{severity, title, text, data, kind, items}` → канал → `notification.record` (если есть `items`) |
 
 ### 6.1. Ограничители `stocker-retry` (26.09.2026)
 
@@ -131,18 +132,30 @@ Allowlist — константа в коде; изменение — измен�
 |---|---|
 | Защита от бесконечных повторов | не более **3** неудач на asset и стадию; счёт — по событиям Stocker `AI/FAILED`, `METADATA_AI/FAILED` (`asset.history`), а не по памяти n8n |
 | Объём за запуск | не более **5** объектов за один запуск (обе ветки вместе) |
-| Уведомление при повторных ошибках | исчерпавшие лимит объекты (и ошибки получения истории) → `stocker-notify` с последней ошибкой; **только новые** — уже сообщённые хранятся в статических данных workflow (сохраняются в запусках по расписанию) |
+| Уведомление при повторных ошибках | исчерпавшие лимит объекты (и ошибки получения истории) → `stocker-notify` с последней ошибкой; **только новые** — «уже сообщено» определяется по событиям Stocker `NOTIFY/SENT` (`kind=retry_exhausted`, `key=<stage>:<неудач>`) из `asset.history`; статические данные n8n не используются |
 | Итог запуска | если были повторы — отчёт «успешно / снова ошибка» с номером попытки; успех определяет `ok` в ответе Stocker |
 | Изоляция сбоев | сбой одного вызова (`onError: continue`) не обрывает запуск |
 
 Логика Code-узлов проверяется `integrations/n8n/tests/retry_logic.test.js`
 (код берётся из JSON workflow).
 
-**Запланировано (§35Y):** состояние «что уже сообщено» сейчас хранится в
-статических данных workflow n8n. По принципу §3A.5 его следует перенести в
-события Stocker: операция, фиксирующая уведомление событием `NOTIFY/SENT`
-(канал, тип, объекты), и чтение этой истории перед отправкой. Тогда
-состояние уведомлений переживёт пересоздание n8n и будет видно агенту.
+### 6.2. Состояние уведомлений — в событиях Stocker (26.09.2026, §35Z)
+
+`stocker-notify` после доставки вызывает `notification.record`
+(`SERVICE_CONTRACT.md` §3): для каждого объекта уведомления пишется событие
+`NOTIFY/SENT` с `actor=workflow:n8n`. Уведомления без объектов не записываются.
+Операция идемпотентна по (`asset`, `kind`, `key`), поэтому повторный запуск
+workflow не дублирует события.
+
+| `kind` | Отправитель | `key` |
+|---|---|---|
+| `ingest_report` | `stocker-ingest` | `ingest` |
+| `daily_digest` | `stocker-digest` (проблемные объекты) | дата `YYYY-MM-DD` |
+| `retry_report` | `stocker-retry` | `<operation>:<попытка>` |
+| `retry_exhausted` | `stocker-retry` | `<stage>:<неудач>` или `history_error:<дата>` |
+
+История уведомлений переживает пересоздание n8n и видна агенту через
+`asset.history`.
 
 ### Слой уведомлений
 

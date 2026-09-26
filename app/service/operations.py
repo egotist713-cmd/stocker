@@ -4,11 +4,13 @@
 {asset_id, outcome, ok, data} (envelope собирает app.service.dispatch).
 """
 
+import json
 from pathlib import Path
 
 from app import ingest
 from app import metadata as metadata_service
 from app import worker
+from app.database.db import get_connection, insert_event, transaction
 from app.service import views
 from app.service.errors import ServiceError
 from app.textnorm import normalize_text
@@ -132,6 +134,60 @@ def metadata_gate(params) -> dict:
 
 def metadata_escalate(params) -> dict:
     return _metadata_call(metadata_service.escalate, params.asset_id, params.reason)
+
+
+def notification_record(params) -> dict:
+    """
+    Факт доставки уведомления — событие NOTIFY/SENT на каждый asset (истина в
+    Stocker, а не в памяти n8n). Идемпотентно по (asset, kind, key).
+    """
+    ids = sorted({item.asset_id for item in params.items})
+    connection = get_connection()
+    try:
+        known = {row[0] for row in connection.execute(
+            f"SELECT id FROM assets WHERE id IN ({','.join('?' * len(ids))})", ids
+        )}
+        sent = {
+            (row["asset_id"], row["kind"], row["key"])
+            for row in connection.execute(
+                f"""
+                SELECT asset_id,
+                       json_extract(message, '$.kind') AS kind,
+                       json_extract(message, '$.key') AS key
+                FROM processing_events
+                WHERE stage = 'NOTIFY' AND status = 'SENT' AND json_valid(message)
+                  AND asset_id IN ({','.join('?' * len(ids))})
+                """,
+                ids,
+            )
+        }
+    finally:
+        connection.close()
+
+    missing = [asset_id for asset_id in ids if asset_id not in known]
+    if missing:
+        raise ServiceError("ASSET_NOT_FOUND", f"Assets not found: {missing}")
+
+    recorded, already = [], []
+    with transaction() as connection:
+        for item in params.items:
+            marker = (item.asset_id, params.kind, item.key)
+            if marker in sent:
+                already.append({"asset_id": item.asset_id, "key": item.key})
+                continue
+            message = {
+                "channel": params.channel,
+                "kind": params.kind,
+                "severity": params.severity,
+                "title": params.title,
+                "key": item.key,
+            }
+            insert_event(connection, item.asset_id, "NOTIFY", "SENT", json.dumps(message, ensure_ascii=False))
+            sent.add(marker)
+            recorded.append({"asset_id": item.asset_id, "key": item.key})
+
+    outcome = "RECORDED" if recorded else "ALREADY_SENT"
+    return _result(None, outcome, {"recorded": recorded, "already_sent": already})
 
 
 # --- review (только человек; права проверяет dispatch) --------------------------------

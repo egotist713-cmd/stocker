@@ -87,6 +87,19 @@ class ApproveParams(AssetParams):
     confirm_claims: bool = False
 
 
+class NotificationItem(Params):
+    asset_id: int = Field(ge=1)
+    key: str = Field(min_length=1, max_length=120, description="Dedupe key per asset and kind")
+
+
+class NotificationParams(Params):
+    channel: str = Field(pattern=r"^[a-z0-9_.-]{1,32}$", description="Delivery channel, e.g. test, telegram, email")
+    kind: str = Field(pattern=r"^[a-z0-9_]{1,40}$", description="Notification type, e.g. retry_exhausted, daily_digest")
+    severity: Literal["info", "attention", "warning"] = "info"
+    title: str = Field(min_length=1, max_length=200)
+    items: list[NotificationItem] = Field(min_length=1, max_length=200)
+
+
 @dataclass(frozen=True)
 class Operation:
     name: str
@@ -143,6 +156,12 @@ DESCRIPTIONS = {
     "metadata.escalate": 'Send to human review (raises risk; cannot lower it). Args: {"asset_id": 5, "reason": "..."}',
     "metadata.approve": "Human decision: approve. Human actors only.",
     "metadata.reject": "Human decision: reject with a reason. Human actors only.",
+    "notification.record": (
+        "Record that a notification was delivered: event NOTIFY/SENT on each listed asset. "
+        "Idempotent per (asset, kind, key): repeats return already_sent. "
+        'Args: {"channel": "test", "kind": "retry_exhausted", "severity": "warning", "title": "...", '
+        '"items": [{"asset_id": 5, "key": "AI:3"}]}'
+    ),
 }
 
 
@@ -166,5 +185,6 @@ def build_registry() -> dict[str, Operation]:
         Operation("metadata.escalate", DESCRIPTIONS["metadata.escalate"], ReasonParams, PIPELINE, ops.metadata_escalate),
         Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
         Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
+        Operation("notification.record", DESCRIPTIONS["notification.record"], NotificationParams, PIPELINE, ops.notification_record),
     ]
     return {operation.name: operation for operation in operations}

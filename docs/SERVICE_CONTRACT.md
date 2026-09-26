@@ -126,6 +126,18 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 | `metadata.edit` | `asset_id`, `title?`, `description?`, `keywords?`, `add_keywords?`, `remove_keywords?` | `app.metadata.edit` (как CLI), затем gate |
 | `metadata.gate` | `asset_id` | повторная оценка review gate (детерминированно; `approved`/`rejected` не трогает) |
 | `metadata.escalate` | `asset_id`, `reason` | → `human_review` (`MANUAL_ESCALATION`). Агент может только **поднять** риск, но не снять его |
+| `notification.record` | `channel`, `kind`, `severity=info` (`info`/`attention`/`warning`), `title`, `items: [{asset_id, key}]` (1–200) | фиксирует факт доставки уведомления событиями `NOTIFY/SENT` (см. ниже). **Недоступна агентам** (`FORBIDDEN`, скрыта из MCP) — факт доставки пишет тот, кто доставляет (workflow) |
+
+**`notification.record` (с 26.09.2026, §35Z паспорта).** Состояние уведомлений
+хранится в событиях Stocker, а не в памяти n8n. Для каждого `items[i]` в одной
+транзакции пишется событие `NOTIFY/SENT` с JSON `{channel, kind, severity,
+title, key, actor}`. Идемпотентность: если у asset уже есть `NOTIFY/SENT` с тем же
+`kind` и `key`, новое событие не пишется. Исход: `RECORDED` (записано хотя бы
+одно) или `ALREADY_SENT`; `data = {recorded: [...], already_sent: [...]}`.
+Неизвестный asset → `ASSET_NOT_FOUND`, ничего не записывается. Операция не
+меняет pipeline, metadata и review. Ключи (`key`) задаёт отправитель:
+`daily_digest` — дата `YYYY-MM-DD`; `retry_exhausted` — `<stage>:<число неудач>`;
+`retry_report` — `<operation>:<попытка>`; `ingest_report` — `ingest`.
 
 ### Review (`review`) — решения человека
 
@@ -220,6 +232,8 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
   `metadata.edit`, `metadata.rebuild`, `metadata.build` над объектом в
   `approved` или `rejected` для не-человеческих actor → `FORBIDDEN`. Иначе правка
   вернула бы объект в `draft`, и gate мог бы сделать `rejected` → `auto_approved`.
+- `notification.record` запрещена агентам (`AGENT_FORBIDDEN`): агент не может
+  объявить уведомление доставленным.
 - **Граница доверия:** JSON CLI `app.api` принимает `--actor` от вызывающего и
   предназначен для человека на Windows. Агенты и workflow подключаются только
   через каналы, где actor задаёт сервер (MCP: `STOCKER_MCP_ACTOR` + свой токен).

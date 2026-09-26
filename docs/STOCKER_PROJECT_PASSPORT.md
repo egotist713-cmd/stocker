@@ -880,6 +880,7 @@ python -m app.worker --asset-id N --force    # повторный AI при на
 | `AI` | `PASSED` | JSON: `provider`, `model`, `prompt_version`, `analyzed_at`, `duration_s` |
 | `AI` | `FAILED` | JSON: provenance + `failed_at`, `error_type`, `error`, `raw_output` (до 4000 символов, если ответ был) |
 | `METADATA_AI` / `METADATA` | см. контракт | `docs/METADATA_CONTRACT.md` §7 |
+| `NOTIFY` | `SENT` | JSON: `channel`, `kind`, `severity`, `title`, `key`, `actor` — факт доставки уведомления об объекте (§35Z, `SERVICE_CONTRACT.md` §3) |
 
 После `AI/PASSED` (и для `--asset-id` при готовом AI) worker вызывает
 `metadata build`: только draft и события, approve — всегда человек (§35K).
@@ -2819,6 +2820,51 @@ baseline. `retry` — выключен до накопления статист�
 
 ---
 
+# 35Z. 2026-09-26 — Состояние уведомлений в событиях Stocker (NOTIFY/SENT)
+
+### Решение пользователя
+
+1. Состояние уведомлений хранить как события Stocker, а не только в n8n
+   (принцип §3A.5).
+2. `stocker-retry` не включать до накопления статистики.
+3. Следующий этап называется **Stock Readiness**: проверка metadata и
+   соответствия требованиям Adobe Stock / Shutterstock **без фактической
+   загрузки**. Экспорт через API — только после прохождения этого этапа.
+4. Устаревшую задачу `LMStudioAutoServer` удаляет пользователь (автозапуск LM
+   Studio — ключ `Run`, §35Y).
+5. После стабилизации пользователь отправляет baseline и коммиты в GitHub.
+
+### Реализовано
+
+- Операция **`notification.record`** (`pipeline`): события `NOTIFY/SENT`
+  `{channel, kind, severity, title, key, actor}` на каждый объект, одна
+  транзакция, идемпотентность по (`asset`, `kind`, `key`), исходы `RECORDED` /
+  `ALREADY_SENT`. Контракт — `SERVICE_CONTRACT.md` §3.
+- **Права:** разрешена `workflow:n8n` (allowlist); **запрещена агентам**
+  (`AGENT_FORBIDDEN`, скрыта из списка MCP-инструментов) — агент не может
+  объявить уведомление доставленным.
+- **n8n:** `stocker-notify` после канала записывает факт доставки в Stocker;
+  `ingest` / `digest` / `retry` передают `kind` и `items`. `stocker-retry`
+  определяет «уже сообщено» по `NOTIFY/SENT` из `asset.history`; статические
+  данные n8n больше не используются (тест это проверяет).
+  `N8N_CONTRACT.md` §6.2.
+
+### Проверка
+
+- `pytest`: 312 passed, 3 skipped (`tests/test_notifications.py` — 7 тестов).
+- `retry_logic.test.js` в контейнере n8n: все проверки проходят.
+- Реальный запуск `stocker-digest`: события 56, 57 `NOTIFY/SENT` для assets 2
+  и 5, `kind=daily_digest`, `key=2026-09-26`, `actor=workflow:n8n`; журнал
+  `API op=notification.record ... outcome=RECORDED`.
+- Повторный запуск: `outcome=ALREADY_SENT`, новых событий нет.
+- Опубликованы `ingest`, `digest`, `notify`; `retry` — не опубликован.
+
+### Статус
+
+🟢 DONE — состояние уведомлений в событиях Stocker
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -2973,17 +3019,17 @@ N8N (Docker Desktop, HTTP API, workflow:n8n, уведомления через n
 IMAGE ENHANCEMENT (QC → Topaz при необходимости → QC → Vision; производные файлы)
     ⚪ PLANNED (§2, §35V, §35X)
 
-EXPORT / STOCK PLATFORMS
-    ⚪ PLANNED — следующий слой после стабильной работы pipeline (§35X)
+EXPORT / STOCK PLATFORMS (API)
+    ⚪ PLANNED — только после Stock Readiness (§35X, §35Z)
 
 BASELINE 2026-09-26 (docs/BASELINE_2026-09-26.md, git-метка)
     🟢 DONE (§35Y)
 
 NOTIFICATION STATE IN STOCKER EVENTS (NOTIFY/SENT)
-    ⚪ PLANNED (§35Y)
+    🟢 DONE (§35Z)
 
-EXPORT READINESS ASSESSMENT
-    ⚪ PLANNED — следующий этап после стабилизации (§35Y)
+STOCK READINESS (metadata + требования Adobe Stock / Shutterstock, без загрузки)
+    ⚪ NEXT — сначала контракт; экспорт через API только после этого этапа (§35Z)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED
@@ -3020,10 +3066,13 @@ OPENCLAW AUTONOMY
 3. ~~MCP-адаптер для OpenClaw~~ — 🟢 DONE (§35O, §35P). Сервер:
    `python -m app.service.mcp_http` (`STOCKER_MCP_HOST=wsl`); журнал вызовов —
    `logs/mcp_http.log`.
-4. **n8n — текущий этап**: контракт `docs/N8N_CONTRACT.md` (§35V). Docker
-   Desktop, HTTP API `/api/v1/*` с actor `workflow:n8n` от сервера (не JSON CLI:
-   там actor задаёт вызывающий, §3B).
-5. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
+4. ~~n8n~~ — 🟢 DONE (§35V–§35X), контракт `docs/N8N_CONTRACT.md`;
+   уведомления — события `NOTIFY/SENT` (§35Z). `stocker-retry` выключен до
+   накопления статистики.
+5. **Stock Readiness — следующий этап** (§35Z): сначала контракт проверок
+   metadata и требований Adobe Stock / Shutterstock (актуальные правила
+   платформ проверить), без загрузки. Экспорт через API — только после него.
+6. Явная модель статусов и миграция `assets.status`; FastAPI — когда нужен
    общий долгоживущий Windows-процесс (`SERVICE_CONTRACT.md` §7).
 
 Не переписывать завершённый ingest/QC/AI pipeline и не менять Qwen3-VL-8B или
@@ -3123,7 +3172,11 @@ AI/PASSED
 > модель `qwen3-vl-8b-instruct` для всех ролей). Принцип §3A.5: AI и OpenClaw
 > только инициируют действия; истина — Stocker Core и события SQLite.
 >
-> **Следующая задача: n8n (роль — §35M).**
+> С 26.09.2026 (§35W–§35Z): n8n (Docker Desktop) по расписанию выполняет
+> ingest и digest через HTTP API с actor `workflow:n8n`; факты доставки
+> уведомлений — события `NOTIFY/SENT`. Baseline — `docs/BASELINE_2026-09-26.md`.
+>
+> **Следующая задача: Stock Readiness (§35Z) — сначала контракт.**
 >
 > После этого переходить к следующему milestone, не переписывая архитектуру без необходимости.
 

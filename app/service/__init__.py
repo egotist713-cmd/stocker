@@ -44,13 +44,20 @@ WORKFLOW_ALLOWED = frozenset(
         "asset.process",
         "metadata.build",
         "metadata.gate",
+        "notification.record",
     }
 )
 WORKFLOW_NO_FORCE = frozenset({"asset.process", "metadata.build"})
 
 
+# Факт доставки уведомления фиксирует тот, кто доставляет (workflow), а не агент.
+AGENT_FORBIDDEN = frozenset({"notification.record"})
+
+
 def _workflow_guard(operation: str, params: dict, actor: str) -> str | None:
-    """Сообщение об отказе, если workflow выходит за свой allowlist."""
+    """Сообщение об отказе, если workflow выходит за свой allowlist (или агент — за свой)."""
+    if actor.startswith("agent:") and operation in AGENT_FORBIDDEN:
+        return f"'{operation}' is not available to agent actor '{actor}'"
     if not actor.startswith("workflow:"):
         return None
     if operation not in WORKFLOW_ALLOWED:
