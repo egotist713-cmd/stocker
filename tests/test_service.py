@@ -319,3 +319,20 @@ def test_reads_do_not_write(stocker_root):
 
     with sqlite3.connect(db) as connection:
         assert connection.execute("SELECT COUNT(*), MAX(updated_at) FROM processing_events JOIN assets").fetchone() == before
+
+
+def test_invalid_params_error_lists_allowed_params(stocker_root):
+    # Агент передал camelCase и выдуманный объект фильтра: ошибка подсказывает, как исправиться.
+    wrong_key = dispatch("asset.get", {"assetId": 6}, actor=AGENT)["error"]["message"]
+    wrong_filter = dispatch("asset.list", {"filter": '{"state": "ready"}'}, actor=AGENT)["error"]["message"]
+
+    assert "Allowed params: asset_id (required)" in wrong_key
+    assert "Allowed params: qc, vision, metadata_state, ready, limit, offset" in wrong_filter
+
+
+def test_descriptions_carry_argument_examples():
+    from app.service.registry import build_registry
+
+    for operation in build_registry().values():
+        if operation.access != "review":
+            assert "Args:" in operation.description or "Example:" in operation.description, operation.name

@@ -40,6 +40,14 @@ def _error(operation: str, code: str, message: str, asset_id=None) -> dict:
     return _envelope(operation, ok=False, asset_id=asset_id, error={"code": code, "message": message})
 
 
+def _allowed_params(spec) -> str:
+    """Подсказка для самоисправления агента: допустимые параметры операции из её схемы."""
+    schema = spec.params.model_json_schema()
+    required = set(schema.get("required", []))
+    names = [f"{name} (required)" if name in required else name for name in schema.get("properties", {})]
+    return f"Allowed params: {', '.join(names) or 'none'}. Pass them as top-level keys."
+
+
 def dispatch(operation: str, params: dict | None = None, actor: str = HUMAN) -> dict:
     """Выполнить операцию от имени actor и вернуть envelope. Никогда не бросает исключений."""
     registry = build_registry()
@@ -62,7 +70,7 @@ def dispatch(operation: str, params: dict | None = None, actor: str = HUMAN) -> 
         parsed = spec.params.model_validate(params)
     except ValidationError as exc:
         details = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'params'}: {e['msg']}" for e in exc.errors())
-        return _error(operation, "INVALID_PARAMS", details, asset_id)
+        return _error(operation, "INVALID_PARAMS", f"{details}. {_allowed_params(spec)}", asset_id)
 
     try:
         with acting_as(actor):

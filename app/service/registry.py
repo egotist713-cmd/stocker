@@ -109,24 +109,53 @@ class Operation:
         }
 
 
+# Описания видит агент (tool_search / tool_describe в OpenClaw) и выбирает по ним
+# инструмент и аргументы. Поэтому в каждом — точные аргументы с примером.
+DESCRIPTIONS = {
+    "asset.get": 'Full state of one asset: pipeline stages, QC, Vision, metadata, allowed actions. Args: {"asset_id": 5}',
+    "asset.list": (
+        'List assets. Optional filters are separate top-level args (no "filter" object): '
+        "ready (true/false), metadata_state (none|draft|auto_approved|human_review|approved|rejected), "
+        "qc (pending|passed|failed), vision (pending|done|failed), limit, offset. "
+        'Example: {"ready": true}. Use {} for all assets. For what waits for a human, use review_queue.'
+    ),
+    "asset.history": 'Processing events of an asset (JSON messages parsed). Args: {"asset_id": 5}, optional "stage": "METADATA"',
+    "review.queue": "Assets waiting for a human decision (human_review) with the reasons. Use for 'what needs my review / attention'. Args: {}",
+    "metadata.get": 'Metadata of an asset: title, description, keywords, validation, review gate. Args: {"asset_id": 5}',
+    "operations.list": "All operations with JSON Schema of their parameters. Args: {}",
+    "asset.process_file": 'Ingest a new image inside the project and run QC, Vision, metadata and review gate. Args: {"path": "data/incoming/IMG_1.jpg"}',
+    "asset.process": 'Re-run source check, QC, Vision and metadata for a registered asset. Args: {"asset_id": 5}, optional "force": true',
+    "metadata.build": 'Create metadata with Metadata AI (partial draft if it fails), then review gate. Args: {"asset_id": 5}',
+    "metadata.rebuild": 'Re-apply Python rules without AI, keep human edits, then review gate. Args: {"asset_id": 5}',
+    "metadata.edit": (
+        "Edit title, description or keywords; validation and review gate then decide the new state. "
+        'Args: {"asset_id": 5, "title": "..."} or {"asset_id": 5, "add_keywords": ["x"], "remove_keywords": ["y"]}'
+    ),
+    "metadata.gate": 'Re-evaluate the review gate. Never changes human decisions. Args: {"asset_id": 5}',
+    "metadata.escalate": 'Send to human review (raises risk; cannot lower it). Args: {"asset_id": 5, "reason": "..."}',
+    "metadata.approve": "Human decision: approve. Human actors only.",
+    "metadata.reject": "Human decision: reject with a reason. Human actors only.",
+}
+
+
 def build_registry() -> dict[str, Operation]:
     from app.service import operations as ops
 
     operations = [
-        Operation("asset.get", "Full state of one asset: pipeline stages, QC, Vision, metadata, allowed actions.", AssetParams, READ, ops.asset_get),
-        Operation("asset.list", "List assets filtered by derived pipeline state.", ListParams, READ, ops.asset_list),
-        Operation("asset.history", "Processing events of an asset (JSON messages parsed).", HistoryParams, READ, ops.asset_history),
-        Operation("review.queue", "Assets waiting for a human decision (human_review) with gate reasons.", PageParams, READ, ops.review_queue),
-        Operation("metadata.get", "metadata_json of an asset.", AssetParams, READ, ops.metadata_get),
-        Operation("operations.list", "This manifest: operations with JSON Schema of parameters.", NoParams, READ, ops.operations_list),
-        Operation("asset.process_file", "Ingest a new image inside the project and run QC, Vision, metadata draft and review gate.", ProcessFileParams, PIPELINE, ops.asset_process_file),
-        Operation("asset.process", "Re-run source check, QC, Vision (force) and metadata draft for a registered asset.", ProcessParams, PIPELINE, ops.asset_process),
-        Operation("metadata.build", "Create metadata with Metadata AI (partial draft if it fails), then review gate.", BuildParams, PIPELINE, ops.metadata_build),
-        Operation("metadata.rebuild", "Re-apply Python rules without AI, keep human edits, then review gate.", AssetParams, PIPELINE, ops.metadata_rebuild),
-        Operation("metadata.edit", "Edit title, description or keywords; then validation and review gate decide the new state.", EditParams, PIPELINE, ops.metadata_edit),
-        Operation("metadata.gate", "Re-evaluate the review gate. Never changes human decisions.", AssetParams, PIPELINE, ops.metadata_gate),
-        Operation("metadata.escalate", "Send to human review (raises risk; cannot lower it).", ReasonParams, PIPELINE, ops.metadata_escalate),
-        Operation("metadata.approve", "Human decision: approve. Human actors only.", ApproveParams, REVIEW, ops.metadata_approve),
-        Operation("metadata.reject", "Human decision: reject with a reason. Human actors only.", ReasonParams, REVIEW, ops.metadata_reject),
+        Operation("asset.get", DESCRIPTIONS["asset.get"], AssetParams, READ, ops.asset_get),
+        Operation("asset.list", DESCRIPTIONS["asset.list"], ListParams, READ, ops.asset_list),
+        Operation("asset.history", DESCRIPTIONS["asset.history"], HistoryParams, READ, ops.asset_history),
+        Operation("review.queue", DESCRIPTIONS["review.queue"], PageParams, READ, ops.review_queue),
+        Operation("metadata.get", DESCRIPTIONS["metadata.get"], AssetParams, READ, ops.metadata_get),
+        Operation("operations.list", DESCRIPTIONS["operations.list"], NoParams, READ, ops.operations_list),
+        Operation("asset.process_file", DESCRIPTIONS["asset.process_file"], ProcessFileParams, PIPELINE, ops.asset_process_file),
+        Operation("asset.process", DESCRIPTIONS["asset.process"], ProcessParams, PIPELINE, ops.asset_process),
+        Operation("metadata.build", DESCRIPTIONS["metadata.build"], BuildParams, PIPELINE, ops.metadata_build),
+        Operation("metadata.rebuild", DESCRIPTIONS["metadata.rebuild"], AssetParams, PIPELINE, ops.metadata_rebuild),
+        Operation("metadata.edit", DESCRIPTIONS["metadata.edit"], EditParams, PIPELINE, ops.metadata_edit),
+        Operation("metadata.gate", DESCRIPTIONS["metadata.gate"], AssetParams, PIPELINE, ops.metadata_gate),
+        Operation("metadata.escalate", DESCRIPTIONS["metadata.escalate"], ReasonParams, PIPELINE, ops.metadata_escalate),
+        Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
+        Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
     ]
     return {operation.name: operation for operation in operations}

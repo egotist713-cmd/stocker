@@ -124,6 +124,8 @@ def http_server(stocker_root, tmp_path):
         "STOCKER_MCP_TOKEN": TOKEN,
         "STOCKER_MCP_PORT": str(port),
         "STOCKER_MCP_ACTOR": "agent:openclaw",
+        # Рабочий .env задаёт STOCKER_MCP_HOST=wsl; тестовый сервер — только loopback.
+        "STOCKER_MCP_HOST": "127.0.0.1",
     }
     process = subprocess.Popen(
         [sys.executable, str(launcher), str(stocker_root), str(PROJECT_ROOT)],
