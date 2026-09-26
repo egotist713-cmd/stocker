@@ -79,3 +79,23 @@ class EnhancementAdvice(BaseModel):
         if self.operations and self.decision != "enhancement_recommended":
             raise ValueError("operations are allowed only for enhancement_recommended")
         return self
+
+
+class CreativeReview(BaseModel):
+    """
+    Первичные признаки коммерческой оценки (docs/STOCK_READINESS_CONTRACT.md §4.3).
+
+    Модель не выставляет итоговый score: commercial_score и commercial_potential
+    считает Python из этих признаков (app/creative_review.py). Только
+    рекомендация: экспорт не блокирует.
+    """
+
+    composition: Literal["good", "acceptable", "weak"]
+    composition_notes: str = ""
+    uniqueness: Literal["high", "medium", "low"]
+    demand: Literal["high", "medium", "low"]
+    commercial_use_cases: list[str] = Field(default_factory=list)
+    quality_notes: list[str] = Field(default_factory=list)
+    recommendation: Literal["proceed", "attention", "skip_suggested"]
+    # Некалиброванный score модели, не вероятность; в автоматических решениях не используется.
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)

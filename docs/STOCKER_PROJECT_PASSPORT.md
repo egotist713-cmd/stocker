@@ -3277,6 +3277,54 @@ Topaz — **не нужен сейчас**; OCR/brand detector — **не нуж
 
 ---
 
+# 35ZH. 2026-09-26 — Creative Review (коммерческая оценка)
+
+### Решение пользователя
+
+Не расширять правила бесконечно: следующий шаг — Creative Review для оценки
+коммерческой ценности. Основной сценарий — `incoming` с уже отобранными
+пользователем фотографиями.
+
+### Реализовано
+
+- `CreativeReview` (`app/ai/schema.py`) — первичные признаки: `composition`,
+  `uniqueness`, `demand`, `commercial_use_cases`, `quality_notes`,
+  `recommendation`, `confidence` (некалиброванный, §3A.8).
+- `app/ai/creative_advisor.py` — `LMStudioCreativeAdvisor`, та же локальная
+  модель, `temperature=0`.
+- `app/creative_review.py` — `creative-score-v1` (Python), события
+  `CREATIVE_REVIEW/ADVISED|FAILED`, идемпотентность, пересчёт score по
+  сохранённым признакам; документы с персональными данными модели не
+  отправляются.
+- Операции `creative.review` / `creative.get` (human, агент, `workflow:n8n`),
+  `pipeline.creative_review`, skill OpenClaw. В worker не вызывается — по
+  запросу.
+
+### Найдено и проверено
+
+- **v1 (общий промпт) не различал** слабые и сильные кадры: медиана 63 против
+  65; личные фото детей — 90 `proceed`; `uniqueness` = medium в 61 из 69,
+  сценариев — 5 в 66 из 69.
+- **v2 (ориентиры ниши industrial / technical)**: слабые — медиана 36,
+  `skip_suggested` 12 из 15; сильные — медиана 90, `proceed` 18 из 18. Ограничивал
+  промпт, а не модель.
+- Прогон v2 по 69 объектам (197 s, ~3 s на кадр): `proceed` 41,
+  `skip_suggested` 26, `attention` 2.
+- Ограничения: промах фокуса на обзорной копии не виден (#15, #58 —
+  `proceed`); нетематические кадры оцениваются низко (намеренно); разметка —
+  один оценщик.
+
+### Проверка
+
+`pytest`: 454 passed, 4 skipped (`tests/test_creative_review.py` — 14).
+
+### Статус
+
+🟢 Creative Review v1 DONE (по запросу, только рекомендация). Далее — проверка на
+отобранных пользователем фото; решение о вызове из worker и разделе `advice`.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3448,7 +3496,13 @@ ENHANCEMENT DECISION (качество изображения; not_needed / reco
     🟢 DONE v1 — правила (§35ZD) + рекомендация Qwen только для disputed (§35ZE); Topaz не запускается
 
 CREATIVE REVIEW ADVISOR (первичные признаки + commercial_score, необязательный)
-    ⚪ PLANNED — после Enhancement decision (§3A.7, §35ZC)
+    🟢 DONE v1 — creative-review-v2 под нишу industrial, по запросу, только рекомендация (§35ZH)
+
+AUDIT 2026-09-26 (64 реальных фото) + gate-v1.2 (дети, документы)
+    🟢 DONE (§35ZF, §35ZG) — docs/AUDIT_2026-09-26.md
+
+DUPLICATES (попиксельные и близкие дубли до экспорта)
+    ⚪ PLANNED — отдельное улучшение, не P1 (§35ZG)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED

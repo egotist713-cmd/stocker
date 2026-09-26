@@ -7,6 +7,7 @@
 import json
 from pathlib import Path
 
+from app import creative_review as creative_review_service
 from app import enhancement_decision
 from app import ingest
 from app import metadata as metadata_service
@@ -171,6 +172,25 @@ def enhancement_get(params) -> dict:
     except enhancement_decision.EnhancementError as exc:
         raise ServiceError(exc.code, str(exc)) from exc
     return _result(params.asset_id, None, data)
+
+
+def creative_review(params) -> dict:
+    """Коммерческая оценка моделью; только рекомендация, данные — оценка, а не asset view."""
+    try:
+        result = creative_review_service.review_asset(params.asset_id)
+        data = {"review": result["review"], **creative_review_service.get(params.asset_id)}
+    except creative_review_service.CreativeReviewError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    if "error" in result:
+        data["error"] = result["error"]
+    return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != creative_review_service.REVIEW_FAILED)
+
+
+def creative_get(params) -> dict:
+    try:
+        return _result(params.asset_id, None, creative_review_service.get(params.asset_id))
+    except creative_review_service.CreativeReviewError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
 
 
 def _readiness_call(function, asset_id: int) -> dict:

@@ -208,6 +208,13 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
             "ready_for": [],
             "event_id": None,
         },
+        "creative_review": {
+            "reviewed": False,
+            "commercial_score": None,
+            "commercial_potential": None,
+            "recommendation": None,
+            "event_id": None,
+        },
     }
 
 

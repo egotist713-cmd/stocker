@@ -8,6 +8,7 @@ assets.status не меняется и отдаётся как есть.
 import json
 
 from app import metadata_builder as mb
+from app import creative_review
 from app import enhancement_decision
 from app import review_gate as rg
 from app import stock_readiness
@@ -148,6 +149,7 @@ def asset_view(asset_id: int) -> dict | None:
     pipeline = pipeline_state(asset, events, metadata)
     pipeline["enhancement"] = enhancement_decision.summary_from_events(asset, events)
     pipeline["stock_readiness"] = stock_readiness.summary(asset, events, metadata)
+    pipeline["creative_review"] = creative_review.summary_from_events(events)
 
     return {
         "id": asset["id"],

@@ -47,6 +47,8 @@ WORKFLOW_ALLOWED = frozenset(
         "enhancement.assess",
         "enhancement.advise",
         "enhancement.get",
+        "creative.review",
+        "creative.get",
         "readiness.evaluate",
         "readiness.get",
         "notification.record",

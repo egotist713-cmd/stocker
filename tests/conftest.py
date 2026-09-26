@@ -5,12 +5,13 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app import enhancement_decision, ingest, qc
+from app import creative_review, enhancement_decision, ingest, qc
 from app import metadata as metadata_service
 from app.ai.analyzer import AIAnalyzer
+from app.ai.creative_advisor import CreativeAdvisor
 from app.ai.enhancement_advisor import EnhancementAdvisor
 from app.ai.metadata_analyzer import MetadataAnalyzer
-from app.ai.schema import AIAnalysis, EnhancementAdvice, MetadataSuggestion
+from app.ai.schema import AIAnalysis, CreativeReview, EnhancementAdvice, MetadataSuggestion
 from app.database import db
 
 
@@ -106,8 +107,31 @@ class OfflineEnhancementAdvisor(EnhancementAdvisor):
         return self.advice
 
 
+class OfflineCreativeAdvisor(CreativeAdvisor):
+    """Creative Review для тестов: без сети, фиксированный ответ."""
+
+    provider = "offline"
+    model = "offline-creative"
+    prompt_version = "creative-test"
+
+    def __init__(self, review: CreativeReview | None = None, error: Exception | None = None):
+        self.result = review or CreativeReview(
+            composition="good", uniqueness="medium", demand="high",
+            commercial_use_cases=["article about elevator maintenance"], recommendation="proceed", confidence=0.8,
+        )
+        self.error = error
+        self.calls = 0
+
+    def review(self, image_path, vision) -> CreativeReview:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
 @pytest.fixture(autouse=True)
 def no_real_metadata_ai(monkeypatch):
     """Ни один unit-тест не должен обращаться к настоящему LM Studio через metadata-слой и advisor."""
     monkeypatch.setattr(metadata_service, "LMStudioMetadataAnalyzer", OfflineMetadataAnalyzer)
     monkeypatch.setattr(enhancement_decision, "LMStudioEnhancementAdvisor", OfflineEnhancementAdvisor)
+    monkeypatch.setattr(creative_review, "LMStudioCreativeAdvisor", OfflineCreativeAdvisor)

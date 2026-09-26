@@ -171,6 +171,15 @@ DESCRIPTIONS = {
         "Last enhancement decision of an asset: decision, reasons (noise/sharpness/artifacts/resolution), "
         'metrics and notes. Read only. Args: {"asset_id": 5}'
     ),
+    "creative.review": (
+        "Commercial value review by the local model: composition, uniqueness, demand, use cases, quality notes "
+        "and a recommendation (proceed / attention / skip_suggested); commercial_score is computed from them. "
+        'Recommendation only: never blocks export. Args: {"asset_id": 5}'
+    ),
+    "creative.get": (
+        "Last commercial value review of an asset: commercial_score, commercial_potential, recommendation "
+        'and the model\'s features. Read only. Args: {"asset_id": 5}'
+    ),
     "readiness.evaluate": (
         "Check an asset against Adobe Stock and Shutterstock rules (no upload): status per platform, "
         "blockers, warnings and the export plan. Only for metadata auto_approved/approved; "
@@ -212,6 +221,8 @@ def build_registry() -> dict[str, Operation]:
         Operation("enhancement.assess", DESCRIPTIONS["enhancement.assess"], AssetParams, PIPELINE, ops.enhancement_assess),
         Operation("enhancement.advise", DESCRIPTIONS["enhancement.advise"], AssetParams, PIPELINE, ops.enhancement_advise),
         Operation("enhancement.get", DESCRIPTIONS["enhancement.get"], AssetParams, READ, ops.enhancement_get),
+        Operation("creative.review", DESCRIPTIONS["creative.review"], AssetParams, PIPELINE, ops.creative_review),
+        Operation("creative.get", DESCRIPTIONS["creative.get"], AssetParams, READ, ops.creative_get),
         Operation("readiness.evaluate", DESCRIPTIONS["readiness.evaluate"], AssetParams, PIPELINE, ops.readiness_evaluate),
         Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),
         Operation("notification.record", DESCRIPTIONS["notification.record"], NotificationParams, PIPELINE, ops.notification_record),
