@@ -157,6 +157,10 @@ qwen3-vl-8b-instruct
 qwen3.8-9b-distill
 ```
 
+**Уточнено 26.09.2026 (§35Q):** это только эксперимент agent loop OpenClaw.
+Решение проекта — одна локальная модель `qwen3-vl-8b-instruct` для всех ролей;
+Stocker `qwen3.8` не использует.
+
 Не путать её с:
 
 ```text
@@ -2209,6 +2213,56 @@ MCP-адаптер поверх реестра для OpenClaw (`SERVICE_CONTRAC
 без `SIGTERM`.
 
 Удаление: `Unregister-ScheduledTask -TaskName "<имя>" -Confirm:$false`.
+
+---
+
+# 35Q. 2026-09-26 — Модели: Stocker на qwen3-vl-8b-instruct, qwen3.8 — только эксперимент агента OpenClaw
+
+### Архитектурная договорённость (напоминание пользователя)
+
+`qwen3-vl-8b-instruct` выбрана как **единая универсальная локальная модель**
+(vision + reasoning + tools), чтобы не вводить несколько локальных моделей без
+необходимости. Роли Vision / Metadata AI / агента остаются разными
+архитектурно (отдельные провайдеры и конфигурации), но исполняются одной
+локальной моделью.
+
+### Проверенные факты
+
+- **Stocker `qwen3.8-9b-distill` не использует нигде.** В `app/`, `scripts/`,
+  `.env.example` ссылок нет; `.env` не переопределяет `LMSTUDIO_MODEL` и
+  `METADATA_MODEL`; значения по умолчанию в `local_analyzer.py` и
+  `metadata_analyzer.py` — `qwen3-vl-8b-instruct`. Provenance в SQLite: все
+  `AI/PASSED` (5) и `METADATA_AI/*` (7) — `qwen3-vl-8b-instruct`, плюс одно
+  старое текстовое событие asset 4 (тоже Qwen3-VL, §35B).
+- **`qwen3.8-9b-distill` — модель агента OpenClaw**:
+  `agents.defaults.model.primary = lmstudio/qwen3.8-9b-distill`. Настроена в
+  OpenClaw до этой работы (есть в резервных копиях конфига от 20–21.09; в
+  паспорте §5 — «использовалась в эксперименте OpenClaw»). В §35P агентские
+  тесты шли на ней, потому что это модель OpenClaw по умолчанию. Её не выбирали
+  для Stocker.
+- В списке моделей провайдера `lmstudio` в OpenClaw есть `qwen3.8-9b-distill`
+  и `qwen2.5-vl-7b-instruct`, а `qwen3-vl-8b-instruct` **нет**.
+
+### Почему это важно
+
+- **12 GB VRAM:** сейчас в LM Studio загружена только `qwen3.8-9b-distill`
+  (после тестов агента). Следующий вызов Stocker заставит LM Studio выгрузить
+  её и загрузить `qwen3-vl-8b-instruct`. При чередовании «агент ↔ Stocker»
+  модели будут постоянно перезагружаться — именно этого избегает решение про
+  одну модель.
+- Выдумывание результата инструмента (§35P) наблюдалось на `qwen3.8`. В
+  проектном benchmark (§17) `qwen3-vl-8b-instruct` показала корректный
+  structured tool call (один тест).
+
+### Решение
+
+`qwen3.8-9b-distill` считается **только экспериментом agent loop OpenClaw**.
+Целевое состояние — агент OpenClaw тоже на `qwen3-vl-8b-instruct`. Переключение
+меняет конфиг OpenClaw и выполняется после подтверждения пользователя.
+
+### Статус
+
+🟢 DONE — факты зафиксированы; ⚪ PLANNED — переключение агента OpenClaw
 
 ---
 
