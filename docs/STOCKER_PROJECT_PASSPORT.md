@@ -2934,6 +2934,54 @@ Topaz не обязателен; результат анализа — `enhancem
 
 ---
 
+# 35ZB. 2026-09-26 — Stock Readiness: контракт согласован, шаг 1 (правила)
+
+### Решение пользователя
+
+Контракт принят с уточнениями:
+
+1. Creative Review — необязательный советник с `commercial_score` (0–100) и
+   `commercial_potential`; никогда не блокирует экспорт, только рекомендует.
+2. Enhancement decision — с причинами `noise` / `sharpness` / `artifacts` /
+   `resolution` / `other`: видно, почему Topaz рекомендован.
+3. Бренды: `minor_brand_presence` → warning, `dominant_brand/logo` → blocker
+   (маркировки производителей в промышленной съёмке — не причина блокировки).
+4. Файлы: original asset → derivative → platform export; оригиналы никогда не
+   изменяются.
+
+Остальные предложения (релизы, категории, Creative Review выключен,
+предфильтр Enhancement) приняты.
+
+### Реализовано (шаг 1 контракта §6)
+
+- `app/readiness.py` (`readiness-v1`) — чистые функции без БД и AI:
+  профили `adobe-2026-09` и `shutterstock-2026-09`; проверки файла, metadata,
+  прав; уровни `blocker` / `derivative` / `warning`; бренды по заметности
+  (§3.3a); категории по таблице с весами (§3.5a); план экспорта; fingerprint и
+  `stale`. Единственное чтение файла — `read_file_facts` (Pillow, без записи).
+- sRGB определяется по xy основных цветов профиля, а не по описанию.
+- Контракт дополнен: §3.3a (бренды), §3.5a (категории: Adobe — 21 категория,
+  проверено; Shutterstock — только подтверждённые названия, полный список
+  сверить с порталом на этапе Export), §3.5b (original → derivative → export),
+  причины Enhancement, `commercial_score`, §7 — принятые решения.
+
+### Проверка
+
+- `pytest`: 350 passed, 3 skipped (`tests/test_readiness.py` — 38 тестов,
+  включая реальный снимок: описание профиля содержит `sRGB`, а профиль — P3).
+- Прогон по реальным объектам (только чтение, событий нет): assets 3, 4, 6,
+  7, 8, 9 — `ready` для обеих площадок с derivative `to_srgb`; asset 9 —
+  warning `PEOPLE_NOT_RECOGNIZABLE`; asset 2 (нет Vision) и 5 (`human_review`)
+  — `not_evaluated`. Asset 5 при одобрении человеком → `ready` с
+  `MINOR_BRAND_PRESENCE` (`АО "ШПЗ"`).
+- Порог второй категории уточнён по данным: вес ≥ 2 и ≥ ¼ первой.
+
+### Статус
+
+🟢 Шаг 1 DONE; следующий — шаг 2 (события `READINESS/*`, представление)
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3098,7 +3146,7 @@ NOTIFICATION STATE IN STOCKER EVENTS (NOTIFY/SENT)
     🟢 DONE (§35Z)
 
 STOCK READINESS (metadata + требования Adobe Stock / Shutterstock, без загрузки)
-    🟡 CONTRACT — docs/STOCK_READINESS_CONTRACT.md на согласовании (§35ZA)
+    🟡 IN PROGRESS — контракт согласован; шаг 1 (правила, app/readiness.py) DONE (§35ZB)
 
 AI ADVISORS (Enhancement decision, Creative Review; необязательные)
     ⚪ PLANNED — после Stock Readiness; v1 — локальная модель (§3A.7, §35ZA)

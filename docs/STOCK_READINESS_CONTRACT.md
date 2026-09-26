@@ -1,6 +1,8 @@
 # STOCKER — КОНТРАКТ STOCK READINESS И AI ADVISORS
 
-> **Статус:** 🟡 ПРОЕКТ на согласование (26 сентября 2026). Кода нет.
+> **Статус:** 🟢 СОГЛАСОВАН 26 сентября 2026 (с уточнениями пользователя:
+> `commercial_score`, причины Enhancement, разделение брендов, цепочка
+> original → derivative → platform export). Реализация — по §6.
 >
 > **Версии:** правила готовности `readiness-v1`; профили площадок
 > `adobe-2026-09`, `shutterstock-2026-09`.
@@ -97,7 +99,7 @@ Stock Readiness **ничего не меняет** в metadata, файле, `ass
 | Размер файла | ≤ 45 MB | ≤ 50 MB (JPEG, загрузка через браузер) |
 | Формат | JPEG | JPEG, TIFF (без слоёв) |
 | Цвет | sRGB | sRGB (рекомендовано) |
-| Текстовое поле | `title`: коротко, желательно ≤ 70 символов | `description`: фактическое описание, ≤ 2048 символов; законченное предложение (≥ 5 слов) |
+| Текстовое поле | `title`: коротко, желательно ≤ 70 символов; максимум — лимит Stocker 200 (Adobe на странице максимум не указывает) | `description`: фактическое описание, ≤ 2048 символов; законченное предложение (≥ 5 слов) |
 | Keywords | ≤ 49, каждое один раз, первые 10 самые важные | 7–50 |
 | Категории | категория Adobe (список площадки) | 1 обязательная, 2-я необязательная |
 | Запрещено в metadata | торговые марки, бренды, личные данные, имена реальных людей, технические сведения о камере или файле | торговые марки в коммерческом контенте, спам, ошибки, эмодзи, личные данные |
@@ -137,7 +139,7 @@ Shutterstock в отношении AI-контента; правила обеи�
 | `RESOLUTION_TOO_HIGH` | больше максимума (Adobe 100 MP) | derivative (уменьшение) |
 | `FILE_TOO_LARGE` | больше лимита площадки | derivative (JPEG с меньшим размером), blocker, если размер не достигается |
 | `FORMAT_CONVERSION` | формат не принимается площадкой (TIFF → Adobe) | derivative (JPEG) |
-| `COLOR_PROFILE_CONVERSION` | профиль не sRGB | derivative (sRGB) |
+| `COLOR_PROFILE_CONVERSION` | профиль не sRGB (сравнение xy основных цветов R, G, B профиля с встроенным sRGB Pillow, допуск 0.005) | derivative (sRGB) |
 | `COLOR_PROFILE_MISSING` | ICC нет (считается sRGB) | warning |
 
 **Проверено на данных (26.09.2026):** все 8 файлов (телефон) имеют ICC
@@ -159,21 +161,53 @@ sRGB-профилей, **а не по подстроке `sRGB` в описан�
 | `TEXT_TOO_LONG` | текстовое поле длиннее лимита площадки | blocker (молча не обрезается) |
 | `TITLE_LONG` | Adobe `title` > 70 | warning |
 | `DESCRIPTION_NOT_SENTENCE` | Shutterstock: меньше 5 слов | warning |
-| `TRADEMARK_IN_METADATA` | бренд из Vision или словаря gate в полях | blocker |
-| `CATEGORY_UNMAPPED` | категория площадки не определена детерминированно (§3.5) | blocker для Shutterstock, warning для Adobe (уточнить, §3.2) |
+| `TEXT_EMPTY` | текстовое поле площадки пусто | blocker |
+| `TRADEMARK_IN_METADATA` | бренд (§3.3a) упомянут в `title`, `description` или keywords | blocker |
+| `CATEGORY_UNMAPPED` | категория площадки не определена детерминированно (§3.5a) | blocker для Shutterstock (категория обязательна); warning для Adobe (Adobe сам предлагает категорию при загрузке) |
 
 **Права и риски**
 
 | code | Условие | Уровень |
 |---|---|---|
 | `MODEL_RELEASE_REQUIRED` | `people_risk` = `recognizable`, релиза нет | blocker |
-| `PROPERTY_RELEASE_REQUIRED` | Vision `brands`/`logos` не пусты или `editorial_risk` указывает на узнаваемое место или объект, релиза нет | blocker |
-| `EDITORIAL_ONLY` | `editorial_risk` не пуст (editorial не поддерживается в v1) | blocker |
+| `DOMINANT_BRAND` | бренд или логотип — главный объект кадра (§3.3a); нужен property release или другой кадр | blocker |
+| `MINOR_BRAND_PRESENCE` | маркировка производителя, шильдик, юрлицо — второстепенно (§3.3a) | warning |
+| `EDITORIAL_ONLY` | `editorial_risk` не пуст (узнаваемое место, событие, объект; editorial не поддерживается в v1) | blocker |
 | `AI_GENERATED` | Vision `ai_generated = true` | blocker (правила площадок для AI-контента — отдельное решение) |
 | `PEOPLE_NOT_RECOGNIZABLE` | `people_risk` ∈ {`partial`, `unclear`} | warning (релиз не требуется для неузнаваемых людей) |
 
 Human approve metadata **не** снимает blocker-ы прав: approve подтверждает
 текст, релиз — это отдельный юридический факт.
+
+### 3.3a. Бренды: второстепенные и главные
+
+Промышленная фотография часто содержит маркировки производителей. Само их
+присутствие **не** причина блокировки.
+
+Бренд-термины: Vision `brands`, Vision `logos` и надписи `text_visible`,
+которые gate отнёс к `brand_or_legal` (`METADATA_CONTRACT.md` §6A.4). Для
+каждого термина — уровень:
+
+| prominence | Правило | Код |
+|---|---|---|
+| `dominant` | термин встречается в Vision `subject` или `title` (Vision считает его главным в кадре), **или** в `subject` есть слово `logo`, `logotype`, `brand`, `branding`, `signage`, `trademark` | `DOMINANT_BRAND` → blocker |
+| `minor` | иначе (шильдик, маркировка, название юрлица на оборудовании) | `MINOR_BRAND_PRESENCE` → warning |
+
+Независимо от уровня бренд **не должен** попадать в metadata:
+`TRADEMARK_IN_METADATA` → blocker.
+
+Проверка на данных: asset 5 (`АО "ШПЗ"` на замке, `subject` — «Mechanical door
+locking system») → `minor`.
+
+**Известное ограничение:** уровень определяется по тексту Vision. Производитель,
+которого ни Vision, ни правила gate не распознали как бренд (asset 8: `Вектор
+Технологий` классифицирован как `descriptive`), не виден ни gate, ни
+Readiness. Определение заметности бренда по изображению — возможная задача
+Creative Review Advisor (он может только поднять внимание).
+
+Review gate (`gate-v1.1`) по-прежнему отправляет любой бренд человеку
+(`TRADEMARK`, `TEXT_BRAND_OR_LEGAL`); Readiness gate не меняет. Смягчение gate для
+`minor` — отдельное решение (возможный `gate-v1.2`), когда накопится статистика.
 
 ### 3.4. Статусы (по каждой площадке)
 
@@ -201,16 +235,68 @@ metadata); готовность к площадкам — отдельный к�
 | Shutterstock | `description` | `fields.description`; если пусто — `fields.title` |
 | Shutterstock | `keywords` | `fields.keywords` |
 | Shutterstock | `categories` | 1–2 по таблице соответствий |
-| обе | `file` | `source` (как есть) или `derivative` со списком операций: `to_jpeg`, `to_srgb`, `downscale_to_mp`, `jpeg_quality_for_size` |
+| обе | `file` | `{"from": "original", "operations": []}` или `{"from": "original", "operations": [...]}` → derivative; операции: `to_jpeg`, `to_srgb`, `downscale_to_mp:<N>`, `fit_file_size:<bytes>` |
 | обе | `releases`, `editorial`, `ai_generated` | v1: `[]`, `false`, `false` (иначе объект был бы `blocked`) |
 
-Категории — детерминированная таблица соответствий `Vision categories` +
-keywords → категории площадки, константа профиля. Без совпадения —
-`CATEGORY_UNMAPPED`, человек выбирает категорию (или позже — Metadata AI из
-закрытого списка; это отдельное решение).
+### 3.5a. Категории
 
-Derivative-файлы для экспорта создаются **на этапе Export**, а не Readiness:
-Readiness только записывает, какие операции понадобятся.
+Детерминированная таблица «термины → категория площадки» (константа
+`readiness-v1`). Термины ищутся по границам слов в Vision `subject`, `title`,
+`technical_subjects`, `categories` (вес 3) и в keywords metadata (вес 1).
+Категория с наибольшим весом — первая; при равенстве — порядок таблицы.
+Shutterstock: вторая категория — следующая по весу, если её вес ≥ 2 **и** ≥ ¼
+веса первой (иначе общие keywords вроде `concrete wall` делали бы
+распределительную коробку «архитектурой»). На данных 26.09.2026: лифтовая шахта
+(asset 3, 12 из 30) → `Industrial` + `Buildings/Landmarks`; блок питания лифта
+(asset 8, 10 из 33) → `Industrial` + `Technology`; коробки (6, 7) → только
+`Industrial`.
+
+Vision почти не заполняет `categories` (из 7 объектов — только asset 9),
+поэтому основной источник — `subject`, `title` и keywords.
+
+| Группа терминов (примеры) | Adobe | Shutterstock |
+|---|---|---|
+| industrial, factory, machinery, electrical, wiring, cable, elevator, shaft, pipe, valve, mechanism, equipment, construction, power supply, control panel | `Industry` | `Industrial` |
+| building, architecture, facade, interior, staircase, room, wall | `Buildings and architecture` | `Buildings/Landmarks` |
+| computer, electronics, circuit, server, device, smartphone | `Technology` | `Technology` |
+| car, truck, train, vehicle, road, highway | `Transport` | `Transportation` |
+| playground, park, recreation, garden | `Hobbies and leisure` | `Parks/Outdoor` |
+| tree, forest, plant, flower, nature | `Plants and flowers` | `Nature` |
+| texture, background, pattern, surface | `Graphic resources` | `Backgrounds/Textures` |
+
+- Adobe: 21 категория (проверено 26.09.2026,
+  [choose the right category](https://helpx.adobe.com/stock/contributor/content-policies-guidelines/metadata/choose-right-category-content.html)).
+- Shutterstock: полный официальный список без входа в портал получить не
+  удалось; используются только названия, подтверждённые источниками.
+  **Перед экспортом (этап Export) список сверяется с порталом / CSV-шаблоном
+  площадки.**
+- Без совпадения — `CATEGORY_UNMAPPED`, категорию выбирает человек. Выбор
+  моделью из закрытого списка — позже, отдельным решением.
+
+### 3.5b. Файлы: original → derivative → platform export
+
+```text
+original asset (data/incoming, только чтение, hash в assets.file_hash)
+        │  операции из export_plan.file (to_srgb, to_jpeg, downscale, …)
+        │  или улучшение (Topaz, будущее)
+        ▼
+derivative (data/derivatives/<asset_id>/<purpose>-<sha8>.jpg)
+        │  событие DERIVATIVE/CREATED: path, sha256, source_sha256,
+        │  purpose (export | enhancement), operations, platform?
+        ▼
+platform export (этап Export: поля + файл из export_plan)
+```
+
+- **Оригиналы никогда не изменяются.** Ни Readiness, ни Export, ни Topaz не
+  пишут в `source_path`; hash оригинала остаётся проверкой целостности
+  (`SOURCE/INVALID`).
+- Derivative однозначно связан с оригиналом (`source_sha256`) и операциями;
+  одинаковые операции над тем же оригиналом дают тот же derivative
+  (повторно не создаётся).
+- Readiness derivative-файлы **не создаёт**: только записывает операции в план.
+  Создание — на этапе Export (для `purpose = export`) или Enhancement (Topaz).
+- Enhancement-derivative (будущее) становится входом для QC и Vision; затем
+  export-derivative строится уже от него, с цепочкой `source_sha256`.
 
 ### 3.6. Устаревание (fingerprint)
 
@@ -237,7 +323,7 @@ fingerprint текущих данных отличается, представл
         "title": "Elevator shaft interior with steel guide rails",
         "keywords": ["elevator shaft", "guide rail", "…"],
         "category": "Industry",
-        "file": {"source": "derivative", "operations": ["downscale_to_mp:100"]}
+        "file": {"from": "original", "operations": ["to_srgb"]}
       }
     },
     "shutterstock": {
@@ -304,7 +390,8 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 
 | Вход | QC-метрики (`sharpness`, `dark_ratio`, `bright_ratio`, разрешение, размер) + изображение |
 |---|---|
-| Выход | `decision` ∈ `enhancement_not_needed` \| `enhancement_recommended` \| `enhancement_risky`; `operations[]` (например `denoise`, `sharpen`, `upscale`) — только для `recommended`; `reasons[]`; `confidence` |
+| Выход | `decision` ∈ `enhancement_not_needed` \| `enhancement_recommended` \| `enhancement_risky`; `reasons[]` — `{reason, detail}`, `reason` ∈ `noise` \| `sharpness` \| `artifacts` \| `resolution` \| `other`; `operations[]` (например `denoise`, `sharpen`, `upscale`) — только для `recommended`; `confidence` |
+| Правило | для `recommended` и `risky` `reasons` **не пуст** (видно, почему Topaz рекомендован или опасен); `other` требует `detail` |
 | События | `ENHANCEMENT/ADVISED`, `ENHANCEMENT/FAILED` |
 | v1 | только записывается рекомендация; Topaz не запускается, Vision работает с оригиналом |
 | Будущее | `enhancement_recommended` → Topaz → derivative → QC → Vision (по отдельному решению) |
@@ -316,7 +403,8 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 Детерминированный предфильтр (без модели): если QC-метрики в норме и
 разрешение с запасом выше минимума, advisor не вызывается —
 `enhancement_not_needed`, `provider = rules`. Модель тратит время только на
-спорные объекты.
+спорные объекты. Предфильтр тоже пишет `reasons` для пограничных метрик
+(например, `resolution`, если мегапикселей меньше запаса).
 
 ### 4.3. Creative Review Advisor
 
@@ -324,9 +412,13 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 
 | Вход | изображение + `AIAnalysis` + `fields` metadata |
 |---|---|
-| Выход | `commercial_potential` ∈ `high` \| `medium` \| `low`; `composition` ∈ `good` \| `acceptable` \| `weak`; `recommendation` ∈ `proceed` \| `attention` \| `skip_suggested`; `reasons[]`; `confidence` |
+| Выход | `commercial_score` — целое 0–100; `commercial_potential` ∈ `high` \| `medium` \| `low`; `composition` ∈ `good` \| `acceptable` \| `weak`; `recommendation` ∈ `proceed` \| `attention` \| `skip_suggested`; `reasons[]`; `confidence` |
+| `commercial_potential` | выводится из `commercial_score` **детерминированно** в Python (не моделью): `high` ≥ 70, `medium` 40–69, `low` < 40. Пороги — константы, изменение — новая версия |
 | События | `CREATIVE_REVIEW/ADVISED`, `CREATIVE_REVIEW/FAILED` |
-| Влияние v1 | **только информация**: видно в `asset.get`, сводке и уведомлениях; экспорт не блокирует |
+| Влияние | **только рекомендация**: видно в `asset.get`, сводке и уведомлениях; `commercial_score` и `commercial_potential` **никогда не блокируют экспорт** |
+
+`commercial_score` позволяет сортировать очередь (что обрабатывать и
+экспортировать первым) и сравнивать модели по одним и тем же объектам.
 
 `attention` и `skip_suggested` не отклоняют объект: они только добавляют его в
 отдельный список человека (`review.queue`, раздел `advice`). Как их учитывать при
@@ -360,8 +452,9 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 
 ## 6. Порядок реализации
 
-1. **Профили и чистые функции** (`app/readiness.py`): профили площадок, проверки
-   §3.3, план §3.5, fingerprint — unit-тесты на реальных данных assets 3–9.
+1. ✅ **Профили и чистые функции** (`app/readiness.py`): профили площадок, проверки
+   §3.3, план §3.5, fingerprint — unit-тесты; прогон на реальных assets 2–9
+   (26.09.2026, паспорт §35ZB).
 2. **События и представление**: `READINESS/*`, `pipeline.stock_readiness`,
    `stale`.
 3. **Service layer**: `readiness.evaluate`, `readiness.get`, фильтр `ready_for`,
@@ -378,16 +471,16 @@ metadata в `auto_approved`/`approved`; `metadata.approve` — тоже (объ�
 
 ---
 
-## 7. Решения, нужные от пользователя
+## 7. Принятые решения (26.09.2026)
 
-1. **Релизы.** Stocker не хранит релизы. Предложение v1: `MODEL_RELEASE_REQUIRED`
-   и `PROPERTY_RELEASE_REQUIRED` — blocker; позже операция человека
-   `release.attach` (файл релиза + связь с asset). Для industrial stock
-   узнаваемые люди редки, а `partial`/`unclear` блокером не являются.
-2. **Категории.** Предложение: детерминированная таблица соответствий, при
-   отсутствии совпадения — человек. Выбор категории моделью из закрытого
-   списка — позже.
-3. **Creative Review по умолчанию.** Предложение: выключен до реализации шагов
-   1–5; после включения — только информация, без влияния на экспорт.
-4. **Enhancement Advisor.** Предложение: предфильтр правилами + модель только для
-   спорных объектов; v1 — только рекомендация.
+1. **Релизы.** Stocker не хранит релизы: `MODEL_RELEASE_REQUIRED` и
+   `DOMINANT_BRAND` — blocker; позже операция человека `release.attach`.
+   `partial`/`unclear` люди и второстепенные бренды блокером не являются.
+2. **Категории** — детерминированная таблица (§3.5a), без совпадения — человек.
+3. **Creative Review** выключен до реализации шагов 1–5; после включения —
+   только рекомендация (`commercial_score`), экспорт не блокирует.
+4. **Enhancement Advisor** — предфильтр правилами + модель только для спорных
+   объектов; v1 — только рекомендация с причинами.
+5. **Бренды** — `minor` → warning, `dominant` → blocker (§3.3a).
+6. **Файлы** — original → derivative → platform export; оригиналы не
+   изменяются (§3.5b).
