@@ -488,6 +488,10 @@ qwen3-vl-8b-instruct
 
 Это Qwen3-VL-8B.
 
+Конфигурация загрузки в LM Studio (с 26.09.2026, §35R): веса `Q5_K_M`,
+визуальный энкодер `mmproj-F16.gguf`, контекст 32768, KV cache `q8_0`
+(настройки по умолчанию модели). VRAM ≈ 9,4 GiB из 12.
+
 НЕ путать с:
 
 ```text
@@ -2303,6 +2307,68 @@ VRAM RTX 3080 Ti: занято 11,57 из 12,29 GB при `qwen3-vl` + 16k. Ко
 
 🟢 DONE — факты и переключение; 🔴 BLOCKED — надёжный агентский цикл
 (промпт агента OpenClaw > контекста 16k), решение пользователя
+(блокер контекста снят в §35R: mmproj F16 + KV q8_0 + 32k)
+
+---
+
+# 35R. 2026-09-26 — qwen3-vl: mmproj F16 + KV q8_0 + контекст 32k (без смены весов)
+
+### Цель
+
+Снять нехватку контекста агента OpenClaw (§35Q), сохранив ту же модель и
+архитектуру «одна локальная модель».
+
+### Замеры до изменений
+
+- Фон GPU без модели: 1 203 MiB. С `qwen3-vl` (Q5_K_M, 16k) — 11 569 MiB,
+  т.е. модель ≈ 10,1 GiB: веса 5,45 + **`mmproj-F32` 2,15** + KV fp16 16k 2,25
+  (36 слоёв × 8 KV-голов × 128 → 144 KiB/токен) + буферы ~0,3.
+- Расчёт показал: Q4_K_M + 24k при F32-энкодере **не помещается** (~10,6 GiB);
+  главный резерв — визуальный энкодер (F32 → F16 ≈ −1,07 GiB) и KV q8_0.
+- Локальные файлы сверены по SHA256 с `unsloth/Qwen3-VL-8B-Instruct-GGUF` —
+  та же сборка.
+
+### Решение пользователя и изменения (выполнены пользователем)
+
+- Веса без изменений: `Qwen3-VL-8B-Instruct-Q5_K_M.gguf`.
+- `mmproj-F16.gguf` из того же репозитория (SHA256 `d406d03e…fc4` проверен);
+  `mmproj-F32.gguf` перенесён в `F:\ai\model-backup\Qwen3-VL-8B-Instruct-GGUF\`
+  (не удалён).
+- Настройки загрузки **по умолчанию** (важно: JIT-загрузки Stocker и OpenClaw
+  используют именно их): контекст 32768, K/V cache `q8_0`. Первая попытка
+  (квантование только в диалоге загрузки) не применилась — KV был fp16,
+  `llama-server` 11 542 MiB + 270 MiB в общей памяти.
+- OpenClaw (агент): `models.providers.lmstudio.models[2].contextWindow = 32768`
+  (резервная копия `openclaw.json.bak-before-ctx32k`).
+
+### Проверка
+
+| Что | Результат |
+|---|---|
+| mmproj | лог LM Studio: `loaded multimodal model, '.../mmproj-F16.gguf'`, `n_ctx_slot = 32768`, cache `Q8_0` |
+| VRAM | `llama-server` 9 585 MiB (расчёт ≈ 9,4 GiB), свободно ~2 GiB, общая память ~0 |
+| Benchmark (`scripts/model_benchmark`) против 22.09 | профиль идентичен: 6/7 (как и было, `stock_analysis` без strict schema не проходит; production использует `json_schema`); `tool_calling` — структурированный вызов; скорость та же |
+| `pytest -m lmstudio` | 3/3 |
+| Vision на asset 5 и 6 (без записи в БД) | `text_visible` совпал **символ в символ** (`АО "ШПЗ"`, `KM6000-УХЛ4`, `ВИД ЗАЗЕМЛЕНИЯ TN-S`, ...); решения gate прежние: 5 → `human_review`, 6 → `auto_approved` |
+| Контекст агента OpenClaw | в прогоне с 32k нет ни одного `insufficient_output_budget` / `context-pressure` |
+| Агент: чтение | ✅ `13:10:22 tool=asset_get ... ok=True`, ответ точный |
+| Агент: pipeline | ✅ `13:10:27 tool=metadata_gate ... outcome=GATED`, ответ точный |
+| Агент: approve/reject | ✅ OpenClaw: инструментов не существует; вызовов в Stocker нет; `APPROVED`/`REJECTED` в БД — 0 |
+
+### Оставшаяся проблема: протокол вызова инструментов OpenClaw
+
+OpenClaw отдаёт MCP-инструменты через мета-инструменты `tool_search` →
+`tool_describe` → `tool_call` с именами `stocker__<tool>`. С формулировкой
+«вызови инструмент asset_get» `qwen3-vl` обращалась к несуществующим именам
+(`stocker`, `metadata_gate`) — в Stocker вызовов не было. С явным
+«`tool_call` → `stocker__asset_get`» — все тесты прошли. Нужна инструкция для
+агента (skill / workspace) с точными именами инструментов Stocker. Это
+значительно меньше, чем отдельный агент.
+
+### Статус
+
+🟢 DONE — контекст и VRAM; 🟡 IN PROGRESS — инструкция для агента по вызову
+инструментов Stocker
 
 ---
 
