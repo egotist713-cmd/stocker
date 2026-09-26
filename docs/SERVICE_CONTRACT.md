@@ -216,6 +216,13 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
   общих основаниях, actor пишется в события.
 - Агент может **поднять** риск (`metadata.escalate` → `human_review`), но не
   может его снять: `MANUAL_ESCALATION` снимает только решение человека.
+- **Решения человека окончательны для агентов и workflow** (с 26.09.2026):
+  `metadata.edit`, `metadata.rebuild`, `metadata.build` над объектом в
+  `approved` или `rejected` для не-человеческих actor → `FORBIDDEN`. Иначе правка
+  вернула бы объект в `draft`, и gate мог бы сделать `rejected` → `auto_approved`.
+- **Граница доверия:** JSON CLI `app.api` принимает `--actor` от вызывающего и
+  предназначен для человека на Windows. Агенты и workflow подключаются только
+  через каналы, где actor задаёт сервер (MCP: `STOCKER_MCP_ACTOR` + свой токен).
 - Политика — константа в коде v1, без конфигурации. Её изменение — изменение
   контракта.
 - Actor по умолчанию: CLI `app.api` — `human`; MCP-адаптер — `agent:openclaw`,

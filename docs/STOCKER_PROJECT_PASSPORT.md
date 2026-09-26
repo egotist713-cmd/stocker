@@ -348,6 +348,51 @@ AI, агент OpenClaw, tool use. Роли разделены архитект�
 
 ---
 
+# 3B. Итоговая архитектура (проверена 26.09.2026)
+
+```text
+Человек ──────────────── CLI (app.worker, app.metadata, app.api) ─┐
+                                                                  │
+OpenClaw (WSL, qwen3-vl-8b-instruct, skill stocker)               │
+   → MCP HTTP 172.26.192.1:8765 (токен; actor задаёт СЕРВЕР)      │
+                                                                  ▼
+                              Stocker Service Layer (dispatch: права, envelope)
+                                                                  │
+                              Stocker Core (worker, metadata, review gate)
+                                                                  │
+                              SQLite: assets + processing_events (ИСТИНА)
+                                                                  │
+                              LM Studio: qwen3-vl-8b-instruct (Vision, Metadata AI)
+```
+
+### Права (проверены тестами и на production)
+
+| Actor | Канал | Чтение | Pipeline (process, build, gate, escalate) | Правка черновиков (`draft`, `auto_approved`, `human_review`) | Изменение после решения человека (`approved`, `rejected`) | approve / reject |
+|---|---|---|---|---|---|---|
+| `human` | локальные CLI | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `agent:openclaw` | MCP (actor задаёт сервер) | ✅ | ✅ | ✅ | ❌ `FORBIDDEN` | ❌ инструментов нет + `FORBIDDEN` |
+| `workflow:n8n` | будущий канал с actor от сервера | ✅ | ✅ | ✅ | ❌ `FORBIDDEN` | ❌ `FORBIDDEN` |
+
+- `auto_approved` ставит только детерминированный review gate; ни один
+  параметр API его не задаёт.
+- Окончательное состояние определяется событиями Stocker (§3A.5).
+- **Граница доверия.** Actor имеет смысл там, где вызывающий не имеет прямого
+  доступа к БД. OpenClaw изолирован в WSL (interop выключен) и видит только
+  MCP. JSON CLI `app.api` принимает `--actor` как параметр — это инструмент
+  человека на Windows. **n8n не должен получать канал со свободным
+  `--actor`:** только канал, где actor фиксирует сервер (свой токен →
+  `workflow:n8n`), с правами не шире OpenClaw.
+
+### Эксплуатация
+
+- Автозапуск при входе пользователя: LM Studio (сервер `0.0.0.0:1234`, JIT),
+  задача `OpenClaw WSL keep-alive`, задача `Stocker MCP`.
+- Проверка окружения: `scripts/check_environment.ps1` (только чтение, без
+  секретов; код выхода = число FAIL).
+- Восстановление: `docs/RECOVERY.md`.
+
+---
+
 # ЧАСТЬ II. ФАКТИЧЕСКОЕ СОСТОЯНИЕ ПРОЕКТА
 
 # 4. Рабочая директория
@@ -2508,6 +2553,63 @@ OpenClaw (qwen3-vl-8b-instruct, skill stocker)
 
 ---
 
+# 35U. 2026-09-26 — Стабилизация перед n8n
+
+### Решение пользователя
+
+Этап OpenClaw признан правильным: OpenClaw только управляет через MCP;
+Stocker Core + события SQLite — единственный источник состояния;
+`qwen3-vl-8b-instruct` — единая локальная модель; approve/reject — только
+человек. Перед n8n — стабилизация: архитектура, восстановление, отсутствие
+ручных зависимостей. n8n — только scheduler, интеграции, уведомления,
+очереди; прав не больше, чем у OpenClaw.
+
+### Найдено и исправлено
+
+- **Брешь в правах:** агент мог вызвать `metadata.edit` / `rebuild` /
+  `build --force` над объектом, который человек одобрил или отклонил; правка
+  возвращала его в `draft`, и gate мог сделать `rejected` → `auto_approved` в
+  обход человека. Теперь для не-человеческих actor это `FORBIDDEN`
+  (`app/service/__init__.py`, `_human_decision_guard`); 14 новых тестов.
+- **Условие для n8n:** JSON CLI принимает `--actor` от вызывающего. n8n
+  подключать только через канал с actor от сервера (§3B).
+
+### Эксплуатация
+
+- `docs/RECOVERY.md`: что где хранится (код, БД, фото, `.env`, модель,
+  LM Studio, WSL/OpenClaw, задачи), резервное копирование, порядок
+  восстановления, SHA256 модели, параметры загрузки, настройки OpenClaw без
+  секретов, риски.
+- `ops/lmstudio/`: копии настроек сервера LM Studio и параметров загрузки
+  `qwen3-vl` (без секретов) — восстановимы из git.
+- `requirements.lock.txt` — точные версии (41 пакет).
+- `scripts/check_environment.ps1` (+ `scripts/openclaw_check.py` в WSL) —
+  проверка без изменений и без вывода секретов: git, `.env`, SQLite
+  `quick_check`, LM Studio и модель (mmproj F16, ctx 32768, KV q8_0), MCP на
+  адресе WSL, задачи Планировщика, `.wslconfig`, WSL (NAT, interop выключен),
+  gateway, модель агента, адреса LM Studio/MCP в OpenClaw совпадают с текущим
+  адресом WSL-хоста, токен, skill совпадает с репозиторием, workspace без кода,
+  связь WSL → LM Studio и WSL → MCP (401 без токена).
+
+### Проверка
+
+`check_environment.ps1`: все проверки `PASS`, кроме двух ожидаемых `WARN`
+(незакоммиченные файлы этого этапа; **28 коммитов не отправлены на GitHub**).
+Ручных зависимостей нет: MCP, keep-alive и LM Studio стартуют при входе;
+токен в `.env` и в OpenClaw; адреса совпадают.
+`python -m pytest`: 291 passed, 3 skipped.
+
+### Риски (в RECOVERY.md §7)
+
+Смена адреса NAT-подсети WSL; автозапуск только при входе пользователя;
+обновление LM Studio может сбросить параметры загрузки; неотправленные коммиты.
+
+### Статус
+
+🟢 DONE — стабилизация. Следующий этап — n8n.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -2652,6 +2754,9 @@ MCP ДЛЯ OPENCLAW
 
 OPENCLAW INTEGRATION (skill, одна модель qwen3-vl, сводка review_queue)
     🟢 DONE (§35S, §35T)
+
+СТАБИЛИЗАЦИЯ (права, RECOVERY.md, check_environment.ps1)
+    🟢 DONE (§35U)
 
 ASSET 2 RECOVERY POLICY
     ⚪ PLANNED

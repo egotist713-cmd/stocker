@@ -1,0 +1,12 @@
+{
+  "autoStartOnLaunch": true,
+  "port": 1234,
+  "cors": true,
+  "logSensitiveData": true,
+  "logIncomingTokens": false,
+  "verbose": true,
+  "logLinesLimit": 500,
+  "networkInterface": "0.0.0.0",
+  "justInTimeModelLoading": true,
+  "fileLoggingMode": "succinct"
+}
