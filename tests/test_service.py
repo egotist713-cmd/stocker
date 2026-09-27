@@ -192,6 +192,16 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
         "metadata_completeness": "full",
         "ready": True,
         "review_reasons": [],
+        "normalize": {
+            "evaluated": True,
+            "stale": False,
+            "failed": None,
+            "container": "JPEG",
+            "color_profile": "missing",
+            "hdr": "none",
+            "motion_video": False,
+            "event_id": envelope["data"]["pipeline"]["normalize"]["event_id"],
+        },
         "enhancement": {
             "assessed": True,
             "stale": False,

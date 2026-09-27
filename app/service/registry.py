@@ -161,6 +161,13 @@ DESCRIPTIONS = {
     "metadata.escalate": 'Send to human review (raises risk; cannot lower it). Args: {"asset_id": 5, "reason": "..."}',
     "metadata.approve": "Human decision: approve. Human actors only.",
     "metadata.reject": "Human decision: reject with a reason. Human actors only.",
+    "normalize.evaluate": (
+        "Describe the original file without changing it: format, color profile, bit depth, HDR / Ultra HDR, "
+        'Motion Photo video, extra streams, orientation, metadata present. Args: {"asset_id": 5}'
+    ),
+    "normalize.get": (
+        'Last facts about the original file (format, color profile, HDR, Motion Photo). Read only. Args: {"asset_id": 5}'
+    ),
     "enhancement.assess": (
         "Image quality check before Vision: noise, sharpness, compression artifacts, resolution. "
         "Rules decide clear cases (enhancement_not_needed / enhancement_recommended / enhancement_risky); "
@@ -225,6 +232,8 @@ def build_registry() -> dict[str, Operation]:
         Operation("metadata.escalate", DESCRIPTIONS["metadata.escalate"], ReasonParams, PIPELINE, ops.metadata_escalate),
         Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
         Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
+        Operation("normalize.evaluate", DESCRIPTIONS["normalize.evaluate"], AssetParams, PIPELINE, ops.normalize_evaluate),
+        Operation("normalize.get", DESCRIPTIONS["normalize.get"], AssetParams, READ, ops.normalize_get),
         Operation("enhancement.assess", DESCRIPTIONS["enhancement.assess"], AssetParams, PIPELINE, ops.enhancement_assess),
         Operation("enhancement.advise", DESCRIPTIONS["enhancement.advise"], AssetParams, PIPELINE, ops.enhancement_advise),
         Operation("enhancement.get", DESCRIPTIONS["enhancement.get"], AssetParams, READ, ops.enhancement_get),

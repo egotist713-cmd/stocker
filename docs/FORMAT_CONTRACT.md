@@ -119,8 +119,23 @@ v1 — в памяти процесса (как сейчас). Кэш на ди�
 
 | stage | status | message |
 |---|---|---|
-| `NORMALIZE` | `PASSED` | `normalizer_version`, `source facts` (§3.1) |
-| `NORMALIZE` | `FAILED` | `error_type` (`UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `MISSING_CODEC`), `error` — pipeline останавливается, как при `QC/FAILED` |
+| `NORMALIZE` | `EVALUATED` | **шаг 1 (реализован 27.09.2026)**: `facts_version` (`normalize-facts-v1`), `fingerprint` (hash файла + версия), `facts` (§3.1) |
+| `NORMALIZE` | `PASSED` | шаг 2 (будущий): создано нормализованное представление, `normalizer_version` |
+| `NORMALIZE` | `FAILED` | `error_type` (`UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `MISSING_CODEC`, `SOURCE_MISSING`, `SOURCE_CHANGED`), `error`, `container` |
+
+**Шаг 1 (реализован, паспорт §35ZO):** `app/source_facts.py` (только чтение) +
+`app/normalization.py` (события), операции `normalize.evaluate` / `normalize.get`,
+вызов в worker **перед QC**; `pipeline.normalize` в `asset.get`. На шаге 1
+`NORMALIZE/FAILED` **не останавливает** pipeline (наблюдение); остановка — с шага 2,
+когда анализ перейдёт на нормализованное представление. Идемпотентность — по
+hash файла и версии фактов. Значения GPS, серийных номеров, модели камеры, имени
+программы **не сохраняются** — только признак наличия (`metadata_present`).
+Motion Photo определяется по реальному MP4-блоку, а не по пометке XMP (asset 3:
+XMP заявляет Motion Photo, видео нет).
+
+Первый сбор фактов (129 объектов): JPEG 126; sRGB 102, Display P3 17, без ICC 7;
+Ultra HDR 113; Motion Photo 74; GPS 106; тег Software 112; отказы — 3 (исходник
+изменён / удалён).
 
 (`SOURCE/NORMALIZED` уже занято нормализацией **пути** `source_path` — это
 другое событие.)

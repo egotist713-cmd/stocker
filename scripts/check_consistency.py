@@ -39,17 +39,20 @@ CHECKS = {
 }
 
 
-def main() -> int:
-    connection = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
+def find_problems(db_path: Path = DB) -> dict[str, list[int]]:
+    """{проверка: id объектов с нарушением} — только чтение."""
+    connection = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
     try:
-        problems = 0
-        for name, query in CHECKS.items():
-            ids = [row[0] for row in connection.execute(query)]
-            problems += len(ids)
-            print(f"{'OK  ' if not ids else 'FAIL'} {name}: {ids if ids else '-'}")
+        return {name: [row[0] for row in connection.execute(query)] for name, query in CHECKS.items()}
     finally:
         connection.close()
-    return 1 if problems else 0
+
+
+def main() -> int:
+    problems = find_problems()
+    for name, ids in problems.items():
+        print(f"{'OK  ' if not ids else 'FAIL'} {name}: {ids if ids else '-'}")
+    return 1 if any(problems.values()) else 0
 
 
 if __name__ == "__main__":

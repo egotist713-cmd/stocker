@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app import enhancement_decision
 from app import metadata as metadata_service
+from app import normalization
 from app import review_gate
 from app.ai.analyzer import AIAnalyzer, AIResponseError
 from app.ai.enhancement_advisor import advisor_enabled
@@ -121,6 +122,22 @@ def run_metadata(asset_id: int, analyzer: MetadataAnalyzer | None = None) -> str
     return result["outcome"]
 
 
+def run_normalization(asset_id: int) -> str | None:
+    """
+    Normalization, шаг 1: факты об исходнике (docs/FORMAT_CONTRACT.md §3).
+    Только наблюдение: файл не меняется, pipeline не останавливается.
+    """
+    try:
+        result = normalization.evaluate_asset(asset_id)
+    except Exception as exc:  # noqa: BLE001 — факты не должны останавливать обработку на шаге 1
+        print(f"NORMALIZE: skipped ({type(exc).__name__}: {exc})")
+        return None
+    facts = result["facts"] or {}
+    detail = result.get("error", {}).get("error_type") or f"{facts.get('container')}, {facts.get('color_profile', {}).get('kind')}"
+    print(f"NORMALIZE: {result['outcome']} ({detail})")
+    return result["outcome"]
+
+
 def run_enhancement(asset_id: int) -> str | None:
     """
     Enhancement decision правилами (docs/STOCK_READINESS_CONTRACT.md §4.2).
@@ -168,6 +185,8 @@ def process_asset(
         add_event(asset_id, "SOURCE", "INVALID", json.dumps(problem, ensure_ascii=False))
         print(f"SOURCE: INVALID ({problem['reason']})")
         return SOURCE_INVALID
+
+    run_normalization(asset_id)
 
     qc_result = check_asset(asset)
     save_qc_result(asset_id, qc_result)

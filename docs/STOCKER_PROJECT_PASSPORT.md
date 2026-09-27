@@ -476,9 +476,15 @@ source → normalize → QC → Enhancement → Vision → Metadata → Readines
 
 ### 14. Результат и его событие — одна транзакция
 
-Принят 27.09.2026 (§35ZK, §35ZN). Любая стадия записывает свой результат и
-событие о нём атомарно. Проверка — `scripts/check_consistency.py` (только
-чтение).
+Принят 27.09.2026 (§35ZK, §35ZN, §35ZO). **result state + processing event =
+одна транзакция** — для всех AI- и системных этапов: ingest, Normalization,
+QC, Vision, Metadata, Enhancement, Creative Review, Readiness и будущие
+операции Export. Диагностика — `scripts/check_consistency.py` (только чтение:
+объекты без событий, события без результата, целостность истории) — остаётся
+инструментом для массовой обработки, API стоков и фоновых задач n8n.
+Регрессия — тест «сбой на каждой записи события не оставляет рассогласования»
+(`tests/test_atomicity.py`): новый модуль с записью результата обязан в него
+попасть.
 
 ---
 
@@ -3680,6 +3686,64 @@ Enhancement `recommended` 28 → **4** (решено правилами 104; л�
 
 ---
 
+# 35ZO. 2026-09-27 — Normalization шаг 1 (факты); регрессия атомарности; имена файлов
+
+### Решения пользователя
+
+1. Аудит атомарности принят; правило **result state + processing event =
+   одна транзакция** — для всех этапов, включая будущий Export (§3A.14);
+   `check_consistency.py` — постоянный диагностический инструмент.
+2. Normalization — следующий слой: не улучшает фото, а правильно читает
+   исходник, приводит к внутреннему представлению и сохраняет особенности
+   файла; не угадывать (`NORMALIZE/FAILED`).
+3. Export preparation — не обработка, а отдельный файл площадки; очистка
+   metadata по белому списку. **Добавлена политика имён файлов** (§3.1
+   контракта): исходное имя — внутренний атрибут; имя экспорта —
+   `<slug утверждённого title>_<asset_id>.<ext>`; без камер, шаблонов
+   телефонов, программ, `edited` / `final` и внутренних пометок.
+4. Creative Review — не крутить до статистики модерации и продаж.
+5. Normalization — маленькими шагами: сначала факты и событие, файл не
+   менять; затем engine и внутренний derivative; Export — позже. Тест
+   атомарности для будущих модулей.
+
+### Реализовано
+
+- `app/source_facts.py` (`normalize-facts-v1`, только чтение): контейнер и
+  формат, размеры после ориентации, ориентация, цветовая модель, битность,
+  альфа, цветовой профиль (sRGB / Display P3 / other / missing — по основным
+  цветам), HDR (Ultra HDR gain map), кадры, встроенное видео Motion Photo (по
+  реальному MP4-блоку: смещение и размер), вспомогательные потоки, наличие
+  EXIF / GPS / устройства / серийных номеров / MakerNote / Software / XMP /
+  IPTC / ICC (**только признаки, без значений**), качество JPEG, размер файла и
+  изображения без видео, исходное имя.
+- `app/normalization.py`: события `NORMALIZE/EVALUATED` / `FAILED`
+  (`MISSING_CODEC` для HEIF без кодека, `DECODE_ERROR`, `UNSUPPORTED_FORMAT`,
+  `SOURCE_MISSING` / `SOURCE_CHANGED`), идемпотентность; worker — перед QC,
+  не останавливает pipeline на шаге 1; операции `normalize.evaluate` /
+  `normalize.get`; `pipeline.normalize`; skill OpenClaw.
+- **`tests/test_atomicity.py`**: полный pipeline с «обрывом питания» на каждой
+  из первых 14 записей событий → `check_consistency` без нарушений; страж —
+  модуль, пишущий состояние `assets`, обязан быть в списке покрытия. Проверка
+  мутацией: возврат старой записи Vision даёт падение ровно как asset 118
+  (`ai_result without AI/PASSED`).
+- `check_consistency.find_problems(db_path)` — для тестов и диагностики.
+
+### Проверка
+
+- `pytest`: 518 passed, 4 skipped (`test_normalization.py` — 21,
+  `test_atomicity.py` — 16).
+- Факты по всем 129 объектам: 126 `EVALUATED`; 3 `FAILED` (asset 2 — исходник
+  изменён; 67, 68 — файлы документа удалены пользователем). JPEG 126; sRGB 102,
+  Display P3 17, без ICC 7; Ultra HDR 113; Motion Photo 74; GPS 106; тег
+  Software 112. `check_consistency`: 7 / 7 OK.
+
+### Дальше
+
+Normalization шаг 2 — engine (единое нормализованное представление для всех
+стадий) и внутренний derivative; затем Export preparation.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3857,7 +3921,7 @@ CALIBRATION ON USER-SELECTED PHOTOS (incoming)
     🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
-    🟢 CONTRACT ACCEPTED — реализация после калибровки Enhancement / Creative (§35ZL)
+    🟡 IN PROGRESS — шаг 1 (факты, NORMALIZE/EVALUATED) DONE (§35ZO); далее engine
 
 ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
     🟢 DONE v2 — 28 → 4 рекомендации на 108 отобранных (§35ZM)

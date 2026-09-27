@@ -44,6 +44,8 @@ WORKFLOW_ALLOWED = frozenset(
         "asset.process",
         "metadata.build",
         "metadata.gate",
+        "normalize.evaluate",
+        "normalize.get",
         "enhancement.assess",
         "enhancement.advise",
         "enhancement.get",

@@ -20,6 +20,7 @@ def test_new_file_runs_full_pipeline(stocker_root):
     assert json.loads(asset["ai_result"])["title"] == "Test title"
     assert [(stage, status) for stage, status, _ in events(stocker_root, asset_id)] == [
         ("INGEST", "DONE"),
+        ("NORMALIZE", "EVALUATED"),
         ("QC", "PASSED"),
         ("ENHANCEMENT", "ASSESSED"),
         ("AI", "PASSED"),

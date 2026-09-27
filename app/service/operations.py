@@ -11,6 +11,7 @@ from app import creative_review as creative_review_service
 from app import enhancement_decision
 from app import ingest
 from app import metadata as metadata_service
+from app import normalization
 from app import stock_readiness
 from app import worker
 from app.database.db import get_connection, insert_event, transaction
@@ -137,6 +138,25 @@ def metadata_gate(params) -> dict:
 
 def metadata_escalate(params) -> dict:
     return _metadata_call(metadata_service.escalate, params.asset_id, params.reason)
+
+
+def normalize_evaluate(params) -> dict:
+    """Факты об исходнике (Normalization, шаг 1); файл не меняется."""
+    try:
+        result = normalization.evaluate_asset(params.asset_id)
+    except normalization.NormalizationError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    data = {"facts": result["facts"]}
+    if "error" in result:
+        data["error"] = result["error"]
+    return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != normalization.NORMALIZE_FAILED)
+
+
+def normalize_get(params) -> dict:
+    try:
+        return _result(params.asset_id, None, normalization.get(params.asset_id))
+    except normalization.NormalizationError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
 
 
 def enhancement_assess(params) -> dict:

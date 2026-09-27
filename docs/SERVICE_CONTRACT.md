@@ -114,6 +114,7 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 | `asset.history` | `asset_id`, `stage?` | события, `message` распарсен из JSON (старые текстовые — как строка) |
 | `metadata.get` | `asset_id` | `metadata_json` |
 | `operations.list` | — | манифест операций с JSON Schema параметров |
+| `normalize.get` | `asset_id` | факты об исходнике: `{evaluated, stale, failed, container, color_profile, hdr, motion_video, event_id, facts}` (`FORMAT_CONTRACT.md` §3) |
 | `enhancement.get` | `asset_id` | последнее решение Enhancement: `{assessed, stale, decision, reasons, event_id, result}` (`STOCK_READINESS_CONTRACT.md` §4.2) |
 | `creative.get` | `asset_id` | последняя коммерческая оценка: `{reviewed, commercial_score, commercial_potential, recommendation, event_id, result}` |
 | `readiness.get` | `asset_id` | последняя оценка Stock Readiness: `{evaluated, stale, platforms, ready_for, event_id, result}` (`STOCK_READINESS_CONTRACT.md` §3.9) |
@@ -129,6 +130,7 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 | `metadata.edit` | `asset_id`, `title?`, `description?`, `keywords?`, `add_keywords?`, `remove_keywords?` | `app.metadata.edit` (как CLI), затем gate |
 | `metadata.gate` | `asset_id` | повторная оценка review gate (детерминированно; `approved`/`rejected` не трогает) |
 | `metadata.escalate` | `asset_id`, `reason` | → `human_review` (`MANUAL_ESCALATION`). Агент может только **поднять** риск, но не снять его |
+| `normalize.evaluate` | `asset_id` | Normalization шаг 1: факты об исходнике, событие `NORMALIZE/EVALUATED` (идемпотентно; исходы `EVALUATED` / `UNCHANGED` / `NORMALIZE_FAILED`). Файл не меняется |
 | `enhancement.assess` | `asset_id` | `app.enhancement_decision.assess_asset`: метрики качества (шум, резкость, артефакты, разрешение) и решение правилами, событие `ENHANCEMENT/ASSESSED` (идемпотентно; исходы `ASSESSED` / `UNCHANGED` / `ENHANCEMENT_FAILED`). Только рекомендация: ничего не улучшает. `data = {assessment, decision}` |
 | `enhancement.advise` | `asset_id` | рекомендация локальной модели **только для `disputed`** (правила не решили); для решённых правилами — `NOT_DISPUTED` без вызова модели; событие `ENHANCEMENT/ADVISED` (исходы `ADVISED` / `UNCHANGED` / `NOT_DISPUTED` / `ADVISOR_FAILED`). Модель не отменяет QC и правила; ничего не улучшает |
 | `creative.review` | `asset_id` | коммерческая оценка локальной моделью (`creative-review-v2`): признаки + `commercial_score` (Python); событие `CREATIVE_REVIEW/ADVISED` (исходы `REVIEWED` / `UNCHANGED` / `REVIEW_FAILED`); документы с персональными данными — `PERSONAL_DOCUMENT`. Только рекомендация: не блокирует экспорт, не меняет metadata |
@@ -203,6 +205,7 @@ title, key, actor}`. Идемпотентность: если у asset уже е
 | `metadata_completeness` | `full` \| `partial` \| null | `metadata_json.completeness` |
 | `ready` | bool | `metadata ∈ {auto_approved, approved}`: объект может двигаться дальше (экспорт) без человека |
 | `review_reasons` | list[code] | `review_gate.reasons` для `human_review`, иначе `[]` |
+| `normalize` | obj | `{evaluated, stale, failed, container, color_profile, hdr, motion_video, event_id}` — последнее `NORMALIZE/EVALUATED` (с 27.09.2026) |
 | `enhancement` | obj | `{assessed, stale, decision (enhancement_not_needed\|enhancement_recommended\|enhancement_risky\|disputed), decided_by (rules\|advisor\|null), reasons, confidence, event_id}` — последнее `ENHANCEMENT/ASSESSED` и рекомендация к нему (с 26.09.2026) |
 | `creative_review` | obj | `{reviewed, commercial_score, commercial_potential, recommendation, event_id}` — последнее `CREATIVE_REVIEW/ADVISED`, score пересчитан по сохранённым признакам (с 26.09.2026) |
 | `stock_readiness` | obj | `{evaluated, stale, platforms: {adobe, shutterstock → not_evaluated\|ready\|blocked\|stale}, ready_for, event_id}` — последнее `READINESS/EVALUATED` и сравнение fingerprint (с 26.09.2026, `STOCK_READINESS_CONTRACT.md` §3.9) |
