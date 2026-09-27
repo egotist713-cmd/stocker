@@ -27,7 +27,7 @@ def test_assess_writes_event_with_actor(stocker_root, asset_id):
 
     assert envelope["ok"] and envelope["outcome"] == "ASSESSED"
     assessment = envelope["data"]["assessment"]
-    assert assessment["provider"] == "rules" and assessment["rules_version"] == "enhancement-rules-v1"
+    assert assessment["provider"] == "rules" and assessment["rules_version"] == "enhancement-rules-v2"
     assert envelope["data"]["decision"] == assessment["decision"]
 
     ((status, message),) = _enhancement_events(stocker_root, asset_id)

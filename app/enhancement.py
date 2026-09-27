@@ -1,6 +1,11 @@
 """
 Enhancement decision: детерминированные метрики качества и решение правилами
-(docs/STOCK_READINESS_CONTRACT.md §4.2, enhancement-rules-v1).
+(docs/STOCK_READINESS_CONTRACT.md §4.2, enhancement-rules-v2).
+
+v2 (калибровка на 108 отобранных фото, 27.09.2026): v1 давал 26 % ложных
+рекомендаций — путал малую глубину резкости, фактуру и обычный JPEG телефона
+с дефектами. Теперь резкость — по самым резким участкам кадра (объект, а не фон),
+артефакты — по фактическому качеству JPEG из таблиц квантования.
 
 Модель здесь не вызывается: явные случаи решают правила, спорные помечаются
 disputed — рекомендацию для них даёт локальная модель отдельно. Topaz не
@@ -15,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-RULES_VERSION = "enhancement-rules-v1"
+RULES_VERSION = "enhancement-rules-v2"
 
 NOT_NEEDED = "enhancement_not_needed"
 RECOMMENDED = "enhancement_recommended"
@@ -30,6 +35,17 @@ ANALYSIS_SIDE = 2048
 CROP = 1024
 FLAT_PERCENTILE = 30
 SOFT_DETAIL_RATIO = 0.2
+TILE = 256                  # плитка на копии 2048 px
+SHARP_TILE = 150.0          # плитка «резкая» (для доли резкой площади)
+PEAK_SHARE = 0.10           # peak — среднее по 10 % самых резких плиток (не меньше 3)
+ISOLATED_SUBJECT_RATIO = 0.15
+
+# Стандартная таблица квантования яркости (JPEG Annex K): по ней оценивается качество файла.
+_STD_LUMA = np.array([
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92,
+    49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
+], dtype=np.float64)
 
 
 # --- Метрики -----------------------------------------------------------------------
@@ -80,7 +96,37 @@ def _detail_ratio(crop: Image.Image, a: np.ndarray) -> float:
     return float(np.var(_laplacian(a)) / (np.var(_laplacian(half)) + 1e-6))
 
 
+def jpeg_quality(image: Image.Image) -> int | None:
+    """Качество JPEG (1–100) по таблице квантования яркости; None — не JPEG."""
+    tables = getattr(image, "quantization", None)
+    if not tables or 0 not in tables or len(tables[0]) != 64:
+        return None
+    scale = float(np.mean(np.asarray(tables[0], dtype=np.float64) / _STD_LUMA)) * 100
+    quality = (200 - scale) / 2 if scale <= 100 else 5000 / scale
+    return int(round(min(100.0, max(1.0, quality))))
+
+
+def _tile_sharpness(analysis: Image.Image, scale: float) -> dict:
+    """Резкость по плиткам: peak — самые резкие участки (объект), доля резкой площади, где они."""
+    a = _gray(analysis)
+    size = min(TILE, a.shape[0], a.shape[1])
+    tiles = []
+    for y in range(0, a.shape[0] - size + 1, size):
+        for x in range(0, a.shape[1] - size + 1, size):
+            tiles.append((float(np.var(_laplacian(a[y:y + size, x:x + size]))), x, y))
+    tiles.sort(reverse=True)
+    top = tiles[: max(3, int(len(tiles) * PEAK_SHARE))]
+    best_x, best_y = top[0][1], top[0][2]
+    return {
+        "sharpness_peak": round(float(np.mean([t[0] for t in top])), 1),
+        "sharp_tile_ratio": round(sum(t[0] >= SHARP_TILE for t in tiles) / len(tiles), 2),
+        # центр самой резкой плитки в координатах исходного кадра (фрагмент для советника)
+        "sharpest_point": [round((best_x + size / 2) / scale), round((best_y + size / 2) / scale)],
+    }
+
+
 def measure(image: Image.Image) -> dict:
+    quality = jpeg_quality(image)
     image = image.convert("RGB")
     scale = min(1.0, ANALYSIS_SIDE / max(image.size))
     analysis = image.resize((round(image.width * scale), round(image.height * scale)), Image.LANCZOS) if scale < 1 else image
@@ -98,6 +144,8 @@ def measure(image: Image.Image) -> dict:
         "noise_sigma": round(float(np.median(noise)), 2),
         "blockiness": round(float(np.median(blocks)), 3),
         "detail_ratio": round(float(np.median(details)), 3),
+        **_tile_sharpness(analysis, scale),
+        "jpeg_quality": quality,
     }
 
 
@@ -106,15 +154,19 @@ def read_metrics(path: Path) -> dict:
         return measure(image)
 
 
-# --- Правила (пороги v1, калибровка — контракт §4.2) ---------------------------------
+# --- Правила (пороги v2, калибровка — контракт §4.2) ---------------------------------
 
 # (metric, reason, higher_is_better, (ok, borderline, issue) пороги, operation)
 THRESHOLDS = (
-    ("sharpness", "sharpness", True, (150.0, 50.0, 15.0), "sharpen"),
+    ("sharpness_peak", "sharpness", True, (120.0, 40.0, 20.0), "sharpen"),
     ("noise_sigma", "noise", False, (3.0, 5.0, 12.0), "denoise"),
     ("blockiness", "artifacts", False, (1.2, 1.5, 3.0), "remove_compression_artifacts"),
     ("megapixels", "resolution", True, (6.0, 4.0, 1.0), "upscale"),
 )
+
+# Для JPEG артефакты оцениваются по фактическому качеству файла: блочность 1.2–1.5
+# у JPEG телефона с качеством 93+ — это фактура и обработка, а не артефакты сжатия.
+JPEG_QUALITY_BOUNDS = (80.0, 60.0, 30.0)
 
 
 def _level(value: float, higher_is_better: bool, bounds: tuple[float, float, float]) -> str:
@@ -133,23 +185,35 @@ def _level(value: float, higher_is_better: bool, bounds: tuple[float, float, flo
 
 
 def findings(metrics: dict) -> list[dict]:
-    return [
-        {"reason": reason, "metric": metric, "value": metrics[metric],
-         "level": _level(metrics[metric], higher, bounds), "operation": operation}
-        for metric, reason, higher, bounds, operation in THRESHOLDS
-    ]
+    result = []
+    for metric, reason, higher, bounds, operation in THRESHOLDS:
+        if reason == "artifacts" and metrics.get("jpeg_quality") is not None:
+            metric, higher, bounds = "jpeg_quality", True, JPEG_QUALITY_BOUNDS
+        value = metrics[metric]
+        result.append({"reason": reason, "metric": metric, "value": value,
+                       "level": _level(value, higher, bounds), "operation": operation})
+    return result
 
 
 def notes(metrics: dict) -> list[dict]:
-    """Предупреждения без действия: ничего не уменьшается автоматически (решение — по статистике отказов)."""
-    if metrics["detail_ratio"] >= SOFT_DETAIL_RATIO:
-        return []
-    return [{
-        "code": "SOFT_AT_NATIVE_RESOLUTION",
-        "level": "warning",
-        "detail": f"detail_ratio {metrics['detail_ratio']} < {SOFT_DETAIL_RATIO}: "
-                  f"effective detail about {metrics['megapixels'] / 4:.1f} MP of {metrics['megapixels']} MP",
-    }]
+    """Замечания без действия: ничего не меняется автоматически (решение — по статистике отказов)."""
+    result = []
+    if metrics["detail_ratio"] < SOFT_DETAIL_RATIO:
+        result.append({
+            "code": "SOFT_AT_NATIVE_RESOLUTION",
+            "level": "warning",
+            "detail": f"detail_ratio {metrics['detail_ratio']} < {SOFT_DETAIL_RATIO}: "
+                      f"effective detail about {metrics['megapixels'] / 4:.1f} MP of {metrics['megapixels']} MP",
+        })
+    # Тип снимка: резкий объект на малой доле кадра — малая глубина резкости, фон размыт намеренно.
+    if metrics["sharp_tile_ratio"] < ISOLATED_SUBJECT_RATIO and metrics["sharpness_peak"] >= THRESHOLDS[0][3][0]:
+        result.append({
+            "code": "ISOLATED_SUBJECT",
+            "level": "info",
+            "detail": f"sharp area {metrics['sharp_tile_ratio']:.0%} of the frame: shallow depth of field, "
+                      "background blur is not a defect",
+        })
+    return result
 
 
 def decide(found: list[dict]) -> dict:

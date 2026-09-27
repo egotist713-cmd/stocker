@@ -34,7 +34,7 @@ DEFAULT_TIMEOUT = 180.0
 OVERVIEW_EDGE = 1536
 DETAIL_CROP = 1024
 
-INPUTS = ["image_overview", "image_crop_100", "rules_metrics"]
+INPUTS = ["image_overview", "image_crop_100_sharpest", "rules_metrics"]
 
 
 def response_schema() -> dict:
@@ -58,13 +58,20 @@ def _jpeg_data_url(image: Image.Image) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode("ascii")
 
 
-def prepare_images(image_path: Path) -> tuple[str, str]:
-    """Обзор кадра (длинная сторона 1536 px) и центральный фрагмент 1024 px в масштабе 100 %."""
+def prepare_images(image_path: Path, center: list[int] | None = None) -> tuple[str, str]:
+    """
+    Обзор кадра (длинная сторона 1536 px) и фрагмент 1024 px в масштабе 100 % вокруг
+    самой резкой области (sharpest_point метрик; без неё — центр). Центр кадра часто —
+    намеренно размытый фон (калибровка 27.09.2026, #77).
+    """
     with Image.open(image_path) as source:
+        # sharpest_point считается без поворота EXIF — фрагмент режется в тех же координатах.
+        size = min(DETAIL_CROP, source.width, source.height)
+        cx, cy = center or (source.width // 2, source.height // 2)
+        left = min(max(0, cx - size // 2), source.width - size)
+        top = min(max(0, cy - size // 2), source.height - size)
+        crop = ImageOps.exif_transpose(source.crop((left, top, left + size, top + size)))
         image = ImageOps.exif_transpose(source)
-        size = min(DETAIL_CROP, image.width, image.height)
-        left, top = (image.width - size) // 2, (image.height - size) // 2
-        crop = image.crop((left, top, left + size, top + size))
         overview = image.copy()
         overview.thumbnail((OVERVIEW_EDGE, OVERVIEW_EDGE), Image.Resampling.LANCZOS)
         return _jpeg_data_url(overview), _jpeg_data_url(crop)
@@ -72,8 +79,8 @@ def prepare_images(image_path: Path) -> tuple[str, str]:
 
 PROMPT = """You check the technical image quality of a stock photograph before it is sent to stock sites.
 
-Image 1 is the whole frame (downscaled). Image 2 is a crop from the center at 100% scale:
-use it to judge noise, sharpness and compression artifacts at pixel level.
+Image 1 is the whole frame (downscaled). Image 2 is a crop at 100% scale from the SHARPEST area
+of the frame: use it to judge noise, sharpness and compression artifacts at pixel level.
 
 Deterministic measurements found only borderline values, so the rules could not decide.
 Measurements and levels (ok / borderline / issue / severe):
@@ -90,6 +97,9 @@ would clearly improve acceptance on stock sites:
 Rules:
 - reasons use only: noise, sharpness, artifacts, resolution, other ("other" needs a detail).
 - operations only for enhancement_recommended: sharpen, denoise, remove_compression_artifacts, upscale.
+- Blur of the background behind a sharp subject (shallow depth of field) is intentional, not a defect.
+- Fine surface texture (concrete, metal, fabric) is not compression artifacts.
+- A normal phone photo that looks clean at 100% needs no enhancement: enhancement is an exception.
 - Judge only what you see. If unsure, prefer enhancement_not_needed with lower confidence.
 - confidence is between 0 and 1.
 """
@@ -107,7 +117,7 @@ class LMStudioEnhancementAdvisor(EnhancementAdvisor):
     provider = "lmstudio"
 
     # Увеличивать при любом изменении промпта, входов или формата ответа.
-    prompt_version = "enhancement-advice-v1"
+    prompt_version = "enhancement-advice-v2"
 
     def __init__(
         self,
@@ -129,7 +139,7 @@ class LMStudioEnhancementAdvisor(EnhancementAdvisor):
         )
 
     def advise(self, image_path: Path, assessment: dict) -> EnhancementAdvice:
-        overview, crop = prepare_images(Path(image_path))
+        overview, crop = prepare_images(Path(image_path), (assessment.get("metrics") or {}).get("sharpest_point"))
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[{

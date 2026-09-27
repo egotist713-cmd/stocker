@@ -29,7 +29,8 @@ RECOMMENDED = EnhancementAdvice(
 
 
 def metrics(**overrides) -> dict:
-    data = {"megapixels": 12.6, "sharpness": 800.0, "noise_sigma": 1.0, "blockiness": 1.0, "detail_ratio": 0.7}
+    data = {"megapixels": 12.6, "sharpness": 800.0, "noise_sigma": 1.0, "blockiness": 1.0, "detail_ratio": 0.7,
+            "sharpness_peak": 1500.0, "sharp_tile_ratio": 0.6, "sharpest_point": [100, 100], "jpeg_quality": None}
     return {**data, **overrides}
 
 
@@ -92,6 +93,25 @@ def test_prepare_images_overview_and_100_percent_crop(tmp_path):
     assert size(crop) == (1024, 1024)
 
 
+def test_crop_is_taken_around_the_sharpest_point(tmp_path):
+    # Левая половина белая, правая чёрная: фрагмент у правого края должен быть чёрным.
+    path = tmp_path / "halves.jpg"
+    image = Image.new("RGB", (3000, 2000), "white")
+    image.paste(Image.new("RGB", (1500, 2000), "black"), (1500, 0))
+    image.save(path, "JPEG")
+
+    _, crop = adv.prepare_images(path, [2900, 1000])
+
+    pixels = Image.open(io.BytesIO(base64.b64decode(crop.split(",", 1)[1]))).convert("L")
+    assert pixels.size == (1024, 1024)
+    assert pixels.getextrema()[1] < 40  # весь фрагмент из правой (чёрной) половины
+
+
+def test_prompt_explains_depth_of_field_and_texture():
+    text = adv.prompt_for(en.assess(metrics(blockiness=1.3), "h"))
+    assert "shallow depth of field" in text and "texture" in text and "SHARPEST" in text
+
+
 def test_advisor_switch(monkeypatch):
     monkeypatch.delenv("STOCKER_ENHANCEMENT_ADVISOR", raising=False)
     assert adv.advisor_enabled()
@@ -112,7 +132,7 @@ def test_disputed_case_gets_advice_event(stocker_root, asset_id, measured):
     (_, assessed), (status, advised) = _events(stocker_root, asset_id)
     assert status == "ADVISED"
     assert advised["provider"] == "offline" and advised["prompt_version"] == "enhancement-test"
-    assert advised["inputs"] == ["image_overview", "image_crop_100", "rules_metrics"]
+    assert advised["inputs"] == ["image_overview", "image_crop_100_sharpest", "rules_metrics"]
     assert advised["advice"]["decision"] == "enhancement_recommended"
 
     data = ed.get(asset_id)
@@ -133,7 +153,7 @@ def test_repeat_advice_is_unchanged(stocker_root, asset_id, measured):
 @pytest.mark.parametrize("override,decision", [
     ({}, en.NOT_NEEDED),                       # всё ok
     ({"blockiness": 2.0}, en.RECOMMENDED),     # issue — решено правилами
-    ({"sharpness": 5.0}, en.RISKY),            # severe — решено правилами
+    ({"sharpness_peak": 5.0}, en.RISKY),       # severe — решено правилами
 ])
 def test_rules_decision_is_never_sent_to_model(stocker_root, asset_id, measured, override, decision):
     measured["metrics"] = metrics(**override)
