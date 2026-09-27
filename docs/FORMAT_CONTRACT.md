@@ -1,4 +1,7 @@
-# STOCKER — КОНТРАКТ ФОРМАТОВ: SOURCE → NORMALIZE → EXPORT
+# STOCKER — КОНТРАКТ NORMALIZATION (ФОРМАТ-СЛОЙ): SOURCE → NORMALIZE
+
+> Подготовка файла под площадку — отдельный контракт
+> `docs/EXPORT_PREPARATION_CONTRACT.md`.
 
 > **Статус:** 🟢 КОНТРАКТ ПРИНЯТ (27.09.2026, паспорт §35ZL). **Реализация не
 > начинается** — контракта достаточно до завершения калибровки Enhancement и
@@ -81,6 +84,7 @@ IMG_0001.HEIC
 | `width`, `height` | **после** применения ориентации EXIF |
 | `orientation` | EXIF 1–8 |
 | `bit_depth` | 8, 10, 12, 16 |
+| `color_mode` | `RGB` / `L` (оттенки серого) / `CMYK` / с альфой |
 | `color_profile` | `srgb` / `display_p3` / `adobe_rgb` / `other` / `missing` + описание (определение по primaries — как в Readiness) |
 | `hdr` | `none` / `gain_map` (Ultra HDR) / `pq` / `hlg` |
 | `has_alpha` | bool |
@@ -123,25 +127,35 @@ v1 — в памяти процесса (как сейчас). Кэш на ди�
 
 ---
 
+### 3.5. Особые случаи источника (27.09.2026)
+
+| Случай | Normalize (анализ) | Факт (§3.1) | Export (см. `EXPORT_PREPARATION_CONTRACT.md`) |
+|---|---|---|---|
+| **Цветовые профили** (Display P3, Adobe RGB, ProPhoto) | ICC → sRGB, намерение `perceptual` (для анализа важно правдоподобие цвета, а не точность) | `color_profile` + описание | `to_srgb`, намерение и точность — профиль площадки |
+| **Нет ICC** | считается sRGB | `missing` | профиль sRGB встраивается в файл площадки |
+| **CMYK** (TIFF, JPEG из полиграфии) | CMYK → sRGB через ICC (без ICC — стандартный профиль, факт) | `color_mode=CMYK` | в sRGB; CMYK площадкам не отдаётся |
+| **16 бит** (TIFF, PNG), 10/12 бит (HEIC, AVIF) | в 8 бит (масштабирование, не обрезка) | `bit_depth` | 8 бит JPEG |
+| **Оттенки серого** | в RGB | `color_mode=L` | JPEG RGB или grayscale — по профилю площадки |
+| **Альфа-канал** (PNG) | сведение на белый фон | `has_alpha` | фото площадкам — без прозрачности |
+| **Ultra HDR JPEG** (gain map) | базовое SDR-изображение; gain map не применяется | `hdr=gain_map` | gain map удаляется (`strip_embedded`) — обычный SDR JPEG, пока площадки не подтвердят поддержку |
+| **HDR PQ / HLG** (HEIC, AVIF) | тональное отображение в SDR (будущее; до реализации — `NORMALIZE/FAILED` с `UNSUPPORTED_HDR`, а не неверные цвета) | `hdr=pq` / `hlg` | SDR JPEG после тонального отображения |
+| **Motion Photo** (видео в JPEG / HEIC) | только кадр изображения | `embedded.motion_video` + размер; `image_payload_size` | видео удаляется (`strip_embedded`) |
+| **Вспомогательные изображения HEIC** (depth, matte, thumbnail) | игнорируются | `embedded` | не экспортируются |
+| **Много кадров** (HEIC-последовательность, многостраничный TIFF, анимированный AVIF / PNG) | основной (primary) кадр | `frames` | основной кадр |
+| **Ориентация EXIF** | применяется к пикселям | `orientation` | пиксели уже повёрнуты; тег ориентации в файле площадки = 1 или отсутствует |
+
+Правило: **нормализатор не угадывает** — если случай не поддержан
+(неизвестный кодек, HDR без тонального отображения), он пишет
+`NORMALIZE/FAILED` с понятной причиной, а не отдаёт анализу неверную картинку.
+
+---
+
 ## 4. Export preparation и platform derivative
 
-Производный файл строится **из оригинала** (не из preview) по плану экспорта
-Readiness (`STOCK_READINESS_CONTRACT.md` §3.5, §3.5b):
-
-| Шаг | Правило |
-|---|---|
-| Декодирование | оригинал в полном разрешении, ориентация применена |
-| Цвет | в **sRGB** (`to_srgb`) |
-| Формат | **JPEG** для Adobe; JPEG для Shutterstock (TIFF допустим, но не нужен) — `to_jpeg` для HEIC / AVIF / PNG / TIFF |
-| Размер | `downscale_to_mp`, `fit_file_size` — по профилю площадки |
-| Встроенные данные | **удаляются**: видео Motion Photo, gain map, карты глубины (`strip_embedded`) |
-| Метаданные | **GPS удаляется по умолчанию** (`strip_location`); IPTC/XMP с title / keywords площадки — записываются в файл (будущее) |
-| Проверка | повторный разбор derivative: формат, MP, профиль, размер — соответствуют профилю площадки |
-| Учёт | `DERIVATIVE/CREATED`: `path`, `sha256`, `source_sha256`, `purpose=export`, `platform`, `operations`, `normalizer_version` |
-
-Readiness дополняется операциями `strip_embedded` и `strip_location` в плане
-экспорта; `FILE_TOO_LARGE` оценивается по `image_payload_size`, а не по
-размеру файла со встроенным видео.
+Вынесено в отдельный контракт **`docs/EXPORT_PREPARATION_CONTRACT.md`**
+(27.09.2026): export preparation строит файл площадки **из оригинала**, а
+не из нормализованного представления; normalization и export используют одни и
+те же факты об исходнике (§3.1).
 
 ---
 
