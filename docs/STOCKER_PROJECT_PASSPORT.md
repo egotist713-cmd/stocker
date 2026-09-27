@@ -3555,6 +3555,48 @@ QC 108 (24 — warning 4–12 MP); Vision 108; gate: 97 `auto_approved`, 11
 
 ---
 
+# 35ZM. 2026-09-27 — Enhancement v2, профили architecture / nature, повторный прогон
+
+### Реализовано
+
+- **`enhancement-rules-v2`** (`app/enhancement.py`): резкость по самым резким
+  плиткам (`sharpness_peak`) — объект, а не фон; тип снимка
+  (`sharp_tile_ratio` → `ISOLATED_SUBJECT`); артефакты JPEG — по качеству файла
+  из таблиц квантования (`jpeg_quality`), блочность — только для не-JPEG.
+  Пороги — `STOCK_READINESS_CONTRACT.md` §4.2.
+- **`enhancement-advice-v2`**: фрагмент 100 % вокруг самой резкой области;
+  промпт — боке и фактура не дефекты, улучшение — исключение.
+- **Creative Review:** `industrial_stock` v2 (ориентир текстур смягчён);
+  активны `architecture_stock` v1 и `nature_stock` v1; `planned` — travel,
+  product, lifestyle, ai_content, personal_archive; **`profile: "auto"`** —
+  детерминированный выбор по описанию Vision, выбор пишется в событие.
+- `run_user_set.py --enhancement --profile auto`.
+
+### Отклонено при калибровке
+
+- Нормированная резкость (лапласиан / вариация плитки) — не отделяет гладкие
+  резкие объекты от размытых (#61 ниже тёмного смазанного #48).
+
+### Результат на тех же 108 фото
+
+Enhancement `recommended` 28 → **4** (решено правилами 104; ложных ~2 %:
+гладкий автомат #61, #112); Creative Review несогласий 18 → **12** (все
+городские виды, крыши, горы — `proceed`); QC / Vision / gate / Readiness без
+изменений. Реальные дефекты ловятся; лёгкое размытие резкого кадра — нет
+(осознанно). Сбоев LM Studio и WHEA во время прогона (504 s) — нет.
+
+### Осталось (кандидаты, не сделано)
+
+- Текстуры в `industrial_stock` (#10, #12, #26, #52) всё ещё занижаются.
+- Маршрутизация: площадка #9 → industrial по слову «equipment».
+- Гладкие резкие объекты (#61, #112) — советник считает мягкими.
+
+### Проверка
+
+`pytest`: 480 passed, 4 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3735,7 +3777,10 @@ FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF
     🟢 CONTRACT ACCEPTED — реализация после калибровки Enhancement / Creative (§35ZL)
 
 ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
-    ⚪ NEXT — приоритет 1 (§35ZL)
+    🟢 DONE v2 — 28 → 4 рекомендации на 108 отобранных (§35ZM)
+
+CREATIVE REVIEW PROFILES (industrial v2, architecture, nature, auto)
+    🟢 DONE — несогласий 18 → 12 (§35ZM)
 
 AUDIT 2026-09-26 (64 реальных фото) + gate-v1.2 (дети, документы)
     🟢 DONE (§35ZF, §35ZG) — docs/AUDIT_2026-09-26.md

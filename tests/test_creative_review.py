@@ -66,7 +66,7 @@ def test_template_core_has_no_niche():
 
 
 def test_prompt_version_includes_profile():
-    assert ca.prompt_version_for(INDUSTRIAL_STOCK) == "creative-review-v3/industrial_stock-v1"
+    assert ca.prompt_version_for(INDUSTRIAL_STOCK) == "creative-review-v3/industrial_stock-v2"
 
 
 # --- Профили ------------------------------------------------------------------------------
@@ -76,11 +76,13 @@ def test_default_profile_and_env_override(monkeypatch):
     monkeypatch.delenv("STOCKER_CREATIVE_PROFILE", raising=False)
     assert profiles.get_profile().name == "industrial_stock"
     monkeypatch.setenv("STOCKER_CREATIVE_PROFILE", "nature_stock")
+    assert profiles.get_profile().name == "nature_stock"
+    monkeypatch.setenv("STOCKER_CREATIVE_PROFILE", "travel_stock")
     with pytest.raises(profiles.UnknownProfileError, match="planned"):
         profiles.get_profile()
 
 
-@pytest.mark.parametrize("name,status", [("nature_stock", "planned"), ("food_stock", "unknown")])
+@pytest.mark.parametrize("name,status", [("travel_stock", "planned"), ("food_stock", "unknown")])
 def test_planned_or_unknown_profile_is_refused(stocker_root, name, status):
     asset_id = _vision_asset(stocker_root)
 
@@ -91,9 +93,35 @@ def test_planned_or_unknown_profile_is_refused(stocker_root, name, status):
     assert _events(stocker_root, asset_id) == []
 
 
-def test_all_planned_profiles_are_registered():
-    assert set(profiles.PLANNED_PROFILES) <= set(profiles.PROFILES)
-    assert {"nature_stock", "commercial_product", "editorial", "ai_content", "personal_archive"} == set(profiles.PLANNED_PROFILES)
+def test_profiles_registry_matches_architecture():
+    active = {n for n, p in profiles.PROFILES.items() if p.status == profiles.ACTIVE}
+    assert active == {"industrial_stock", "architecture_stock", "nature_stock"}
+    assert set(profiles.PLANNED_PROFILES) == {"travel_stock", "product_stock", "lifestyle_stock", "ai_content", "personal_archive"}
+    assert all(p.audience and p.anchors and p.route_terms for p in profiles.PROFILES.values() if p.status == profiles.ACTIVE)
+
+
+@pytest.mark.parametrize("subject,title,keywords,expected", [
+    ("Urban residential buildings", "City view", ["apartment", "district"], "architecture_stock"),     # #16
+    ("Natural landscape", "Mountain view in winter", ["snow", "hills"], "nature_stock"),              # #66
+    ("Electrical Components", "Electrical panel wiring", ["cable", "breaker"], "industrial_stock"),
+    ("Concrete wall texture", "Rough concrete surface", ["texture"], "industrial_stock"),             # #117
+    ("Gaming mouse", "Computer mouse", ["mouse"], "industrial_stock"),                                # нет совпадений → по умолчанию
+])
+def test_auto_routing_by_vision_description(subject, title, keywords, expected):
+    chosen, selection = profiles.route_profile(subject, title, keywords)
+    assert chosen.name == expected and selection["chosen"] == expected and selection["mode"] == "auto"
+
+
+def test_auto_profile_is_recorded_in_event(stocker_root):
+    city = AIAnalysis(subject="Urban residential buildings", title="City skyline", keywords=["city", "apartment"])
+    asset_id = _vision_asset(stocker_root, vision=city)
+
+    envelope = dispatch("creative.review", {"asset_id": asset_id, "profile": "auto"})
+
+    assert envelope["ok"] and envelope["data"]["profile"] == "architecture_stock"
+    message = _events(stocker_root, asset_id)[-1][1]
+    assert message["profile"]["selection"]["mode"] == "auto"
+    assert message["profile"]["name"] == "architecture_stock" and message["profile"]["version"] == "1"
 
 
 # --- События и идемпотентность ---------------------------------------------------------
@@ -108,7 +136,7 @@ def test_review_writes_event_with_features_and_score(stocker_root):
     ((status, message),) = _events(stocker_root, asset_id)
     assert status == "ADVISED"
     assert message["provider"] == "offline" and message["prompt_version"] == "creative-test"
-    assert message["profile"] == {"name": "industrial_stock", "version": "1"}
+    assert message["profile"] == {"name": "industrial_stock", "version": "2", "selection": {"mode": "default"}}
     assert cr.get(asset_id)["profile"] == "industrial_stock"
     assert message["features"]["composition"] == "good"
     assert message["commercial_score"] == 35 + 30 + 15 + 2 and message["score_version"] == "creative-score-v1"

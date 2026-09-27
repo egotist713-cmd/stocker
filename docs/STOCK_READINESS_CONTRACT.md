@@ -465,6 +465,28 @@ QC deterministic metrics (всегда, без модели)
 (все `ok`); размытие r2 — 44 (`issue`), r5 — 4.8 (`severe`); шум σ8 — 6.1
 (`issue`), σ20 — 13.2 (`severe`); JPEG q30 — 1.7–3.4, q15 — 2.2–4.6, q5 — 4.6–7.9.
 
+**`enhancement-rules-v2` (27.09.2026, паспорт §35ZM) — действующие правила.** На
+108 отобранных фото v1 давал 26 % ложных рекомендаций: путал малую глубину
+резкости, фактуру и обычный JPEG телефона с дефектами.
+
+| Изменение | v2 |
+|---|---|
+| Резкость | `sharpness_peak` — среднее 10 % самых резких плиток 256 px на копии 2048 px (резкость **объекта**, а не среднего по кадру); `sharpness` (среднее) остаётся информацией |
+| Тип снимка | `sharp_tile_ratio` (доля резких плиток ≥ 150): < 0.15 при резком объекте → заметка `ISOLATED_SUBJECT` (info) — фон размыт намеренно |
+| Артефакты | для JPEG — **качество файла** по таблицам квантования (`jpeg_quality`); блочность — только для PNG / TIFF |
+| Советник | `enhancement-advice-v2`: фрагмент 100 % вокруг **самой резкой** области (`sharpest_point`), а не из центра; промпт: боке и фактура — не дефекты, улучшение — исключение |
+
+| reason | ok | borderline | issue → recommended | severe → risky |
+|---|---|---|---|---|
+| `sharpness` (`sharpness_peak`) | ≥ 120 | 40–120 | 20–40 | < 20 |
+| `artifacts` (`jpeg_quality`) | ≥ 80 | 60–80 | 30–60 | < 30 |
+| `artifacts` (`blockiness`, не JPEG) | < 1.2 | 1.2–1.5 | 1.5–3 | ≥ 3 |
+| `noise`, `resolution` | как v1 | | | |
+
+Результат на тех же 108: `recommended` 28 → **4** (~2 % ложных); реальные дефекты
+(сильное размытие, JPEG q20–q45) ловятся; лёгкое размытие r2 резкого кадра — нет
+(осознанно: Topaz — исключение). `CALIBRATION_2026-09-27.md` §6.
+
 **Находка — «мягкие» 50 MP:** все 50 MP снимки телефона имеют
 `detail_ratio` 0.11–0.16 — как 12.6 MP снимок, увеличенный вдвое (0.14), тогда
 как настоящие 12.6 MP — 0.34–0.76. Эффективная детализация ≈ ¼ номинальной.
@@ -559,8 +581,16 @@ description Vision, `temperature=0`), `app/creative_review.py` (формула,
 
 | Профиль | Статус |
 |---|---|
-| `industrial_stock` v1 | активный (первый набор данных) |
-| `nature_stock`, `commercial_product`, `editorial`, `ai_content`, `personal_archive` | зарегистрированы, `planned` → `UNKNOWN_PROFILE` |
+| `industrial_stock` v2 | активный (v2 — ориентир для промышленных текстур смягчён) |
+| `architecture_stock` v1, `nature_stock` v1 | активные (с 27.09.2026, §35ZM) |
+| `travel_stock`, `product_stock`, `lifestyle_stock`, `ai_content`, `personal_archive` | зарегистрированы, `planned` → `UNKNOWN_PROFILE` |
+
+**Выбор профиля:** явно (`profile`), по умолчанию (`STOCKER_CREATIVE_PROFILE`)
+или **`profile: "auto"`** — детерминированно по терминам описания Vision
+(`route_terms` профиля; subject / title — вес 3, keywords — 1; нет совпадений —
+профиль по умолчанию). Выбор с оценками записывается в событие
+(`profile.selection`). На 108 отобранных: industrial 96, architecture 10,
+nature 2; несогласий с отбором 18 → 12.
 
 `creative.review {asset_id, profile?}`; по умолчанию —
 `STOCKER_CREATIVE_PROFILE` или `industrial_stock`. `prompt_version` =

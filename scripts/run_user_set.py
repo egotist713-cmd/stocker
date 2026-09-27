@@ -42,6 +42,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Calibration run on the user-selected set")
     parser.add_argument("--ids-only", action="store_true")
     parser.add_argument("--actor", default="agent:claude-code")
+    parser.add_argument("--enhancement", action="store_true", help="также enhancement.assess и enhancement.advise")
+    parser.add_argument("--profile", default=None, help="профиль Creative Review (например, auto)")
     args = parser.parse_args(argv)
 
     ids, missing = user_set_ids()
@@ -53,9 +55,15 @@ def main(argv=None) -> int:
 
     started = time.time()
     for index, asset_id in enumerate(ids, 1):
+        enhancement = ""
+        if args.enhancement:
+            dispatch("enhancement.assess", {"asset_id": asset_id}, actor=args.actor)
+            advise = dispatch("enhancement.advise", {"asset_id": asset_id}, actor=args.actor)
+            enhancement = f" enhancement={(advise['data'] or {}).get('decision') or advise['outcome'] or advise['error']['code']}"
         readiness = dispatch("readiness.evaluate", {"asset_id": asset_id}, actor=args.actor)
-        creative = dispatch("creative.review", {"asset_id": asset_id}, actor=args.actor)
-        print(f"[{index}/{len(ids)}] #{asset_id} readiness={readiness['outcome'] or readiness['error']['code']} "
+        params = {"asset_id": asset_id} | ({"profile": args.profile} if args.profile else {})
+        creative = dispatch("creative.review", params, actor=args.actor)
+        print(f"[{index}/{len(ids)}] #{asset_id}{enhancement} readiness={readiness['outcome'] or readiness['error']['code']} "
               f"creative={creative['outcome'] or creative['error']['code']}", flush=True)
     print(f"done in {time.time() - started:.0f}s", flush=True)
     return 0

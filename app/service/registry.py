@@ -179,8 +179,9 @@ DESCRIPTIONS = {
     "creative.review": (
         "Commercial value review by the local model: composition, uniqueness, demand, use cases, quality notes "
         "and a recommendation (proceed / attention / skip_suggested); commercial_score is computed from them. "
-        "Judged for a content profile (default industrial_stock). "
-        'Recommendation only: never blocks export. Args: {"asset_id": 5}, optional "profile": "industrial_stock"'
+        "Judged for a content profile: industrial_stock, architecture_stock, nature_stock, or \"auto\" "
+        "(chosen from the Vision description). "
+        'Recommendation only: never blocks export. Args: {"asset_id": 5}, optional "profile": "auto"'
     ),
     "creative.get": (
         "Last commercial value review of an asset: commercial_score, commercial_potential, recommendation "

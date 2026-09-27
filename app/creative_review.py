@@ -22,7 +22,7 @@ from app import review_gate as rg
 from app.ai.analyzer import AIResponseError
 from app.ai.creative_advisor import INPUTS, CreativeAdvisor, LMStudioCreativeAdvisor
 from app.ai.schema import AIAnalysis
-from app.creative_profiles import UnknownProfileError, get_profile
+from app.creative_profiles import AUTO, UnknownProfileError, get_profile, route_profile
 from app.database.db import get_asset, get_connection, insert_event, transaction
 
 STAGE = "CREATIVE_REVIEW"
@@ -142,9 +142,14 @@ def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile:
     """Оценка моделью по профилю. Идемпотентно: тот же файл, Vision, шаблон и профиль — без нового вызова."""
     asset, vision = _require(asset_id)
     _refuse_personal_document(asset_id, vision)
+    selection = {"mode": "explicit" if profile else "default"}
     if advisor is None:
         try:
-            advisor = LMStudioCreativeAdvisor(profile=get_profile(profile))
+            if profile == AUTO:
+                chosen, selection = route_profile(vision.subject, vision.title, vision.keywords)
+            else:
+                chosen = get_profile(profile)
+            advisor = LMStudioCreativeAdvisor(profile=chosen)
         except UnknownProfileError as exc:
             raise CreativeReviewError("UNKNOWN_PROFILE", str(exc)) from exc
     used = getattr(advisor, "profile", None)
@@ -152,7 +157,7 @@ def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile:
         "provider": getattr(advisor, "provider", type(advisor).__name__),
         "model": getattr(advisor, "model", None),
         "prompt_version": getattr(advisor, "prompt_version", None),
-        "profile": {"name": used.name, "version": used.version} if used else None,
+        "profile": {"name": used.name, "version": used.version, "selection": selection} if used else None,
     }
     current = fingerprint(asset["file_hash"], asset["ai_result"], provenance["prompt_version"])
 
