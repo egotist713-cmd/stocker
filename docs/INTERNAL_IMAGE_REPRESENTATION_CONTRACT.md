@@ -284,3 +284,38 @@ Normalization (§10a).
 4. **HEIC / HEIF** — `pillow-heif` в runtime **не добавляется** ради
    гипотетических файлов; до реального HEIC-набора — `MISSING_CODEC` и
    синтетическое покрытие.
+
+---
+
+## 13. Реализация: `normalize-v1` (шаг 2, 28.09.2026, паспорт §35ZQ)
+
+- `app/normalizer.py` — движок без БД: `plan(facts)` (чистое решение или
+  `NormalizationRefused` с кодом §7), `build_derivative` (декодирование →
+  поворот по EXIF → PNG без потерь, ICC source байт в байт, EXIF не
+  переносится — ориентация не применится второй раз; запись `.<sha>.tmp` →
+  `fsync` → `os.replace` на `<sha256>.png`), `open_view` (views §4 в памяти).
+  `PARAMS` → `params_hash`; `fingerprint` = SHA256 source + версия + `params_hash`.
+- `app/normalization.py::run_asset` — события: факты (`EVALUATED`), затем
+  `PASSED` с манифестом (`normalizer_version`, `params_hash`, `fingerprint`,
+  `source_sha256`, `facts_fingerprint`, `representation`, `derivative`
+  {path, sha256, size, размеры, mode, icc_embedded}, `transforms`, `preserved`,
+  `decoder`) или `FAILED` (`stage = engine`, код §7). Pass-through файлов не
+  создаёт. `UNCHANGED` — тот же fingerprint **и** derivative на месте с тем же
+  хешем; потерянный derivative пересоздаётся (адресное имя — тот же файл).
+  `FAILED` идемпотентен: та же причина при тех же входах — без нового события.
+- Worker: `NORMALIZE/FAILED` **останавливает** pipeline объекта (исход
+  `NORMALIZE_FAILED`), QC и Vision не выполняются.
+- Views: `undeclared` / `uncalibrated` — **без** конвертации (`color_space =
+  undeclared`); объявленный не-sRGB с ICC → sRGB (perceptual); объявленный
+  не-sRGB **без** ICC (DCF Adobe RGB, nclx P3, cICP, gAMA/cHRM) —
+  `COLOR_CONVERSION_UNSUPPORTED` (профиль не подбирается).
+- `check_consistency`: `NORMALIZE/PASSED` с отсутствующим / изменённым
+  derivative — FAIL; файлы `data/internal` без события — INFO (сбой между
+  файлом и событием: результата без события нет, следующий прогон
+  переиспользует файл).
+
+**Ещё не сделано (шаг 3):** стадии (QC, Enhancement, Vision, Readiness) пока
+читают source напрямую; переход на views и исправление Readiness (§10b)
+выполняются вместе. До этого ingest **не принимает** AVIF / HEIF (расширения
+`SUPPORTED_EXTENSIONS` не меняются): derivative-путь проверен тестами и
+dry-run новой сотни, но в рабочий pipeline AVIF не попадает.

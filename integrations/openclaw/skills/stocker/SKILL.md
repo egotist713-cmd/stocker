@@ -38,7 +38,8 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__metadata_edit` | change title / description / keywords | `{"asset_id": N, "title": "..."}` |
 | `stocker__metadata_gate` | re-evaluate the review gate | `{"asset_id": N}` |
 | `stocker__metadata_escalate` | send to human review | `{"asset_id": N, "reason": "..."}` |
-| `stocker__normalize_get` | facts about the original file: format, color profile, HDR, Motion Photo, metadata present (never values) | `{"asset_id": N}` |
+| `stocker__normalize_get` | facts about the original file (format, color profile, HDR, Motion Photo, metadata present — never values) and its internal representation | `{"asset_id": N}` |
+| `stocker__normalize_run` | build the internal representation (original used as is, or a lossless internal copy for AVIF); never improves or changes the photo; unsafe cases fail with a reason | `{"asset_id": N}` |
 | `stocker__enhancement_get` | image quality: does it need enhancement (Topaz)? decision + reasons (noise / sharpness / artifacts / resolution) | `{"asset_id": N}` |
 | `stocker__enhancement_assess` | measure image quality now (rules; nothing is enhanced) | `{"asset_id": N}` |
 | `stocker__enhancement_advise` | model recommendation only if the rules could not decide (`disputed`); otherwise returns NOT_DISPUTED | `{"asset_id": N}` |

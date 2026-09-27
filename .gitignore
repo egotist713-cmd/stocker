@@ -15,6 +15,7 @@ data/working/*
 data/approved/*
 data/rejected/*
 data/samples/*
+data/internal/*
 logs/*
 *.db
 *.sqlite

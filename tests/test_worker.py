@@ -21,6 +21,7 @@ def test_new_file_runs_full_pipeline(stocker_root):
     assert [(stage, status) for stage, status, _ in events(stocker_root, asset_id)] == [
         ("INGEST", "DONE"),
         ("NORMALIZE", "EVALUATED"),
+        ("NORMALIZE", "PASSED"),
         ("QC", "PASSED"),
         ("ENHANCEMENT", "ASSESSED"),
         ("AI", "PASSED"),

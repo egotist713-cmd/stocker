@@ -152,6 +152,18 @@ def normalize_evaluate(params) -> dict:
     return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != normalization.NORMALIZE_FAILED)
 
 
+def normalize_run(params) -> dict:
+    """Internal representation (source или lossless derivative); source не меняется."""
+    try:
+        result = normalization.run_asset(params.asset_id)
+    except normalization.NormalizationError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    data = {"manifest": result["manifest"]}
+    if "error" in result:
+        data["error"] = result["error"]
+    return _result(params.asset_id, result["outcome"], data, ok=result["outcome"] != normalization.NORMALIZE_FAILED)
+
+
 def normalize_get(params) -> dict:
     try:
         return _result(params.asset_id, None, normalization.get(params.asset_id))

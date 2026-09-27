@@ -121,8 +121,8 @@ v1 — в памяти процесса (как сейчас). Кэш на ди�
 | stage | status | message |
 |---|---|---|
 | `NORMALIZE` | `EVALUATED` | **шаг 1 (реализован 27.09.2026)**: `facts_version` (`normalize-facts-v1`), `fingerprint` (hash файла + версия), `facts` (§3.1) |
-| `NORMALIZE` | `PASSED` | шаг 2 (будущий): создано нормализованное представление, `normalizer_version` |
-| `NORMALIZE` | `FAILED` | `error_type` (`UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `MISSING_CODEC`, `SOURCE_MISSING`, `SOURCE_CHANGED`), `error`, `container` |
+| `NORMALIZE` | `PASSED` | **шаг 2 (реализован 28.09.2026, `normalize-v1`)**: манифест representation — `source` или internal derivative (`INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md` §13) |
+| `NORMALIZE` | `FAILED` | `error_type` (`UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `MISSING_CODEC`, `SOURCE_MISSING`, `SOURCE_CHANGED`; engine: `UNSUPPORTED_HDR`, `UNSUPPORTED_BIT_DEPTH`, `MULTI_FRAME_UNSUPPORTED`, `COLOR_SPACE_UNDECLARED`), `error`, `fingerprint`; engine — `stage = engine`. Повтор той же причины события не пишет. **С шага 2 останавливает pipeline объекта** |
 
 **Шаг 1 (реализован, паспорт §35ZO):** `app/source_facts.py` (только чтение) +
 `app/normalization.py` (события), операции `normalize.evaluate` / `normalize.get`,

@@ -299,6 +299,13 @@ def test_changed_source_fails(stocker_root, asset_id):
     assert envelope["data"]["error"]["error_type"] == "SOURCE_CHANGED"
 
 
+def test_repeated_failure_writes_one_event(stocker_root, asset_id):
+    (stocker_root / "data" / "incoming" / "photo.jpg").unlink()
+    for _ in range(3):
+        assert dispatch("normalize.run", {"asset_id": asset_id})["data"]["error"]["error_type"] == "SOURCE_MISSING"
+    assert [st for st, _ in _norm_events(stocker_root, asset_id)] == ["FAILED"]
+
+
 def test_unknown_asset_and_tools(stocker_root):
     assert dispatch("normalize.evaluate", {"asset_id": 999})["error"]["code"] == "ASSET_NOT_FOUND"
     assert {"normalize_evaluate", "normalize_get"} <= {tool.name for tool in tools()}
@@ -307,13 +314,16 @@ def test_unknown_asset_and_tools(stocker_root):
 def test_worker_records_facts_before_qc(stocker_root):
     asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
     stages = [(s, st) for s, st, _ in events(stocker_root, asset_id)]
-    assert stages.index(("NORMALIZE", "EVALUATED")) < stages.index(("QC", "PASSED"))
+    assert stages.index(("NORMALIZE", "EVALUATED")) < stages.index(("NORMALIZE", "PASSED")) < stages.index(("QC", "PASSED"))
 
 
-def test_worker_continues_when_facts_crash(stocker_root, monkeypatch):
+def test_worker_stops_when_normalization_crashes(stocker_root, monkeypatch):
+    # С шага 2 без representation дальше не идём (контракт §7); сбой без события — без результата.
     def broken(asset_id):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(normalization, "evaluate_asset", broken)
-    asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
-    assert ("AI", "PASSED") in [(s, st) for s, st, _ in events(stocker_root, asset_id)]
+    asset_id, outcome = worker.ingest_and_process(make_image(stocker_root), analyzer=FakeAnalyzer())
+    assert outcome == worker.NORMALIZE_FAILED
+    stages = {s for s, _, _ in events(stocker_root, asset_id)}
+    assert "QC" not in stages and "AI" not in stages

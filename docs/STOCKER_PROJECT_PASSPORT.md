@@ -3808,7 +3808,88 @@ HEIC и TIFF нет ни в одном наборе — покрыты толь�
 
 ### Статус
 
-🟡 Контракт — на согласовании (решения §12); engine не начат.
+🟡 Контракт — на согласовании (решения §12); engine не начат. → принят, §35ZQ.
+
+---
+
+# 35ZQ. 2026-09-28 — Контракт принят; metadata policy экспорта; Normalization engine normalize-v1
+
+### Решения пользователя
+
+1. Контракт внутреннего представления **принят**. Representation: JPEG / PNG /
+   TIFF — source напрямую; AVIF / HEIF / HEIC — internal lossless derivative
+   только когда нужен. Source всегда immutable; internal derivative никогда не
+   export derivative; связь source → derivative обязательна.
+2. Цвет не объявлен (29 файлов новой сотни) — `color_profile = undeclared`,
+   **не sRGB**; не автоматический `FAILED`, но ни одна операция молча sRGB не
+   принимает. Uncalibrated без ICC — так же (`COLOR_SPACE_UNDECLARED`).
+3. `pillow-heif` в runtime не добавляется до реального HEIC-набора.
+4. **Metadata policy экспорта:** metadata source в файл площадки **не
+   переносится** автоматически; создаётся заново по whitelist площадки; ICC не
+   копируется — целевой профиль назначает профиль площадки. `digitalSourceType`
+   — факт происхождения: ≠ `ai_generated`, ≠ автоматический запрет, в экспорт
+   не переносится (если whitelist площадки не требует); provenance остаётся в
+   Stocker.
+5. `export_metadata_contamination_case` — будущая регрессия: из экспорта не
+   должна попасть **никакая** неразрешённая исходная metadata.
+6. Порядок: SOURCE FACTS → CONTRACT → TESTS → ENGINE. Наборы не смешивать;
+   новую сотню не регистрировать; source не менять; Export не реализовывать.
+
+### Сделано
+
+- Коммит d853957: `normalize-facts-v3` (`undeclared` вместо умолчания,
+  `declared = False` для undeclared / uncalibrated); контракт принят (§10a
+  provenance, §10b Readiness follow-up, §11, §12);
+  `EXPORT_PREPARATION_CONTRACT` §4.2 (whitelist / ICC / provenance), §4.5;
+  фикстура `tests/fixtures/export_metadata_contamination.py` (EXIF, IPTC, XMP
+  разных пространств, ICC, COM, APP11 JUMBF, хвостовой MP4) и тесты; тест
+  whitelist экспорта — `skip` до `export.prepare`.
+- **Engine `normalize-v1`** (контракт §13): `app/normalizer.py` (plan /
+  build_derivative / open_view, `PARAMS` + `params_hash`), `run_asset` в
+  `app/normalization.py` (`NORMALIZE/PASSED` с манифестом или `FAILED` с
+  кодом §7), worker — `NORMALIZE_FAILED` останавливает pipeline объекта;
+  операция `normalize.run` (pipeline-доступ, allowlist n8n, skill OpenClaw);
+  `normalize.get` / `pipeline.normalize` — `normalized`, `representation`,
+  `representation_stale`, манифест; `check_consistency` — derivative
+  отсутствует / изменён → FAIL, файлы без события → INFO.
+- Найдено и исправлено: `FAILED` фактов (`SOURCE_MISSING` / `SOURCE_CHANGED`)
+  писался **при каждом** прогоне (у #2, #67, #68 — по 5 событий). Теперь
+  `FAILED` идемпотентен (причина + fingerprint); старые события не удалялись
+  (история — источник истины).
+- `scripts/normalize_dry_run.py` — engine на папке или `--registered` без БД,
+  derivative во временную папку, views в памяти, SHA256 source до / после.
+- `tests/test_normalizer.py` (18) и `tests/fixtures/icc.py` (синтетический
+  Display P3 ICC: в системе его нет): pass-through; AVIF derivative
+  (ориентация, ICC байт в байт, альфа, идемпотентность); потерянный derivative;
+  сбой между файлом и событием (сирота без события, переиспользуется);
+  HEIF → `MISSING_CODEC` и остановка worker; CMYK без ICC; HDR; анимация;
+  10 бит AVIF; views (undeclared без конвертации, P3 → sRGB, sRGB без
+  изменений, альфа на белом, без увеличения). Мутации «без поворота» и
+  «undeclared как sRGB» ловятся тестами.
+
+### Проверка
+
+| | Существующий (129, через БД) | Новая сотня (100, dry-run, не зарегистрирована) |
+|---|---|---|
+| Normalized | 126 (`source` 126) | 100 (`source` 94, `derivative` 6 AVIF) |
+| FAILED | 3: #2 `SOURCE_CHANGED`, #67 / #68 `SOURCE_MISSING` | 0 |
+| Views: цвет | sRGB 127 (P3 → sRGB 18) | sRGB 70 (ProPhoto → sRGB 1), undeclared 30 (29 + Uncalibrated 1) |
+| Альфа на белом (view) | 0 | 21 |
+| Source изменён | 0 | 0 |
+
+Повторный прогон по БД: 126 `UNCHANGED`, событий не добавилось.
+`pytest`: 552 passed, 5 skipped. `check_consistency`: OK, сирот 0.
+
+### Статус
+
+🟢 Engine шаг 2 — DONE. Стадии ещё читают source напрямую; ingest AVIF не
+принимает.
+
+### Дальше
+
+Шаг 3: QC / Enhancement / Vision / Readiness — на views; вместе с ним Readiness
+цвет по фактам (`undeclared` → blocker `COLOR_SPACE_UNDECLARED`) и приём AVIF
+в ingest. Export preparation — не начинать.
 
 ---
 
@@ -3989,7 +4070,7 @@ CALIBRATION ON USER-SELECTED PHOTOS (incoming)
     🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
-    🟡 IN PROGRESS — шаг 1 (факты v2) DONE; контракт внутреннего представления — на согласовании; engine не начат (§35ZO, §35ZP)
+    🟡 IN PROGRESS — факты v3 DONE; контракт внутреннего представления ПРИНЯТ; engine normalize-v1 (шаг 2) DONE; шаг 3 (стадии на views + Readiness цвет) — не начат; Export — не начат (§35ZO, §35ZP, §35ZQ)
 
 ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
     🟢 DONE v2 — 28 → 4 рекомендации на 108 отобранных (§35ZM)

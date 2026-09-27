@@ -45,6 +45,7 @@ WORKFLOW_ALLOWED = frozenset(
         "metadata.build",
         "metadata.gate",
         "normalize.evaluate",
+        "normalize.run",
         "normalize.get",
         "enhancement.assess",
         "enhancement.advise",

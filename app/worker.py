@@ -25,9 +25,10 @@ AI_ALREADY_DONE = "AI_ALREADY_DONE"
 QC_FAILED = "QC_FAILED"
 SOURCE_INVALID = "SOURCE_INVALID"
 ASSET_NOT_FOUND = "ASSET_NOT_FOUND"
+NORMALIZE_FAILED = "NORMALIZE_FAILED"
 
 # Исходы, при которых обработка не выполнила свою работу из-за ошибки.
-ERROR_OUTCOMES = {AI_FAILED, SOURCE_INVALID, ASSET_NOT_FOUND}
+ERROR_OUTCOMES = {AI_FAILED, SOURCE_INVALID, ASSET_NOT_FOUND, NORMALIZE_FAILED}
 
 MAX_RAW_OUTPUT_CHARS = 4000
 
@@ -122,19 +123,23 @@ def run_metadata(asset_id: int, analyzer: MetadataAnalyzer | None = None) -> str
     return result["outcome"]
 
 
-def run_normalization(asset_id: int) -> str | None:
+def run_normalization(asset_id: int) -> str:
     """
-    Normalization, шаг 1: факты об исходнике (docs/FORMAT_CONTRACT.md §3).
-    Только наблюдение: файл не меняется, pipeline не останавливается.
+    Internal Normalization (docs/INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md): факты об
+    исходнике и representation. NORMALIZE/FAILED останавливает pipeline объекта (§7):
+    без безопасного представления дальше ничего не угадывается.
     """
     try:
-        result = normalization.evaluate_asset(asset_id)
-    except Exception as exc:  # noqa: BLE001 — факты не должны останавливать обработку на шаге 1
-        print(f"NORMALIZE: skipped ({type(exc).__name__}: {exc})")
-        return None
-    facts = result["facts"] or {}
-    detail = result.get("error", {}).get("error_type") or f"{facts.get('container')}, {facts.get('color_profile', {}).get('kind')}"
-    print(f"NORMALIZE: {result['outcome']} ({detail})")
+        result = normalization.run_asset(asset_id)
+    except Exception as exc:  # noqa: BLE001 — без representation дальше не идём; события нет — результата нет
+        print(f"NORMALIZE: crashed ({type(exc).__name__}: {exc})")
+        return NORMALIZE_FAILED
+    if result["outcome"] == normalization.NORMALIZE_FAILED:
+        print(f"NORMALIZE: FAILED ({result['error'].get('error_type')})")
+        return NORMALIZE_FAILED
+    manifest = result["manifest"]
+    color = manifest["preserved"]["color"]["kind"]
+    print(f"NORMALIZE: {result['outcome']} ({manifest['representation']}, {color})")
     return result["outcome"]
 
 
@@ -186,7 +191,9 @@ def process_asset(
         print(f"SOURCE: INVALID ({problem['reason']})")
         return SOURCE_INVALID
 
-    run_normalization(asset_id)
+    if run_normalization(asset_id) == NORMALIZE_FAILED:
+        print("QC, AI: skipped because normalization failed")
+        return NORMALIZE_FAILED
 
     qc_result = check_asset(asset)
     save_qc_result(asset_id, qc_result)

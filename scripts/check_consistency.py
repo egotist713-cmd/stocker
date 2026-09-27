@@ -8,6 +8,8 @@
 результат без события и событие без результата. Ничего не исправляет.
 """
 
+import hashlib
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -39,19 +41,76 @@ CHECKS = {
 }
 
 
+def _latest_manifests(connection) -> dict[int, dict]:
+    rows = connection.execute(
+        """SELECT e.asset_id, e.message FROM processing_events e WHERE e.id IN (
+               SELECT MAX(id) FROM processing_events WHERE stage = 'NORMALIZE' AND status = 'PASSED' GROUP BY asset_id)"""
+    )
+    return {asset_id: json.loads(message) for asset_id, message in rows}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _derivative_problems(connection, root: Path) -> list[int]:
+    """NORMALIZE/PASSED ссылается на internal derivative, которого нет или который изменён."""
+    broken = []
+    for asset_id, manifest in _latest_manifests(connection).items():
+        derivative = manifest.get("derivative")
+        if derivative:
+            path = root / derivative["path"]
+            if not path.exists() or _sha256(path) != derivative["sha256"]:
+                broken.append(asset_id)
+    return sorted(broken)
+
+
 def find_problems(db_path: Path = DB) -> dict[str, list[int]]:
     """{проверка: id объектов с нарушением} — только чтение."""
+    root = Path(db_path).resolve().parents[2]
     connection = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
     try:
-        return {name: [row[0] for row in connection.execute(query)] for name, query in CHECKS.items()}
+        problems = {name: [row[0] for row in connection.execute(query)] for name, query in CHECKS.items()}
+        problems["NORMALIZE/PASSED derivative missing or changed"] = _derivative_problems(connection, root)
+        return problems
     finally:
         connection.close()
+
+
+def find_orphans(db_path: Path = DB) -> list[str]:
+    """
+    Файлы в data/internal без события (сбой между записью файла и событием). Не ошибка
+    согласованности: результата без события нет, следующий прогон переиспользует файл.
+    """
+    root = Path(db_path).resolve().parents[2]
+    internal = root / "data" / "internal"
+    if not internal.exists():
+        return []
+    connection = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+    try:
+        referenced = {
+            json.loads(message)["derivative"]["path"]
+            for (message,) in connection.execute("SELECT message FROM processing_events WHERE stage = 'NORMALIZE' AND status = 'PASSED'")
+            if json.loads(message).get("derivative")
+        }
+    finally:
+        connection.close()
+    files = (path.relative_to(root).as_posix() for path in internal.rglob("*") if path.is_file())
+    return sorted(path for path in files if path not in referenced)
 
 
 def main() -> int:
     problems = find_problems()
     for name, ids in problems.items():
         print(f"{'OK  ' if not ids else 'FAIL'} {name}: {ids if ids else '-'}")
+    orphans = find_orphans()
+    print(f"INFO internal files without NORMALIZE/PASSED: {len(orphans)}")
+    for path in orphans:
+        print(f"     {path}")
     return 1 if any(problems.values()) else 0
 
 

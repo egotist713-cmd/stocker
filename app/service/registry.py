@@ -165,8 +165,14 @@ DESCRIPTIONS = {
         "Describe the original file without changing it: format, color profile, bit depth, HDR / Ultra HDR, "
         'Motion Photo video, extra streams, orientation, metadata present. Args: {"asset_id": 5}'
     ),
+    "normalize.run": (
+        "Build the internal representation for analysis: JPEG / PNG / TIFF are used as is, AVIF gets a lossless "
+        "internal copy. Never improves the photo and never changes the original. Unsafe cases fail with a reason "
+        '(MISSING_CODEC, UNSUPPORTED_HDR, COLOR_SPACE_UNDECLARED for CMYK without ICC…). Args: {"asset_id": 5}'
+    ),
     "normalize.get": (
-        'Last facts about the original file (format, color profile, HDR, Motion Photo). Read only. Args: {"asset_id": 5}'
+        "Last facts about the original file (format, color profile, HDR, Motion Photo) and its internal "
+        'representation manifest. Read only. Args: {"asset_id": 5}'
     ),
     "enhancement.assess": (
         "Image quality check before Vision: noise, sharpness, compression artifacts, resolution. "
@@ -233,6 +239,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
         Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
         Operation("normalize.evaluate", DESCRIPTIONS["normalize.evaluate"], AssetParams, PIPELINE, ops.normalize_evaluate),
+        Operation("normalize.run", DESCRIPTIONS["normalize.run"], AssetParams, PIPELINE, ops.normalize_run),
         Operation("normalize.get", DESCRIPTIONS["normalize.get"], AssetParams, READ, ops.normalize_get),
         Operation("enhancement.assess", DESCRIPTIONS["enhancement.assess"], AssetParams, PIPELINE, ops.enhancement_assess),
         Operation("enhancement.advise", DESCRIPTIONS["enhancement.advise"], AssetParams, PIPELINE, ops.enhancement_advise),

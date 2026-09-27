@@ -201,6 +201,9 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
             "hdr": "none",
             "motion_video": False,
             "event_id": envelope["data"]["pipeline"]["normalize"]["event_id"],
+            "normalized": True,
+            "representation": "source",
+            "representation_stale": False,
         },
         "enhancement": {
             "assessed": True,

@@ -93,7 +93,7 @@ Content-Type: application/json
 | `metadata.gate` | ✅ | gate не меняет решения человека |
 | `readiness.evaluate`, `readiness.get` | ✅ | оценка по правилам площадок; решений не принимает, metadata и файл не меняет |
 | `creative.review`, `creative.get` | ✅ | коммерческая оценка — только рекомендация |
-| `normalize.evaluate`, `normalize.get` | ✅ | факты об исходнике; файл не меняется |
+| `normalize.evaluate`, `normalize.run`, `normalize.get` | ✅ | факты и внутреннее представление; source не меняется, ничего не улучшается |
 | `enhancement.assess`, `enhancement.advise`, `enhancement.get` | ✅ | метрики качества и рекомендация (модель — только для спорных); ничего не улучшает |
 
 Операции оценки адресуются одним `asset_id`; пакетной переоценки нет. Workflow,
