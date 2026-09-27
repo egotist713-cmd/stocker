@@ -98,6 +98,23 @@ def from_file(path: Path, color: dict, representation: str, source_sha256: str, 
     return AnalysisView(image, info, source_sha256=source_sha256, representation=representation, **extra)
 
 
+def view_of_file(path: Path) -> AnalysisView:
+    """
+    View незарегистрированного файла — для отладочных скриптов и dry-run (не для стадий).
+    Те же факты, plan и правила views; derivative не пишется: декодирование в памяти
+    то же, что у lossless derivative (§3).
+    """
+    from app.ingest import sha256_file
+    from app.source_facts import read_facts
+
+    path = Path(path)
+    try:
+        planned = normalizer.plan(read_facts(path, path.name))
+    except normalizer.NormalizationRefused as exc:
+        raise ViewUnavailable(exc.code, str(exc)) from exc
+    return from_file(path, planned["preserved"]["color"], normalizer.SOURCE, sha256_file(path))
+
+
 def open_asset_view(asset_id: int) -> AnalysisView:
     """View объекта по действительному манифесту NORMALIZE/PASSED; файл representation сверяется по хешу."""
     asset = get_asset(asset_id)

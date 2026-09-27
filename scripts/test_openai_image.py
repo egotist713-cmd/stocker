@@ -1,6 +1,7 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 from app.ai.openai_analyzer import OpenAIAnalyzer
+from app.analysis_view import view_of_file
 
 
 IMAGE = Path(
@@ -10,7 +11,7 @@ IMAGE = Path(
 
 analyzer = OpenAIAnalyzer()
 
-result = analyzer.analyze(IMAGE)
+result = analyzer.analyze(view_of_file(IMAGE))
 
 print("=== AI ANALYSIS ===")
 print(result.model_dump_json(indent=2, ensure_ascii=False))

@@ -2,13 +2,14 @@ from pathlib import Path
 import base64
 
 from app.ai.local_analyzer import LocalAnalyzer
+from app.analysis_view import view_of_file
 
 
 def main():
     analyzer = LocalAnalyzer()
     image_path = Path("data/incoming/IMG_20260911_130107.jpg")
 
-    image_bytes, mime_type = analyzer._prepare_image(image_path, "image/jpeg")
+    image_bytes, mime_type = analyzer._prepare_image(view_of_file(image_path))
     image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
     messages = [

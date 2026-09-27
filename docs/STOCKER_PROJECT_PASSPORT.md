@@ -3946,12 +3946,12 @@ HEIC и TIFF нет ни в одном наборе — покрыты толь�
 - **AVIF в ingest** (`SUPPORTED_EXTENSIONS`); HEIC / HEIF — нет.
 - Найдено и исправлено: `ENHANCEMENT/FAILED` писался при каждом повторе (как
   `NORMALIZE/FAILED` в §35ZQ) — теперь идемпотентен.
-- Тесты: `tests/test_analysis_view.py` (14: отказы без манифеста / stale /
+- Тесты: `tests/test_analysis_view.py` (15: отказы без манифеста / stale /
   изменённый файл, канонический view, без увеличения, один view на QC /
   Enhancement / Vision, отпечаток view в событиях, остановка без view, AVIF
   через весь pipeline на derivative, HEIC не принимается, архитектурная
   граница «файл декодируют только normalizer / source_facts / ingest»,
-  Readiness без view); ICC-регрессии в `tests/test_normalizer.py` (факт ICC;
+  Readiness без view; view незарегистрированного AVIF байт в байт = view его derivative); ICC-регрессии в `tests/test_normalizer.py` (факт ICC;
   P3 derivative — P3-пиксели и P3 ICC; view из него — sRGB без ICC источника;
   четыре противоречивые записи отклоняются; противоречие не пишет событие;
   CMYK с ICC). Мутации «CMYK как RGB», «view сохраняет ICC» и «стадия открывает
@@ -3979,7 +3979,7 @@ AnalysisView; только чтение, без БД):
 Readiness 109 `EVALUATED`, `ready_for` не изменился ни у одного.
 Повторный прогон: Normalization / Enhancement / советник / Readiness —
 `UNCHANGED`, 0 новых событий. `check_consistency`: OK, сирот 0.
-`pytest`: 584 passed, 5 skipped.
+`pytest`: 585 passed, 5 skipped. Отладочные скрипты (`scripts/debug_local_ai.py` и др.) — через `analysis_view.view_of_file`.
 
 ### Статус
 

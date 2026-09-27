@@ -1,14 +1,15 @@
-﻿import base64
+import base64
 import json
 import urllib.request
 from pathlib import Path
 
 from app.ai.local_analyzer import LocalAnalyzer
+from app.analysis_view import view_of_file
 
 analyzer = LocalAnalyzer()
 
 path = Path("data/incoming/IMG_20260911_130107.jpg")
-image_bytes, mime_type = analyzer._prepare_image(path, "image/jpeg")
+image_bytes, mime_type = analyzer._prepare_image(view_of_file(path))
 image_base64 = base64.b64encode(image_bytes).decode()
 
 data = {

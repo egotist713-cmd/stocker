@@ -165,6 +165,15 @@ def test_avif_goes_through_the_pipeline_on_its_derivative(stocker_root):
     assert normalization.run_asset(asset_id)["outcome"] == normalization.UNCHANGED
 
 
+def test_view_of_unregistered_file_matches_asset_view(stocker_root):
+    path = _avif(stocker_root / "data" / "incoming" / "photo.avif")
+    loose = analysis_view.view_of_file(path)
+    asset_id = ingest_file(path)
+    normalization.run_asset(asset_id)
+    registered = analysis_view.open_asset_view(asset_id)
+    assert loose.full.tobytes() == registered.full.tobytes() and loose.fingerprint == registered.fingerprint
+
+
 def test_heic_is_still_not_ingested(stocker_root):
     path = stocker_root / "data" / "incoming" / "photo.heic"
     path.write_bytes(b"\x00\x00\x00\x18ftypheic" + b"\x00" * 64)
