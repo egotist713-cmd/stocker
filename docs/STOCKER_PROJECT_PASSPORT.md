@@ -3480,6 +3480,50 @@ Topaz — **не нужен сейчас**; OCR/brand detector — **не нуж
 
 ---
 
+# 35ZK. 2026-09-27 — Калибровка на отобранных фото; атомарность Vision
+
+### Сделано
+
+- `scripts/run_user_set.py`: набор = объекты, чьё содержимое есть в
+  `data/incoming` (108); `readiness.evaluate` + `creative.review` по одному.
+  `pipeline_stats.py --ids`, статистика Creative Review.
+- Отчёт — **`docs/CALIBRATION_2026-09-27.md`**.
+
+### Итоги (108 отобранных)
+
+QC 108 (24 — warning 4–12 MP); Vision 108; gate: 97 `auto_approved`, 11
+`human_review` (бренды на оборудовании, шильдики — 10 %); Readiness 97 `ready`,
+0 `blocked`; **Enhancement 28 `recommended` (26 %) — ложные срабатывания**
+(боке, фактура как артефакты); **Creative Review 90 `proceed`, 18 не согласны**:
+нетематические кадры (нужны профили architecture / nature) и промышленные
+текстуры (ориентир профиля слишком строг).
+
+### Найдено и исправлено
+
+- **Неатомарная запись Vision:** `worker.run_ai` писал `ai_result` и
+  `AI/PASSED` двумя транзакциями; аппаратный сброс между ними оставил asset 118
+  с результатом без события. Исправлено: `update_ai_result` + `insert_event` в
+  одной транзакции (тест `test_ai_result_and_event_are_atomic`); asset 118
+  переобработан. Остальные стадии уже атомарны (QC — один commit, metadata —
+  транзакция, Enhancement / Creative / Readiness — одно событие).
+- **LM Studio `llama-server` падал дважды** при нехватке виртуальной памяти
+  (llama-server ~14 GB; предел 39.7 GB = 32 GB RAM + 8 GB подкачки на G:);
+  Stocker записал `REVIEW_FAILED` и продолжил; повторено. Файл подкачки не на C:
+  — причина отсутствия аварийных дампов (volmgr 46).
+- Наблюдение за стабильностью (§35ZJ): после перезагрузки 14:53 WHEA и
+  Kernel-Power 41 нет; калибровочная нагрузка прошла без аппаратных ошибок.
+
+### Проверка
+
+`pytest`: 461 passed, 4 skipped.
+
+### Статус
+
+🟢 Калибровка DONE. Предложения — `CALIBRATION_2026-09-27.md` §4 (Enhancement —
+перекалибровка; Creative — профили architecture / nature, ориентир текстур).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3654,7 +3698,7 @@ CREATIVE REVIEW ADVISOR (первичные признаки + commercial_score,
     🟢 DONE v1 — отдельный инструмент (не pipeline); профили, активный industrial_stock (§35ZH, §35ZI)
 
 CALIBRATION ON USER-SELECTED PHOTOS (incoming)
-    🟡 IN PROGRESS — фото получены и обработаны n8n (§35ZJ)
+    🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
     🟡 CONTRACT — docs/FORMAT_CONTRACT.md, без реализации (§3A.11, §35ZJ)

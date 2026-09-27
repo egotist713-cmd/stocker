@@ -11,7 +11,7 @@ from app.ai.analyzer import AIAnalyzer, AIResponseError
 from app.ai.enhancement_advisor import advisor_enabled
 from app.ai.metadata_analyzer import MetadataAnalyzer
 from app.ai.local_analyzer import LocalAnalyzer
-from app.database.db import add_event, get_asset, save_ai_result
+from app.database.db import add_event, get_asset, insert_event, transaction, update_ai_result
 from app.ingest import ingest_file, sha256_file, source_file
 from app.qc import check_asset, save_qc_result
 
@@ -93,8 +93,6 @@ def run_ai(asset_id: int, path: Path, analyzer: AIAnalyzer) -> str:
         privacy = {"reason": "PERSONAL_DOCUMENT", "terms": document, "text_visible_removed": len(ai_result.text_visible)}
         ai_result = ai_result.model_copy(update={"text_visible": []})
 
-    save_ai_result(asset_id, ai_result.model_dump_json())
-
     passed = {
         **provenance,
         "analyzed_at": _now(),
@@ -102,7 +100,12 @@ def run_ai(asset_id: int, path: Path, analyzer: AIAnalyzer) -> str:
     }
     if privacy:
         passed["privacy"] = privacy
-    add_event(asset_id, "AI", "PASSED", json.dumps(passed, ensure_ascii=False))
+
+    # Результат и событие — одной транзакцией: сбой между ними (аппаратный сброс
+    # 27.09, asset 118) оставлял ai_result без AI/PASSED.
+    with transaction() as connection:
+        update_ai_result(connection, asset_id, ai_result.model_dump_json())
+        insert_event(connection, asset_id, "AI", "PASSED", json.dumps(passed, ensure_ascii=False))
     print("AI: PASSED")
     return AI_PASSED
 

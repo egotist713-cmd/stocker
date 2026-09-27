@@ -1,6 +1,8 @@
 import json
 import sqlite3
 
+import pytest
+
 from app import worker
 from app.ai.analyzer import AIResponseError
 from app.database.db import get_asset
@@ -36,6 +38,21 @@ def test_ai_passed_event_records_provenance(stocker_root):
     assert message["prompt_version"] == "test-v1"
     assert "analyzed_at" in message
     assert "duration_s" in message
+
+
+def test_ai_result_and_event_are_atomic(stocker_root, monkeypatch):
+    # Сбой между записью результата и события не должен оставлять ai_result без AI/PASSED.
+    asset_id = ingest_file(make_image(stocker_root))
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("power loss")
+
+    monkeypatch.setattr(worker, "insert_event", crash)
+    with pytest.raises(RuntimeError):
+        worker.run_ai(asset_id, stocker_root / "data" / "incoming" / "photo.jpg", FakeAnalyzer())
+
+    assert get_asset(asset_id)["ai_result"] is None
+    assert ("AI", "PASSED") not in [(s, st) for s, st, _ in events(stocker_root, asset_id)]
 
 
 def test_ai_failure_is_recorded_not_raised(stocker_root):

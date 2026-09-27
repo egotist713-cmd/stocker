@@ -226,6 +226,19 @@ def insert_event(
     return int(cursor.lastrowid)
 
 
+def update_ai_result(connection: sqlite3.Connection, asset_id: int, ai_result: str) -> None:
+    """Save assets.ai_result inside an open transaction (together with its AI/PASSED event)."""
+    connection.execute(
+        """
+        UPDATE assets
+        SET ai_result = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (ai_result, asset_id),
+    )
+
+
 def update_metadata(connection: sqlite3.Connection, asset_id: int, metadata_json: str) -> None:
     """Save assets.metadata_json inside an open transaction."""
     connection.execute(

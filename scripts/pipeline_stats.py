@@ -3,6 +3,7 @@
 
     python scripts/pipeline_stats.py                 # все объекты
     python scripts/pipeline_stats.py --from-id 10    # только выборка с id >= 10
+    python scripts/pipeline_stats.py --ids @logs/user_set_ids.json   # отобранный набор
     python scripts/pipeline_stats.py --json          # машиночитаемый вывод
 
 Собирает: QC, Enhancement, Vision, metadata и причины human_review, Stock
@@ -20,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app import enhancement_decision, stock_readiness  # noqa: E402
+from app import creative_review, enhancement_decision, stock_readiness  # noqa: E402
 
 DB = ROOT / "data" / "db" / "stocker.db"
 
@@ -38,12 +39,14 @@ def _durations(values: list[float]) -> dict | None:
     return {"n": len(values), "median_s": round(statistics.median(values), 1), "max_s": round(max(values), 1)}
 
 
-def collect(from_id: int, to_id: int | None) -> dict:
+def collect(from_id: int, to_id: int | None, ids: list[int] | None = None) -> dict:
     connection = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     try:
         query = "SELECT * FROM assets WHERE id >= ?" + (" AND id <= ?" if to_id else "") + " ORDER BY id"
         assets = [dict(r) for r in connection.execute(query, (from_id, to_id) if to_id else (from_id,))]
+        if ids is not None:
+            assets = [a for a in assets if a["id"] in set(ids)]
         events = {}
         for row in connection.execute("SELECT id, asset_id, stage, status, message FROM processing_events ORDER BY id"):
             events.setdefault(row["asset_id"], []).append(dict(row))
@@ -61,6 +64,7 @@ def collect(from_id: int, to_id: int | None) -> dict:
         "metadata_validation_errors": Counter(), "metadata_validation_warnings": Counter(), "metadata_durations": [],
         "human_review_reasons": Counter(), "gate_notes": Counter(),
         "readiness": {}, "readiness_checks": Counter(), "categories": Counter(),
+        "creative_recommendation": Counter(), "creative_potential": Counter(),
         "per_asset": [],
     }
 
@@ -141,6 +145,12 @@ def collect(from_id: int, to_id: int | None) -> dict:
                 for category in ([plan["category"]] if plan.get("category") else plan.get("categories", [])):
                     stats["categories"][f"{platform}:{category}"] += 1
         row["readiness"] = readiness["platforms"]
+
+        # Creative Review (советник, не этап pipeline)
+        creative = creative_review.summary_from_events(history)
+        stats["creative_recommendation"][creative["recommendation"] or "not_reviewed"] += 1
+        stats["creative_potential"][creative["commercial_potential"] or "not_reviewed"] += 1
+        row["creative"] = (creative["commercial_score"], creative["recommendation"])
         stats["per_asset"].append(row)
 
     stats["vision_durations"] = _durations(stats["vision_durations"])
@@ -167,10 +177,14 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--from-id", type=int, default=1)
     parser.add_argument("--to-id", type=int)
+    parser.add_argument("--ids", help="список id через запятую или @файл с JSON-списком (logs/user_set_ids.json)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    stats = collect(args.from_id, args.to_id)
+    ids = None
+    if args.ids:
+        ids = json.loads(Path(args.ids[1:]).read_text()) if args.ids.startswith("@") else [int(x) for x in args.ids.split(",")]
+    stats = collect(args.from_id, args.to_id, ids)
     if args.json:
         print(json.dumps(stats, ensure_ascii=False, indent=2, default=dict))
     else:
