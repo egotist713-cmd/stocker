@@ -3524,6 +3524,37 @@ QC 108 (24 — warning 4–12 MP); Vision 108; gate: 97 `auto_approved`, 11
 
 ---
 
+# 35ZL. 2026-09-27 — Выводы калибровки и приоритеты
+
+### Решения пользователя
+
+1. **`FORMAT_CONTRACT` принят**, реализация format layer **не начинается**.
+   GPS из оригинала не удаляется; удаление GPS — отдельная операция export
+   preparation. Motion Photo / Ultra HDR — при будущем экспорте, текущий
+   pipeline не усложнять.
+2. **Стабильность — вопрос открыт, без паники:** стресс-тесты и тесты памяти
+   3600 / FCLK 1800 проходили без ошибок, конфигурация не считается
+   доказанно нестабильной; наблюдение продолжается. **Исправление атомарности
+   записи Vision — обязательное** (ошибка архитектуры независимо от причины
+   сбоя).
+3. **Enhancement — главный кандидат на доработку:** 26 % ложных срабатываний.
+   Цель — **меньше ложных Topaz-рекомендаций** (Topaz — исключение, не этап).
+   Без новых возможностей: (1) пересмотреть метрики резкости; (2) отделить фон
+   от объекта; (3) учитывать тип фотографии; (4) статистика после исправлений.
+4. **Creative Review:** проблема в профиле, не в модели. Stocker —
+   универсальный фото-комбайн; движок с профилями `industrial_stock`,
+   `nature_stock`, `architecture_stock`, `travel_stock`, `product_stock`,
+   `lifestyle_stock`, `ai_content`, `personal_archive`. В ядре нет привязки к
+   industrial. Сейчас — `industrial_stock` + `nature_stock` +
+   `architecture_stock`; остальные — по мере статистики. Остаётся советником.
+5. **Порядок:** Enhancement → профильная архитектура Creative Review → профили
+   industrial / nature / architecture → повторный прогон на тех же 108 фото →
+   только потом normalization, Export preparation, API стоков.
+6. **Датасет не расширять:** 108 реальных фото уже нашли архитектурные
+   проблемы; сначала исправить, потом расширять (иначе — больше шума).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3701,7 +3732,10 @@ CALIBRATION ON USER-SELECTED PHOTOS (incoming)
     🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
-    🟡 CONTRACT — docs/FORMAT_CONTRACT.md, без реализации (§3A.11, §35ZJ)
+    🟢 CONTRACT ACCEPTED — реализация после калибровки Enhancement / Creative (§35ZL)
+
+ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
+    ⚪ NEXT — приоритет 1 (§35ZL)
 
 AUDIT 2026-09-26 (64 реальных фото) + gate-v1.2 (дети, документы)
     🟢 DONE (§35ZF, §35ZG) — docs/AUDIT_2026-09-26.md
