@@ -34,7 +34,7 @@ _MUTATION_LOCK = threading.Lock()
 EXPOSED_ACCESS = (READ, PIPELINE)
 _NON_HUMAN_ACTOR = re.compile(r"^(agent|workflow):[a-z0-9_.-]+$")
 
-INSTRUCTIONS = """Stocker: industrial stock photo pipeline (ingest -> QC -> Vision -> metadata -> review gate).
+INSTRUCTIONS = """Stocker: stock photo pipeline (ingest -> QC -> Vision -> metadata -> review gate).
 Start with asset_list or review_queue, inspect with asset_get (see pipeline and allowed_actions).
 You may process images, build/rebuild/edit metadata, re-run the gate and escalate to a human.
 Approve/reject are human decisions and are not available to agents. auto_approved is set only by

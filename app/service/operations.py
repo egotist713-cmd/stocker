@@ -177,7 +177,7 @@ def enhancement_get(params) -> dict:
 def creative_review(params) -> dict:
     """Коммерческая оценка моделью; только рекомендация, данные — оценка, а не asset view."""
     try:
-        result = creative_review_service.review_asset(params.asset_id)
+        result = creative_review_service.review_asset(params.asset_id, profile=params.profile)
         data = {"review": result["review"], **creative_review_service.get(params.asset_id)}
     except creative_review_service.CreativeReviewError as exc:
         raise ServiceError(exc.code, str(exc)) from exc

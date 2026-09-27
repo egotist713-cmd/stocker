@@ -1,6 +1,10 @@
 """
 Creative Review: коммерческая оценка кадра (docs/STOCK_READINESS_CONTRACT.md §4.3).
 
+Отдельный инструмент-советник, не этап обязательного pipeline (паспорт
+§3A.9–3A.10): запуск вручную или через n8n по запросу. Тематика — только в
+профиле (app/creative_profiles.py), ядро от неё не зависит.
+
 Модель (app/ai/creative_advisor.py) даёт первичные признаки; здесь —
 детерминированный расчёт commercial_score (creative-score-v1), события
 CREATIVE_REVIEW/* и текущее состояние. Только рекомендация: не блокирует
@@ -18,6 +22,7 @@ from app import review_gate as rg
 from app.ai.analyzer import AIResponseError
 from app.ai.creative_advisor import INPUTS, CreativeAdvisor, LMStudioCreativeAdvisor
 from app.ai.schema import AIAnalysis
+from app.creative_profiles import UnknownProfileError, get_profile
 from app.database.db import get_asset, get_connection, insert_event, transaction
 
 STAGE = "CREATIVE_REVIEW"
@@ -91,10 +96,11 @@ def summary(event: dict | None) -> dict:
     """pipeline.creative_review: итог и рекомендация — без чтения файла."""
     result = _stored(event)
     if result is None:
-        return {"reviewed": False, "commercial_score": None, "commercial_potential": None,
+        return {"reviewed": False, "profile": None, "commercial_score": None, "commercial_potential": None,
                 "recommendation": None, "event_id": None}
     return {
         "reviewed": True,
+        "profile": (result.get("profile") or {}).get("name"),
         # Пересчёт по сохранённым признакам: смена формулы не требует вызова модели.
         **{k: v for k, v in commercial_score(result["features"]).items() if k != "score_version"},
         "recommendation": result["features"]["recommendation"],
@@ -132,15 +138,21 @@ def _write(asset_id: int, status: str, message: dict) -> None:
         insert_event(connection, asset_id, STAGE, status, json.dumps(message, ensure_ascii=False))
 
 
-def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None) -> dict:
-    """Оценка моделью. Идемпотентно: тот же файл, Vision и промпт — без нового вызова."""
+def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile: str | None = None) -> dict:
+    """Оценка моделью по профилю. Идемпотентно: тот же файл, Vision, шаблон и профиль — без нового вызова."""
     asset, vision = _require(asset_id)
     _refuse_personal_document(asset_id, vision)
-    advisor = advisor or LMStudioCreativeAdvisor()
+    if advisor is None:
+        try:
+            advisor = LMStudioCreativeAdvisor(profile=get_profile(profile))
+        except UnknownProfileError as exc:
+            raise CreativeReviewError("UNKNOWN_PROFILE", str(exc)) from exc
+    used = getattr(advisor, "profile", None)
     provenance = {
         "provider": getattr(advisor, "provider", type(advisor).__name__),
         "model": getattr(advisor, "model", None),
         "prompt_version": getattr(advisor, "prompt_version", None),
+        "profile": {"name": used.name, "version": used.version} if used else None,
     }
     current = fingerprint(asset["file_hash"], asset["ai_result"], provenance["prompt_version"])
 

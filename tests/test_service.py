@@ -210,6 +210,7 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
         },
         "creative_review": {
             "reviewed": False,
+            "profile": None,
             "commercial_score": None,
             "commercial_potential": None,
             "recommendation": None,

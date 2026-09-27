@@ -82,6 +82,11 @@ class ReasonParams(AssetParams):
     reason: str = Field(min_length=1)
 
 
+class CreativeParams(AssetParams):
+    # Профиль оценки (app/creative_profiles.py); по умолчанию — STOCKER_CREATIVE_PROFILE.
+    profile: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,40}$")
+
+
 class ApproveParams(AssetParams):
     allow_partial: bool = False
     confirm_claims: bool = False
@@ -174,7 +179,8 @@ DESCRIPTIONS = {
     "creative.review": (
         "Commercial value review by the local model: composition, uniqueness, demand, use cases, quality notes "
         "and a recommendation (proceed / attention / skip_suggested); commercial_score is computed from them. "
-        'Recommendation only: never blocks export. Args: {"asset_id": 5}'
+        "Judged for a content profile (default industrial_stock). "
+        'Recommendation only: never blocks export. Args: {"asset_id": 5}, optional "profile": "industrial_stock"'
     ),
     "creative.get": (
         "Last commercial value review of an asset: commercial_score, commercial_potential, recommendation "
@@ -221,7 +227,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("enhancement.assess", DESCRIPTIONS["enhancement.assess"], AssetParams, PIPELINE, ops.enhancement_assess),
         Operation("enhancement.advise", DESCRIPTIONS["enhancement.advise"], AssetParams, PIPELINE, ops.enhancement_advise),
         Operation("enhancement.get", DESCRIPTIONS["enhancement.get"], AssetParams, READ, ops.enhancement_get),
-        Operation("creative.review", DESCRIPTIONS["creative.review"], AssetParams, PIPELINE, ops.creative_review),
+        Operation("creative.review", DESCRIPTIONS["creative.review"], CreativeParams, PIPELINE, ops.creative_review),
         Operation("creative.get", DESCRIPTIONS["creative.get"], AssetParams, READ, ops.creative_get),
         Operation("readiness.evaluate", DESCRIPTIONS["readiness.evaluate"], AssetParams, PIPELINE, ops.readiness_evaluate),
         Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),

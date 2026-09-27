@@ -3,7 +3,9 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from app import creative_profiles as profiles
 from app import creative_review as cr
+from app.creative_profiles import INDUSTRIAL_STOCK
 from app.ai import creative_advisor as ca
 from app.ai.analyzer import AIResponseError
 from app.ai.schema import AIAnalysis, CreativeReview
@@ -50,9 +52,48 @@ def test_model_output_schema():
         CreativeReview(composition="excellent", uniqueness="high", demand="high", recommendation="proceed")
 
 
-def test_prompt_contains_vision_summary():
-    text = ca.prompt_for(AIAnalysis(subject="Elevator shaft", title="Shaft interior", description="Rails."))
+def test_prompt_contains_vision_summary_profile_and_universal_anchors():
+    text = ca.prompt_for(AIAnalysis(subject="Elevator shaft", title="Shaft interior", description="Rails."), INDUSTRIAL_STOCK)
     assert "subject: Elevator shaft" in text and "Rails." in text
+    assert INDUSTRIAL_STOCK.audience in text
+    assert all(anchor in text for anchor in profiles.UNIVERSAL_ANCHORS)
+
+
+def test_template_core_has_no_niche():
+    # Ядро не знает тематик: всё специфичное — в профиле (паспорт §3A.10).
+    core = (ca.PROMPT + " ".join(profiles.UNIVERSAL_ANCHORS)).lower()
+    assert not any(word in core for word in ("industrial", "elevator", "engineering", "b2b"))
+
+
+def test_prompt_version_includes_profile():
+    assert ca.prompt_version_for(INDUSTRIAL_STOCK) == "creative-review-v3/industrial_stock-v1"
+
+
+# --- Профили ------------------------------------------------------------------------------
+
+
+def test_default_profile_and_env_override(monkeypatch):
+    monkeypatch.delenv("STOCKER_CREATIVE_PROFILE", raising=False)
+    assert profiles.get_profile().name == "industrial_stock"
+    monkeypatch.setenv("STOCKER_CREATIVE_PROFILE", "nature_stock")
+    with pytest.raises(profiles.UnknownProfileError, match="planned"):
+        profiles.get_profile()
+
+
+@pytest.mark.parametrize("name,status", [("nature_stock", "planned"), ("food_stock", "unknown")])
+def test_planned_or_unknown_profile_is_refused(stocker_root, name, status):
+    asset_id = _vision_asset(stocker_root)
+
+    envelope = dispatch("creative.review", {"asset_id": asset_id, "profile": name})
+
+    assert envelope["error"]["code"] == "UNKNOWN_PROFILE"
+    assert status in envelope["error"]["message"] and "industrial_stock" in envelope["error"]["message"]
+    assert _events(stocker_root, asset_id) == []
+
+
+def test_all_planned_profiles_are_registered():
+    assert set(profiles.PLANNED_PROFILES) <= set(profiles.PROFILES)
+    assert {"nature_stock", "commercial_product", "editorial", "ai_content", "personal_archive"} == set(profiles.PLANNED_PROFILES)
 
 
 # --- События и идемпотентность ---------------------------------------------------------
@@ -67,6 +108,8 @@ def test_review_writes_event_with_features_and_score(stocker_root):
     ((status, message),) = _events(stocker_root, asset_id)
     assert status == "ADVISED"
     assert message["provider"] == "offline" and message["prompt_version"] == "creative-test"
+    assert message["profile"] == {"name": "industrial_stock", "version": "1"}
+    assert cr.get(asset_id)["profile"] == "industrial_stock"
     assert message["features"]["composition"] == "good"
     assert message["commercial_score"] == 35 + 30 + 15 + 2 and message["score_version"] == "creative-score-v1"
     assert message["inputs"] == ["image_overview", "vision_summary"]

@@ -21,6 +21,7 @@ from app.ai.analyzer import AIResponseError
 from app.ai.enhancement_advisor import _jpeg_data_url
 from app.ai.schema import AIAnalysis, CreativeReview
 from app.ai.structured import json_schema_response_format, strict_json_schema
+from app.creative_profiles import UNIVERSAL_ANCHORS, CreativeProfile, get_profile
 
 load_dotenv()
 
@@ -41,11 +42,12 @@ def response_schema() -> dict:
 
 
 class CreativeAdvisor:
-    """Интерфейс провайдера; провайдер заменяем конфигурацией (§4.4)."""
+    """Интерфейс провайдера; провайдер и профиль заменяемы конфигурацией (§4.4, §3A.10)."""
 
     provider: str = "unknown"
     model: Optional[str] = None
     prompt_version: Optional[str] = None
+    profile: Optional[CreativeProfile] = None
 
     def review(self, image_path: Path, vision: AIAnalysis) -> CreativeReview:
         raise NotImplementedError("Creative advisor is not configured.")
@@ -58,21 +60,15 @@ def overview(image_path: Path) -> str:
         return _jpeg_data_url(image)
 
 
-# creative-review-v2 (аудит 26.09.2026): v1 без шкалы не различал слабые и сильные
-# кадры (медиана 63 против 65); явные ориентиры под нишу пользователя дали 36 против 90.
-# Ниша (industrial / technical) — часть промпта; её смена — новая версия промпта.
-PROMPT = """You are a strict stock photo editor. The photographer sells INDUSTRIAL and TECHNICAL stock:
-construction, elevators, electrical installations, machinery, engineering, building infrastructure,
-industrial textures. Buyers are B2B: engineering companies, trade publications, presentations, manuals.
+# Шаблон не знает тематик: аудитория и ориентиры — из профиля (app/creative_profiles.py).
+# История: v1 без ориентиров не различал слабые и сильные кадры (медиана 63 против 65);
+# v2 с ориентирами ниши — 36 против 90; v3 — те же ориентиры, вынесенные в профиль.
+TEMPLATE_VERSION = "creative-review-v3"
+
+PROMPT = """You are a strict stock photo editor. {audience}
 
 Judge this photograph as a product for those buyers. Use these anchors:
-- Personal, family, vacation, pet, selfie or shadow photos, casual snapshots of people or children:
-  demand low, uniqueness low, recommendation skip_suggested (or attention if technically excellent).
-- Recognizable people or children: stock sites need a model release; recommendation attention at best.
-- Clear, well-lit, deliberate photos of industrial equipment, installations or processes:
-  demand medium or high; recommendation proceed.
-- Plain textures and backgrounds: demand medium, uniqueness low.
-- Out of focus, dark, cluttered or accidental frames: composition weak, recommendation skip_suggested.
+{anchors}
 
 What a vision model saw:
 - subject: {subject}
@@ -90,8 +86,17 @@ Return:
 """
 
 
-def prompt_for(vision: AIAnalysis) -> str:
-    return PROMPT.format(subject=vision.subject, title=vision.title, description=vision.description)
+def prompt_for(vision: AIAnalysis, profile: CreativeProfile) -> str:
+    anchors = "\n".join(f"- {anchor}" for anchor in (*profile.anchors, *UNIVERSAL_ANCHORS))
+    return PROMPT.format(
+        audience=profile.audience, anchors=anchors,
+        subject=vision.subject, title=vision.title, description=vision.description,
+    )
+
+
+def prompt_version_for(profile: CreativeProfile) -> str:
+    """Версия шаблона + профиль и его версия: смена любого — новая оценка."""
+    return f"{TEMPLATE_VERSION}/{profile.name}-v{profile.version}"
 
 
 class LMStudioCreativeAdvisor(CreativeAdvisor):
@@ -99,16 +104,18 @@ class LMStudioCreativeAdvisor(CreativeAdvisor):
 
     provider = "lmstudio"
 
-    # Увеличивать при любом изменении промпта, входов или формата ответа.
-    prompt_version = "creative-review-v2"
-
     def __init__(
         self,
+        profile: CreativeProfile | None = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
+        self.profile = profile or get_profile()
+        # Меняется при любом изменении шаблона, профиля, входов или формата ответа.
+        self.prompt_version = prompt_version_for(self.profile)
+
         self.base_url = base_url or os.getenv("CREATIVE_BASE_URL") or DEFAULT_BASE_URL
         self.model = model or os.getenv("CREATIVE_MODEL") or DEFAULT_MODEL
         self.timeout = timeout or float(os.getenv("CREATIVE_TIMEOUT") or DEFAULT_TIMEOUT)
@@ -127,7 +134,7 @@ class LMStudioCreativeAdvisor(CreativeAdvisor):
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt_for(vision)},
+                    {"type": "text", "text": prompt_for(vision, self.profile)},
                     {"type": "image_url", "image_url": {"url": overview(Path(image_path))}},
                 ],
             }],

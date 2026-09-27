@@ -12,6 +12,7 @@ from app.ai.creative_advisor import CreativeAdvisor
 from app.ai.enhancement_advisor import EnhancementAdvisor
 from app.ai.metadata_analyzer import MetadataAnalyzer
 from app.ai.schema import AIAnalysis, CreativeReview, EnhancementAdvice, MetadataSuggestion
+from app.creative_profiles import INDUSTRIAL_STOCK
 from app.database import db
 
 
@@ -113,8 +114,10 @@ class OfflineCreativeAdvisor(CreativeAdvisor):
     provider = "offline"
     model = "offline-creative"
     prompt_version = "creative-test"
+    profile = INDUSTRIAL_STOCK
 
-    def __init__(self, review: CreativeReview | None = None, error: Exception | None = None):
+    def __init__(self, review: CreativeReview | None = None, error: Exception | None = None, profile=None):
+        self.profile = profile or INDUSTRIAL_STOCK
         self.result = review or CreativeReview(
             composition="good", uniqueness="medium", demand="high",
             commercial_use_cases=["article about elevator maintenance"], recommendation="proceed", confidence=0.8,

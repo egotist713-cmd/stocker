@@ -1,6 +1,6 @@
 ---
 name: stocker
-description: Stocker (industrial stock photos, assets, metadata, review queue). READ THIS SKILL before any Stocker request. Call tools only via tool_call with id stocker__<tool> and top-level args, e.g. {"id":"stocker__asset_get","args":{"asset_id":5}}; overview / how many are ready / what waits for review -> stocker__review_queue (one call: summary + review items); answer every part of the question. Never invent results. Approve/reject: no tool exists and you must not look for one - answer that only a human can, with `python -m app.metadata approve N` (or `reject N --reason "..."`) on Windows; never say something was approved or rejected.
+description: Stocker (stock photos, assets, metadata, review queue). READ THIS SKILL before any Stocker request. Call tools only via tool_call with id stocker__<tool> and top-level args, e.g. {"id":"stocker__asset_get","args":{"asset_id":5}}; overview / how many are ready / what waits for review -> stocker__review_queue (one call: summary + review items); answer every part of the question. Never invent results. Approve/reject: no tool exists and you must not look for one - answer that only a human can, with `python -m app.metadata approve N` (or `reject N --reason "..."`) on Windows; never say something was approved or rejected.
 user-invocable: false
 ---
 
@@ -42,7 +42,7 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__enhancement_assess` | measure image quality now (rules; nothing is enhanced) | `{"asset_id": N}` |
 | `stocker__enhancement_advise` | model recommendation only if the rules could not decide (`disputed`); otherwise returns NOT_DISPUTED | `{"asset_id": N}` |
 | `stocker__creative_get` | commercial value: commercial_score, recommendation (proceed / attention / skip_suggested) and why | `{"asset_id": N}` |
-| `stocker__creative_review` | review commercial value now (model; recommendation only) | `{"asset_id": N}` |
+| `stocker__creative_review` | review commercial value now (model; recommendation only, never blocks export) | `{"asset_id": N}` or `{"asset_id": N, "profile": "industrial_stock"}` |
 | `stocker__readiness_get` | is the asset ready for Adobe Stock / Shutterstock: status per platform, `ready_for`, checks, export plan | `{"asset_id": N}` |
 | `stocker__readiness_evaluate` | check the asset against Adobe Stock / Shutterstock rules now (no upload) | `{"asset_id": N}` |
 
