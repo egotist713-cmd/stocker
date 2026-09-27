@@ -257,7 +257,7 @@ def test_evaluate_writes_event_and_is_idempotent(stocker_root, asset_id):
     assert envelope["ok"] and envelope["outcome"] == "EVALUATED"
     assert envelope["data"]["facts"]["format"] == "JPEG"
     ((status, message),) = _norm_events(stocker_root, asset_id)
-    assert status == "EVALUATED" and message["actor"] == N8N and message["facts_version"] == "normalize-facts-v3"
+    assert status == "EVALUATED" and message["actor"] == N8N and message["facts_version"] == "normalize-facts-v4"
 
     assert dispatch("normalize.evaluate", {"asset_id": asset_id})["outcome"] == "UNCHANGED"
     assert len(_norm_events(stocker_root, asset_id)) == 1

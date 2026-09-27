@@ -11,7 +11,9 @@ from app.database.db import get_connection, init_database, insert_asset, insert_
 ROOT = Path(__file__).resolve().parents[1]
 INCOMING = ROOT / "data" / "incoming"
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+# AVIF (28.09.2026): стадии читают пиксели только через AnalysisView — lossless internal
+# derivative. HEIC / HEIF не принимаются: кодека в runtime нет (MISSING_CODEC).
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".avif"}
 
 
 def sha256_file(path: Path) -> str:

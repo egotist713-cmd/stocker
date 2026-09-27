@@ -4,6 +4,7 @@ import sqlite3
 import pytest
 
 from app import metadata as metadata_service
+from app import normalization
 from app.database.db import add_event, save_ai_result
 from app.ingest import ingest_file
 from app.service import dispatch
@@ -21,8 +22,9 @@ def fake_vision(monkeypatch):
     monkeypatch.setattr(worker, "LocalAnalyzer", FakeAnalyzer)
 
 
-def _vision_asset(stocker_root, name="photo.jpg", seed=0, vision=VISION) -> int:
-    asset_id = ingest_file(make_image(stocker_root, name=name, seed=seed))
+def _vision_asset(stocker_root, name="photo.jpg", seed=0, vision=VISION, icc_profile=None) -> int:
+    asset_id = ingest_file(make_image(stocker_root, name=name, seed=seed, icc_profile=icc_profile))
+    normalization.run_asset(asset_id)  # факты и representation: пиксели стадии берут из AnalysisView
     save_ai_result(asset_id, vision.model_dump_json())
     add_event(asset_id, "AI", "PASSED", json.dumps({"provider": "lmstudio", "model": "v", "prompt_version": "local-v2"}))
     return asset_id

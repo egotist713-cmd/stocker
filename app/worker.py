@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app import analysis_view
 from app import enhancement_decision
 from app import metadata as metadata_service
 from app import normalization
@@ -26,9 +27,10 @@ QC_FAILED = "QC_FAILED"
 SOURCE_INVALID = "SOURCE_INVALID"
 ASSET_NOT_FOUND = "ASSET_NOT_FOUND"
 NORMALIZE_FAILED = "NORMALIZE_FAILED"
+VIEW_UNAVAILABLE = "VIEW_UNAVAILABLE"
 
 # Исходы, при которых обработка не выполнила свою работу из-за ошибки.
-ERROR_OUTCOMES = {AI_FAILED, SOURCE_INVALID, ASSET_NOT_FOUND, NORMALIZE_FAILED}
+ERROR_OUTCOMES = {AI_FAILED, SOURCE_INVALID, ASSET_NOT_FOUND, NORMALIZE_FAILED, VIEW_UNAVAILABLE}
 
 MAX_RAW_OUTPUT_CHARS = 4000
 
@@ -65,12 +67,12 @@ def verify_source(asset: dict) -> dict | None:
     return None
 
 
-def run_ai(asset_id: int, path: Path, analyzer: AIAnalyzer) -> str:
-    provenance = _provenance(analyzer)
+def run_ai(asset_id: int, view: analysis_view.AnalysisView, analyzer: AIAnalyzer) -> str:
+    provenance = {**_provenance(analyzer), "view": view.identity()}
     started = time.perf_counter()
 
     try:
-        ai_result = analyzer.analyze(path)
+        ai_result = analyzer.analyze(view)
 
     except Exception as exc:
         failure = {
@@ -143,19 +145,19 @@ def run_normalization(asset_id: int) -> str:
     return result["outcome"]
 
 
-def run_enhancement(asset_id: int) -> str | None:
+def run_enhancement(asset_id: int, view: analysis_view.AnalysisView) -> str | None:
     """
-    Enhancement decision правилами (docs/STOCK_READINESS_CONTRACT.md §4.2).
+    Enhancement decision правилами (docs/STOCK_READINESS_CONTRACT.md §4.2) по тому же view.
     Только рекомендация: не блокирует pipeline, Topaz не запускается.
     """
     try:
-        result = enhancement_decision.assess_asset(asset_id)
+        result = enhancement_decision.assess_asset(asset_id, view=view)
         decision = enhancement_decision.effective_decision(result["assessment"])
         print(f"ENHANCEMENT: {result['outcome']} ({decision})")
 
         # Модель — только для спорных случаев; её ответ — рекомендация.
         if decision == enhancement_decision.DISPUTED and advisor_enabled():
-            advice = enhancement_decision.advise_asset(asset_id)
+            advice = enhancement_decision.advise_asset(asset_id, view=view)
             detail = (advice.get("advice") or {}).get("advice", {}).get("decision") or advice.get("error", {}).get("error_type")
             print(f"ENHANCEMENT ADVISOR: {advice['outcome']} ({detail})")
     except Exception as exc:  # noqa: BLE001 — рекомендация не должна останавливать обработку
@@ -195,7 +197,15 @@ def process_asset(
         print("QC, AI: skipped because normalization failed")
         return NORMALIZE_FAILED
 
-    qc_result = check_asset(asset)
+    # Один AnalysisView на все стадии, читающие пиксели (контракт §14).
+    try:
+        view = analysis_view.open_asset_view(asset_id)
+    except analysis_view.ViewUnavailable as exc:
+        add_event(asset_id, "VIEW", "FAILED", json.dumps({"error_type": exc.code, "error": str(exc)}, ensure_ascii=False))
+        print(f"VIEW: FAILED ({exc.code})")
+        return VIEW_UNAVAILABLE
+
+    qc_result = check_asset(asset, view)
     save_qc_result(asset_id, qc_result)
 
     print(f"QC: {qc_result['passed']}")
@@ -204,9 +214,9 @@ def process_asset(
         print("AI: skipped because QC failed")
         return QC_FAILED
 
-    run_enhancement(asset_id)
+    run_enhancement(asset_id, view)
 
-    outcome = run_ai(asset_id, source_file(asset), analyzer or LocalAnalyzer())
+    outcome = run_ai(asset_id, view, analyzer or LocalAnalyzer())
 
     if outcome == AI_PASSED:
         run_metadata(asset_id, metadata_analyzer)

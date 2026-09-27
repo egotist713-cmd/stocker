@@ -142,8 +142,14 @@ warning `RESOLUTION_BELOW_RECOMMENDED`, дальше решают Enhancement и
 | `RESOLUTION_TOO_HIGH` | больше максимума (Adobe 100 MP) | derivative (уменьшение) |
 | `FILE_TOO_LARGE` | больше лимита площадки | derivative (JPEG с меньшим размером), blocker, если размер не достигается |
 | `FORMAT_CONVERSION` | формат не принимается площадкой (TIFF → Adobe) | derivative (JPEG) |
-| `COLOR_PROFILE_CONVERSION` | профиль не sRGB (сравнение xy основных цветов R, G, B профиля с встроенным sRGB Pillow, допуск 0.005) | derivative (sRGB) |
-| `COLOR_PROFILE_MISSING` | ICC нет (считается sRGB) | warning |
+| `COLOR_PROFILE_CONVERSION` | объявленное цветовое пространство источника не sRGB (факты `NORMALIZE/EVALUATED`; ICC — по xy основных цветов, допуск 0.005) | derivative (sRGB) |
+| `COLOR_SPACE_UNDECLARED` | цвет не объявлен (`undeclared` / Uncalibrated без ICC); площадке нужен sRGB — **не предполагается** (readiness-v2, 28.09.2026) | blocker |
+| `SOURCE_FACTS_MISSING` | нет фактов источника (`NORMALIZE/EVALUATED`) | blocker |
+
+**readiness-v2 (28.09.2026):** Readiness **не читает пиксели** и не использует
+AnalysisView: входы — факты источника, metadata, правила площадки, export plan.
+`COLOR_PROFILE_MISSING` («ICC нет — считается sRGB») удалён: sRGB, объявленный
+EXIF / PNG-блоком / nclx, — объявленный sRGB; не объявленный — blocker.
 
 **Проверено на данных (26.09.2026):** все 8 файлов (телефон) имеют ICC
 **Display P3** с описанием `sRGB EOTF with DCI-P3 Color Gamut`. Это **не** sRGB:
@@ -327,7 +333,7 @@ fingerprint текущих данных отличается, представл
 
 ```json
 {
-  "readiness_version": "readiness-v1",
+  "readiness_version": "readiness-v2",
   "evaluated_at": "2026-09-27T09:00:00+00:00",
   "fingerprint": "sha256:…",
   "platforms": {
@@ -335,7 +341,7 @@ fingerprint текущих данных отличается, представл
       "profile": "adobe-2026-09",
       "status": "ready",
       "checks": [
-        {"code": "COLOR_PROFILE_MISSING", "level": "warning", "message": "No ICC profile; assumed sRGB"}
+        {"code": "COLOR_PROFILE_CONVERSION", "level": "derivative", "message": "Color space 'Display P3' is not srgb"}
       ],
       "export_plan": {
         "title": "Elevator shaft interior with steel guide rails",

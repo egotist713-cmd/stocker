@@ -92,7 +92,7 @@ def test_jpeg_quality_from_quantization_tables():
         buffer = io.BytesIO()
         scene().save(buffer, "JPEG", quality=quality)
         with Image.open(io.BytesIO(buffer.getvalue())) as encoded:  # без convert: таблицы квантования на месте
-            assert en.measure(encoded)["jpeg_quality"] == quality
+            assert en.jpeg_quality(encoded) == quality  # факт источника; measure() его только переносит
 
 
 def test_background_blur_keeps_peak_sharpness(clean):
@@ -205,6 +205,12 @@ _PHONE_PHOTO = ROOT / "data" / "incoming" / "IMG_20260911_130437.jpg"
 
 @pytest.mark.skipif(not _PHONE_PHOTO.exists(), reason="real phone photo is not available")
 def test_real_50mp_phone_photo_needs_no_topaz_but_is_soft():
-    result = en.assess(en.read_metrics(_PHONE_PHOTO), "hash")
+    from app import analysis_view
+    from app.source_facts import read_facts
+
+    facts = read_facts(_PHONE_PHOTO)
+    view = analysis_view.from_file(_PHONE_PHOTO, facts["color_profile"], "source", "hash")
+    assert view.color_space == "srgb" and view.color_converted  # Display P3 → sRGB во view
+    result = en.assess(en.measure_view(view, facts["jpeg_quality"]), "hash")
     assert result["decision"] == en.NOT_NEEDED
     assert [n["code"] for n in result["notes"]] == ["SOFT_AT_NATIVE_RESOLUTION"]

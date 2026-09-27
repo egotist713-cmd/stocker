@@ -5,6 +5,7 @@ import sqlite3
 import numpy as np
 from PIL import Image
 
+from app import analysis_view
 from app.database.db import insert_event
 from app.ingest import source_file
 
@@ -61,7 +62,12 @@ def calculate_extreme_pixels(image: Image.Image):
     return dark_ratio, bright_ratio
 
 
-def check_asset(asset):
+def check_asset(asset, view=None):
+    """
+    QC по AnalysisView (пиксели: размеры, резкость, доли тёмного / светлого) и по файлу
+    источника (размер файла). Файл изображения QC сам не декодирует: view — один на все
+    стадии (worker передаёт его), иначе строится по манифесту NORMALIZE/PASSED.
+    """
     source_path = source_file(asset)
 
     result = {
@@ -88,43 +94,43 @@ def check_asset(asset):
         result["passed"] = False
         result["errors"].append("FILE_TOO_LARGE")
 
-    try:
-        with Image.open(source_path) as image:
-            image.verify()
+    if view is None:
+        try:
+            view = analysis_view.open_asset_view(asset["id"])
+        except analysis_view.ViewUnavailable as exc:
+            result["passed"] = False
+            result["errors"].append(f"VIEW_UNAVAILABLE: {exc.code}")
+            return result
 
-        with Image.open(source_path) as image:
-            width, height = image.size
-            image_format = image.format
+    image = view.full
+    width, height = view.size
 
-            result["metrics"]["width"] = width
-            result["metrics"]["height"] = height
-            result["metrics"]["format"] = image_format
+    result["metrics"]["width"] = width
+    result["metrics"]["height"] = height
+    result["metrics"]["format"] = view.source_format
+    result["metrics"]["view"] = view.identity()
 
-            megapixels = width * height / 1_000_000
-            if megapixels < MIN_MEGAPIXELS:
-                result["passed"] = False
-                result["errors"].append("RESOLUTION_TOO_LOW")
-            elif megapixels < RECOMMENDED_MEGAPIXELS:
-                result["warnings"].append("RESOLUTION_BELOW_RECOMMENDED")
-
-            sharpness = calculate_sharpness(image)
-            dark_ratio, bright_ratio = calculate_extreme_pixels(image)
-
-            result["metrics"]["sharpness"] = sharpness
-            result["metrics"]["dark_ratio"] = dark_ratio
-            result["metrics"]["bright_ratio"] = bright_ratio
-
-            # Пока это только предупреждения.
-            # Не отклоняем фотографию автоматически по этим двум метрикам.
-            if dark_ratio > 0.20:
-                result["warnings"].append("HIGH_DARK_PIXEL_RATIO")
-
-            if bright_ratio > 0.20:
-                result["warnings"].append("HIGH_BRIGHT_PIXEL_RATIO")
-
-    except Exception as exc:
+    megapixels = width * height / 1_000_000
+    if megapixels < MIN_MEGAPIXELS:
         result["passed"] = False
-        result["errors"].append(f"IMAGE_READ_ERROR: {exc}")
+        result["errors"].append("RESOLUTION_TOO_LOW")
+    elif megapixels < RECOMMENDED_MEGAPIXELS:
+        result["warnings"].append("RESOLUTION_BELOW_RECOMMENDED")
+
+    sharpness = calculate_sharpness(image)
+    dark_ratio, bright_ratio = calculate_extreme_pixels(image)
+
+    result["metrics"]["sharpness"] = sharpness
+    result["metrics"]["dark_ratio"] = dark_ratio
+    result["metrics"]["bright_ratio"] = bright_ratio
+
+    # Пока это только предупреждения.
+    # Не отклоняем фотографию автоматически по этим двум метрикам.
+    if dark_ratio > 0.20:
+        result["warnings"].append("HIGH_DARK_PIXEL_RATIO")
+
+    if bright_ratio > 0.20:
+        result["warnings"].append("HIGH_BRIGHT_PIXEL_RATIO")
 
     return result
 

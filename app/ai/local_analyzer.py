@@ -1,13 +1,9 @@
 import base64
 import os
-from io import BytesIO
-from pathlib import Path
 from typing import Optional
 
-import numpy as np
 from openai import OpenAI
 from dotenv import load_dotenv
-from PIL import Image, ImageOps
 from pydantic import ValidationError
 
 from app.ai.schema import AIAnalysis
@@ -61,31 +57,9 @@ class LocalAnalyzer(AIAnalyzer):
             max_retries=0,
         )
 
-    def analyze(self, image_path: Path) -> AIAnalysis:
-        """Анализирует изображение через LM Studio и возвращает структуру AIAnalysis."""
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-
-        suffix = image_path.suffix.lower()
-
-        mime_types = {
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".png": "image/png",
-            ".webp": "image/webp",
-            # TIFF модели не передаётся: _prepare_image перекодирует его в JPEG.
-            ".tif": "image/jpeg",
-            ".tiff": "image/jpeg",
-        }
-
-        mime_type = mime_types.get(suffix)
-
-        if not mime_type:
-            raise ValueError(f"Unsupported image format: {suffix}")
-
-        image_bytes, mime_type = self._prepare_image(image_path, mime_type)
+    def analyze(self, view) -> AIAnalysis:
+        """Анализирует AnalysisView через LM Studio и возвращает структуру AIAnalysis."""
+        image_bytes, mime_type = self._prepare_image(view)
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         response = self.client.chat.completions.create(
@@ -151,29 +125,9 @@ Important:
             ) from exc
 
     @staticmethod
-    def _prepare_image(image_path: Path, mime_type: str) -> tuple[bytes, str]:
-        """Resize large images before sending them to the local vision model."""
-        max_edge = 2048
-        with Image.open(image_path) as source:
-            # Модель должна видеть кадр так же, как его видит человек.
-            image = ImageOps.exif_transpose(source)
-            image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-
-            # 16-bit grayscale (бывает в TIFF): convert("RGB") обрезает значения
-            # до 255 и даёт белый кадр, поэтому сначала масштабируем в 8 бит.
-            if image.mode in ("I", "I;16", "I;16L", "I;16B"):
-                pixels = np.asarray(image, dtype=np.uint32) >> 8
-                image = Image.fromarray(pixels.clip(0, 255).astype(np.uint8))
-
-            output = BytesIO()
-            if mime_type == "image/jpeg":
-                image = image.convert("RGB")
-                image.save(output, format="JPEG", quality=90, optimize=True)
-            elif mime_type == "image/png":
-                image.save(output, format="PNG", optimize=True)
-            elif mime_type == "image/webp":
-                image.save(output, format="WEBP", quality=90, method=6)
-            else:
-                raise ValueError(f"Unsupported image MIME type: {mime_type}")
-
-            return output.getvalue(), mime_type
+    def _prepare_image(view) -> tuple[bytes, str]:
+        """
+        Вариант view "preview" (длинная сторона 2048, ориентирован, 8 бит, sRGB или
+        undeclared без конвертации) в JPEG. Ориентацию и цвет решает AnalysisView.
+        """
+        return view.jpeg("preview", quality=90), "image/jpeg"

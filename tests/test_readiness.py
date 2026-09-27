@@ -49,8 +49,7 @@ def facts(**overrides) -> dict:
         "width": 8192,
         "height": 6144,
         "file_size": 14 * rd.MB,
-        "color_profile": rd.SRGB,
-        "color_profile_description": "sRGB built-in",
+        "color": {"kind": "srgb", "description": "sRGB built-in", "source": "icc", "declared": True},
     }
     return {**data, **overrides}
 
@@ -69,7 +68,7 @@ def codes(result: dict, platform: str) -> dict:
 def test_clean_industrial_asset_is_ready_for_both_platforms():
     result = run()
 
-    assert result["readiness_version"] == "readiness-v1"
+    assert result["readiness_version"] == "readiness-v2"
     assert result["ready_for"] == ["adobe", "shutterstock"]
 
     adobe = result["platforms"]["adobe"]
@@ -135,8 +134,11 @@ def test_partial_metadata_approved_by_human_is_still_blocked():
 
 # --- Файл: original → derivative ---------------------------------------------------
 
+P3 = {"kind": "display_p3", "description": "sRGB EOTF with DCI-P3 Color Gamut", "source": "icc", "declared": True}
+
+
 def test_display_p3_needs_srgb_derivative_but_stays_ready():
-    result = run(f=facts(color_profile=rd.OTHER, color_profile_description="sRGB EOTF with DCI-P3 Color Gamut"))
+    result = run(f=facts(color=P3))
 
     for platform in ("adobe", "shutterstock"):
         assert codes(result, platform)["COLOR_PROFILE_CONVERSION"] == rd.DERIVATIVE
@@ -144,10 +146,28 @@ def test_display_p3_needs_srgb_derivative_but_stays_ready():
         assert result["platforms"][platform]["export_plan"]["file"] == {"from": "original", "operations": ["to_srgb"]}
 
 
-def test_missing_profile_is_warning():
-    result = run(f=facts(color_profile=rd.MISSING, color_profile_description=None))
-    assert codes(result, "adobe")["COLOR_PROFILE_MISSING"] == rd.WARNING
+@pytest.mark.parametrize("kind", ["undeclared", "uncalibrated"])
+def test_undeclared_color_space_blocks_and_is_not_assumed_srgb(kind):
+    # Решение 28.09.2026: необъявленный цвет — не sRGB; площадке нужен sRGB → blocker до экспорта.
+    color = {"kind": kind, "description": None, "source": None, "declared": False}
+    result = run(f=facts(color=color))
+    for platform in ("adobe", "shutterstock"):
+        assert codes(result, platform)["COLOR_SPACE_UNDECLARED"] == rd.BLOCKER
+        assert result["platforms"][platform]["status"] == rd.BLOCKED
+        assert result["platforms"][platform]["export_plan"] is None
+
+
+def test_srgb_declared_without_icc_needs_nothing():
+    # EXIF ColorSpace sRGB / PNG sRGB-блок — объявленный sRGB, а не «ICC нет → предполагаем».
+    color = {"kind": "srgb", "description": "EXIF ColorSpace sRGB", "source": "exif_colorspace", "declared": True}
+    result = run(f=facts(color=color))
+    assert "COLOR_PROFILE_CONVERSION" not in codes(result, "adobe") and "COLOR_SPACE_UNDECLARED" not in codes(result, "adobe")
     assert result["platforms"]["adobe"]["export_plan"]["file"]["operations"] == []
+
+
+def test_missing_source_facts_block():
+    result = run(f=facts(color=None))
+    assert codes(result, "adobe")["SOURCE_FACTS_MISSING"] == rd.BLOCKER
 
 
 def test_low_resolution_blocks_both():
@@ -388,18 +408,6 @@ def test_color_profile_kind_by_primaries():
     assert rd.color_profile_kind(None) == (rd.MISSING, None)
     assert rd.color_profile_kind(b"not a profile")[0] == rd.OTHER
     assert rd.color_profile_kind(_srgb_icc())[0] == rd.SRGB
-
-
-def test_read_file_facts_on_generated_jpeg(tmp_path):
-    path = tmp_path / "img.jpg"
-    Image.new("RGB", (64, 48), "gray").save(path, "JPEG", icc_profile=_srgb_icc())
-
-    result = rd.read_file_facts(path)
-
-    assert result["format"] == "JPEG"
-    assert (result["width"], result["height"]) == (64, 48)
-    assert result["file_size"] == path.stat().st_size
-    assert result["color_profile"] == rd.SRGB
 
 
 _PHONE_PHOTO = ROOT / "data" / "incoming" / "IMG_20260911_130437.jpg"

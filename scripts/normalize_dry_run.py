@@ -5,8 +5,9 @@ Internal Normalization Engine на наборе — без БД, без реги
     python scripts/normalize_dry_run.py data/samples/2026-09-27
     python scripts/normalize_dry_run.py --registered
 
-Для каждого файла: факты → plan → (derivative во временную папку, удаляется) → views
-full / preview / overview в памяти. Хеш source до и после сравнивается.
+Для каждого файла: факты → plan → (derivative во временную папку, удаляется) →
+AnalysisView (тот же, что получают стадии) → Enhancement правилами и цветовой вердикт
+Readiness по фактам. Хеш source до и после сравнивается.
 """
 
 import argparse
@@ -18,9 +19,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app import normalizer  # noqa: E402
+from app import analysis_view, normalizer  # noqa: E402
+from app import enhancement as en  # noqa: E402
+from app import readiness as rd  # noqa: E402
 from app.ingest import sha256_file  # noqa: E402
 from scripts.scan_source_facts import registered_sources, scan  # noqa: E402
+
+
+def _color_verdict(color: dict) -> str:
+    """Цветовая проверка Readiness (по фактам, без пикселей) для профиля Adobe."""
+    facts = {"source": "ok", "qc_passed": True, "format": "JPEG", "width": 9000, "height": 9000, "file_size": 1,
+             "color": {k: color.get(k) for k in ("kind", "description", "source", "declared")}}
+    checks, _ = rd.file_checks(rd.PROFILES["adobe"], facts)
+    return next((c["code"] for c in checks if c["code"].startswith("COLOR")), "-")
 
 
 def run(rows: list[dict], sources: dict[str, Path], work: Path) -> list[dict]:
@@ -45,30 +56,35 @@ def run(rows: list[dict], sources: dict[str, Path], work: Path) -> list[dict]:
             built = normalizer.build_derivative(source, work / row["file"].replace("#", "").replace(" ", "_"))
             result["derivative"] = {k: built[k] for k in ("width", "height", "mode", "icc_embedded")}
             path = built["path"]
-        result["views"] = {}
-        for variant in normalizer.PARAMS["views"]:
-            try:
-                image, info = normalizer.open_view(path, variant, facts["color_profile"], planned["representation"])
-                result["views"][variant] = {**info, "size": image.size}
-            except normalizer.NormalizationRefused as exc:
-                result["views"][variant] = {"refused": exc.code}
+        try:
+            view = analysis_view.from_file(path, planned["preserved"]["color"], planned["representation"], before)
+        except analysis_view.ViewUnavailable as exc:
+            result["view"] = {"refused": exc.code}
+        else:
+            result["view"] = {"color_space": view.color_space, "color_converted": view.color_converted,
+                              "alpha_composited": view.alpha_composited, "size": view.size}
+            assessment = en.assess(en.measure_view(view, facts["jpeg_quality"]), before)
+            result["enhancement"] = assessment["decision"] or ("disputed" if assessment["disputed"] else None)
+        result["readiness_color"] = _color_verdict(facts["color_profile"])
         result["unchanged"] = result["unchanged"] and sha256_file(source) == before
     return results
 
 
 def summarize(results: list[dict]) -> dict:
     ok = [r for r in results if "representation" in r]
-    full = [r["views"]["full"] for r in ok]
+    views = [r["view"] for r in ok]
     return {
         "files": len(results),
         "normalized": len(ok),
         "failed": Counter(r["failed"] for r in results if "failed" in r),
         "files_changed": [r["file"] for r in results if not r["unchanged"]],
         "representation": Counter(r["representation"] for r in ok),
-        "view_color_space": Counter(v.get("color_space", v.get("refused")) for v in full),
-        "view_color_converted": sum(bool(v.get("color_converted")) for v in full),
-        "view_alpha_composited": sum(bool(v.get("alpha_composited")) for v in full),
-        "view_refused": [(r["file"], r["views"]["full"]["refused"]) for r in ok if "refused" in r["views"]["full"]],
+        "view_color_space": Counter(v.get("color_space", v.get("refused")) for v in views),
+        "view_color_converted": sum(bool(v.get("color_converted")) for v in views),
+        "view_alpha_composited": sum(bool(v.get("alpha_composited")) for v in views),
+        "view_refused": [(r["file"], r["view"]["refused"]) for r in ok if "refused" in r["view"]],
+        "enhancement": Counter(r.get("enhancement") for r in ok),
+        "readiness_color": Counter(r["readiness_color"] for r in ok),
         "derivatives": [(r["file"], r["derivative"]) for r in ok if "derivative" in r],
     }
 

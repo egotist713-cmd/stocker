@@ -11,12 +11,11 @@ Enhancement Advisor: рекомендация модели для спорных
 import base64
 import os
 from io import BytesIO
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from PIL import Image, ImageOps
+from PIL import Image
 from pydantic import ValidationError
 
 from app.ai.analyzer import AIResponseError
@@ -31,7 +30,7 @@ DEFAULT_MODEL = "qwen3-vl-8b-instruct"
 DEFAULT_API_KEY = "lm-studio"
 DEFAULT_TIMEOUT = 180.0
 
-OVERVIEW_EDGE = 1536
+OVERVIEW_EDGE = 1536  # = view "overview" (normalizer.PARAMS)
 DETAIL_CROP = 1024
 
 INPUTS = ["image_overview", "image_crop_100_sharpest", "rules_metrics"]
@@ -48,7 +47,8 @@ class EnhancementAdvisor:
     model: Optional[str] = None
     prompt_version: Optional[str] = None
 
-    def advise(self, image_path: Path, assessment: dict) -> EnhancementAdvice:
+    def advise(self, view, assessment: dict) -> EnhancementAdvice:
+        """view — AnalysisView (app/analysis_view.py); файл советник сам не открывает."""
         raise NotImplementedError("Enhancement advisor is not configured.")
 
 
@@ -58,23 +58,19 @@ def _jpeg_data_url(image: Image.Image) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode("ascii")
 
 
-def prepare_images(image_path: Path, center: list[int] | None = None) -> tuple[str, str]:
+def prepare_images(view, center: list[int] | None = None) -> tuple[str, str]:
     """
-    Обзор кадра (длинная сторона 1536 px) и фрагмент 1024 px в масштабе 100 % вокруг
-    самой резкой области (sharpest_point метрик; без неё — центр). Центр кадра часто —
-    намеренно размытый фон (калибровка 27.09.2026, #77).
+    Обзор кадра (view overview, 1536 px) и фрагмент 1024 px в масштабе 100 % из view full
+    вокруг самой резкой области (sharpest_point метрик — в координатах того же view; без
+    неё — центр). Центр кадра часто — намеренно размытый фон (калибровка 27.09.2026, #77).
     """
-    with Image.open(image_path) as source:
-        # sharpest_point считается без поворота EXIF — фрагмент режется в тех же координатах.
-        size = min(DETAIL_CROP, source.width, source.height)
-        cx, cy = center or (source.width // 2, source.height // 2)
-        left = min(max(0, cx - size // 2), source.width - size)
-        top = min(max(0, cy - size // 2), source.height - size)
-        crop = ImageOps.exif_transpose(source.crop((left, top, left + size, top + size)))
-        image = ImageOps.exif_transpose(source)
-        overview = image.copy()
-        overview.thumbnail((OVERVIEW_EDGE, OVERVIEW_EDGE), Image.Resampling.LANCZOS)
-        return _jpeg_data_url(overview), _jpeg_data_url(crop)
+    full = view.full
+    size = min(DETAIL_CROP, full.width, full.height)
+    cx, cy = center or (full.width // 2, full.height // 2)
+    left = min(max(0, cx - size // 2), full.width - size)
+    top = min(max(0, cy - size // 2), full.height - size)
+    crop = full.crop((left, top, left + size, top + size))
+    return _jpeg_data_url(view.variant("overview")), _jpeg_data_url(crop)
 
 
 PROMPT = """You check the technical image quality of a stock photograph before it is sent to stock sites.
@@ -138,8 +134,8 @@ class LMStudioEnhancementAdvisor(EnhancementAdvisor):
             max_retries=0,
         )
 
-    def advise(self, image_path: Path, assessment: dict) -> EnhancementAdvice:
-        overview, crop = prepare_images(Path(image_path), (assessment.get("metrics") or {}).get("sharpest_point"))
+    def advise(self, view, assessment: dict) -> EnhancementAdvice:
+        overview, crop = prepare_images(view, (assessment.get("metrics") or {}).get("sharpest_point"))
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[{

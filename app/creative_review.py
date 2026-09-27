@@ -17,7 +17,7 @@ import json
 import time
 from datetime import datetime, timezone
 
-from app import ingest
+from app import analysis_view, normalizer
 from app import review_gate as rg
 from app.ai.analyzer import AIResponseError
 from app.ai.creative_advisor import INPUTS, CreativeAdvisor, LMStudioCreativeAdvisor
@@ -88,7 +88,9 @@ def _stored(event: dict | None) -> dict | None:
 
 
 def fingerprint(file_hash: str | None, vision_json: str | None, prompt_version: str | None) -> str:
-    payload = json.dumps({"file_hash": file_hash, "vision": vision_json, "prompt_version": prompt_version}, sort_keys=True)
+    # Вход модели — AnalysisView: смена representation или кода views делает оценку stale.
+    payload = json.dumps({"file_hash": file_hash, "vision": vision_json, "prompt_version": prompt_version,
+                          "view": normalizer.view_fingerprint(file_hash)}, sort_keys=True)
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -138,7 +140,7 @@ def _write(asset_id: int, status: str, message: dict) -> None:
         insert_event(connection, asset_id, STAGE, status, json.dumps(message, ensure_ascii=False))
 
 
-def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile: str | None = None) -> dict:
+def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile: str | None = None, view=None) -> dict:
     """Оценка моделью по профилю. Идемпотентно: тот же файл, Vision, шаблон и профиль — без нового вызова."""
     asset, vision = _require(asset_id)
     _refuse_personal_document(asset_id, vision)
@@ -165,15 +167,17 @@ def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile:
     if last and last.get("fingerprint") == current:
         return {"asset_id": asset_id, "outcome": UNCHANGED, "review": last}
 
-    path = ingest.source_file(asset)
-    if not path.exists() or ingest.sha256_file(path) != asset["file_hash"]:
-        message = {**provenance, "error_type": "SOURCE_INVALID", "error": "Source file is missing or changed"}
-        _write(asset_id, "FAILED", message)
-        return {"asset_id": asset_id, "outcome": REVIEW_FAILED, "review": None, "error": message}
+    if view is None:
+        try:
+            view = analysis_view.open_asset_view(asset_id)
+        except analysis_view.ViewUnavailable as exc:
+            message = {**provenance, "error_type": exc.code, "error": str(exc)[:500]}
+            _write(asset_id, "FAILED", message)
+            return {"asset_id": asset_id, "outcome": REVIEW_FAILED, "review": None, "error": message}
 
     started = time.perf_counter()
     try:
-        features = advisor.review(path, vision)
+        features = advisor.review(view, vision)
     except Exception as exc:  # noqa: BLE001 — сбой модели фиксируется событием
         message = {**provenance, "error_type": type(exc).__name__, "error": str(exc)[:500],
                    "duration_s": round(time.perf_counter() - started, 2)}
@@ -186,6 +190,7 @@ def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile:
     message = {
         **provenance,
         "inputs": INPUTS,
+        "view": view.identity(),
         "fingerprint": current,
         "reviewed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "duration_s": round(time.perf_counter() - started, 2),

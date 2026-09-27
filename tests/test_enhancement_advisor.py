@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app import enhancement as en
 from app import enhancement_decision as ed
-from app import worker
+from app import analysis_view, normalization, worker
 from app.ai import enhancement_advisor as adv
 from app.ai.analyzer import AIResponseError
 from app.ai.schema import EnhancementAdvice
@@ -38,13 +38,22 @@ def metrics(**overrides) -> dict:
 def measured(monkeypatch):
     """Подмена метрик: тестовые картинки 64×48 не дают пограничных значений."""
     holder = {"metrics": metrics(blockiness=1.3)}  # только borderline → disputed
-    monkeypatch.setattr(en, "read_metrics", lambda path: holder["metrics"])
+    monkeypatch.setattr(en, "measure_view", lambda view, quality: holder["metrics"])
     return holder
 
 
 @pytest.fixture
 def asset_id(stocker_root) -> int:
-    return ingest_file(make_image(stocker_root))
+    asset_id = ingest_file(make_image(stocker_root))
+    normalization.run_asset(asset_id)
+    return asset_id
+
+
+UNDECLARED = {"kind": "undeclared", "source": None, "declared": False}
+
+
+def _view(path):
+    return analysis_view.from_file(path, UNDECLARED, "source", "test")
 
 
 def _events(root, asset_id):
@@ -84,7 +93,7 @@ def test_prepare_images_overview_and_100_percent_crop(tmp_path):
     path = tmp_path / "big.jpg"
     Image.new("RGB", (3000, 2000), "gray").save(path, "JPEG")
 
-    overview, crop = adv.prepare_images(path)
+    overview, crop = adv.prepare_images(_view(path))
 
     def size(url):
         return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).size
@@ -100,11 +109,29 @@ def test_crop_is_taken_around_the_sharpest_point(tmp_path):
     image.paste(Image.new("RGB", (1500, 2000), "black"), (1500, 0))
     image.save(path, "JPEG")
 
-    _, crop = adv.prepare_images(path, [2900, 1000])
+    _, crop = adv.prepare_images(_view(path), [2900, 1000])
 
     pixels = Image.open(io.BytesIO(base64.b64decode(crop.split(",", 1)[1]))).convert("L")
     assert pixels.size == (1024, 1024)
     assert pixels.getextrema()[1] < 40  # весь фрагмент из правой (чёрной) половины
+
+
+def test_crop_coordinates_are_view_coordinates_of_a_rotated_photo(tmp_path):
+    # Orientation 6: stored 3000×2000, view 2000×3000. sharpest_point — в координатах view,
+    # советник режет фрагмент из того же view (сам EXIF не применяет).
+    path = tmp_path / "rotated.jpg"
+    stored = Image.new("RGB", (3000, 2000), "white")
+    stored.paste(Image.new("RGB", (1500, 2000), "black"), (1500, 0))  # правая половина хранимого кадра
+    exif = Image.Exif()
+    exif[0x0112] = 6  # поворот на 90° по часовой: правая половина хранимого → нижняя половина view
+    stored.save(path, "JPEG", exif=exif.tobytes())
+
+    view = _view(path)
+    assert view.size == (2000, 3000)
+    _, crop = adv.prepare_images(view, [1000, 2900])
+
+    pixels = Image.open(io.BytesIO(base64.b64decode(crop.split(",", 1)[1]))).convert("L")
+    assert pixels.getextrema()[1] < 40
 
 
 def test_prompt_explains_depth_of_field_and_texture():

@@ -1,6 +1,6 @@
 """
 Факты об исходном файле (docs/INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md §3,
-docs/FORMAT_CONTRACT.md §3.1; normalize-facts-v3).
+docs/FORMAT_CONTRACT.md §3.1; normalize-facts-v4).
 
 Первый шаг Normalization: файл только читается и описывается. Ничего не
 меняется и не конвертируется.
@@ -19,6 +19,7 @@ v2 (валидация на независимой сотне 27.09.2026, пас
 C2PA).
 """
 
+import hashlib
 import io
 import re
 import struct
@@ -30,7 +31,9 @@ from app import readiness as rd
 from app.enhancement import jpeg_quality
 
 # v3 (28.09.2026): необъявленный цвет — kind "undeclared" (не "missing"), признак declared.
-FACTS_VERSION = "normalize-facts-v3"
+# v4 (28.09.2026): ICC источника как факт — sha256, размер, цветовое пространство профиля
+#   (ICC derivative / view сверяются с ним; паспорт §35ZR).
+FACTS_VERSION = "normalize-facts-v4"
 
 _SIGNATURES = (
     (b"\xff\xd8\xff", "JPEG"),
@@ -216,8 +219,25 @@ def _icc_kind(icc: bytes) -> tuple[str, str | None]:
     return kind, description
 
 
+def icc_fact(icc: bytes | None) -> dict | None:
+    """ICC как факт: хеш байтов, размер и пространство профиля (RGB / CMYK / GRAY)."""
+    if not icc:
+        return None
+    try:
+        space = ImageCms.ImageCmsProfile(io.BytesIO(icc)).profile.xcolor_space.strip() or None
+    except (OSError, ImageCms.PyCMSError, AttributeError):
+        space = None
+    return {"sha256": hashlib.sha256(icc).hexdigest(), "size": len(icc), "color_space": space}
+
+
 def _color(image: Image.Image, container: str | None, png: dict, nclx: dict | None) -> dict:
     """Цвет из того, чем он объявлен в файле: ICC, блоки PNG, nclx / cICP. Ничего не предполагается."""
+    color = _declared_color(image, container, png, nclx)
+    color["icc"] = icc_fact(image.info.get("icc_profile"))
+    return color
+
+
+def _declared_color(image: Image.Image, container: str | None, png: dict, nclx: dict | None) -> dict:
     icc = image.info.get("icc_profile")
     if icc:
         kind, description = _icc_kind(icc)

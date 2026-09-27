@@ -100,6 +100,34 @@ Views строятся **из representation в памяти**, не храня�
 | Размер | только **уменьшение** до размера view (`full` = исходное разрешение, `preview` = 2048, `overview` = 1536) фильтром LANCZOS; **никогда не увеличивать** |
 | Кадр | основной |
 
+### 4a. ICC: источник, representation, view — три разных утверждения (28.09.2026)
+
+| Что | Где записано | Правило |
+|---|---|---|
+| ICC **источника** | факты `color_profile.icc` (`sha256`, `size`, `color_space`) — `normalize-facts-v4` | факт происхождения; не меняется |
+| Цвет **representation** | манифест `NORMALIZE/PASSED` → `color` {`space`, `declared`, `icc_sha256`, `icc_is_source`, `pixels_converted`} | ICC описывает **фактические** пиксели файла. Пиксели не конвертированы → ICC источника байт в байт и пространство источника (сейчас всегда так: derivative AVIF → PNG без конвертации). Если derivative когда-нибудь конвертирует пиксели — он обязан нести профиль **своего** пространства, и ICC источника в нём быть не может |
+| Цвет **view** | `AnalysisView.color_space` / `identity()` в событиях стадий | view в памяти **без ICC**; пространство — `srgb` (объявленный цвет, при необходимости конвертирован) или `undeclared`, независимо от профиля источника |
+
+Инвариант `normalizer.check_color`: нельзя одновременно считать ICC источника
+сохранённым байт в байт и пиксели — уже конвертированными (и наоборот:
+неконвертированные пиксели с чужим ICC). Нарушение — ошибка кода, события
+`PASSED` нет (регрессия: `tests/test_normalizer.py`).
+
+Объявленный не-sRGB **без** ICC (DCF Adobe RGB, nclx, cICP, gAMA/cHRM) —
+`NORMALIZE/FAILED` `COLOR_CONVERSION_UNSUPPORTED` уже в `plan()`: профиль не
+подбирается. CMYK / Gray с ICC конвертируются в пространстве профиля.
+
+### 4b. Граница Normalization
+
+| Normalization делает | Normalization **не** делает |
+|---|---|
+| ориентацию | sharpening |
+| интерпретацию и конвертацию цвета (для view) | denoise |
+| representation / derivative | upscale |
+| битность | Topaz |
+| альфу (только во view) | баланс белого |
+| кадры / потоки (выбор основного, факты) | кривые, контраст, любые творческие изменения |
+
 ---
 
 ## 5. Визуальные изменения: допустимо и запрещено
@@ -251,7 +279,7 @@ Normalization (§10a).
   редакторов, исходные URL, старые авторские данные и историю обработки. AI-контент
   публикуется на соответствующих площадках, а не выдаётся за фотографию.
 
-### 10b. Влияние на существующие стадии (при переходе на views)
+### 10b. Влияние на существующие стадии (при переходе на views) — ✅ выполнено 28.09.2026 (§14)
 
 - **Readiness**: сейчас `COLOR_PROFILE_MISSING` — warning «считается sRGB»
   (читает только ICC). Нужно: брать цвет из фактов (`color_profile.declared`);
@@ -314,8 +342,48 @@ Normalization (§10a).
   файлом и событием: результата без события нет, следующий прогон
   переиспользует файл).
 
-**Ещё не сделано (шаг 3):** стадии (QC, Enhancement, Vision, Readiness) пока
-читают source напрямую; переход на views и исправление Readiness (§10b)
-выполняются вместе. До этого ingest **не принимает** AVIF / HEIF (расширения
-`SUPPORTED_EXTENSIONS` не меняются): derivative-путь проверен тестами и
-dry-run новой сотни, но в рабочий pipeline AVIF не попадает.
+Шаг 3 (стадии на views, Readiness по фактам, AVIF в ingest) — §14.
+
+---
+
+## 14. AnalysisView — единый вход пикселей (шаг 3, 28.09.2026, паспорт §35ZR)
+
+```
+SOURCE / INTERNAL DERIVATIVE
+        ↓
+  open_asset_view()            app/analysis_view.py (пиксели — normalizer.open_view)
+        ↓
+  canonical AnalysisView       full · preview 2048 · overview 1536 (уменьшения того же full)
+        ↓
+  ┌─────┼──────────┬───────────────┐
+  QC  Enhancement  Vision   (Creative Review — по запросу)
+```
+
+- **Контракт view:** ориентирован; 8 бит RGB; альфа на белом; `color_space`
+  `srgb` (объявленный, при необходимости конвертирован) или `undeclared` (без
+  конвертации); ICC и EXIF не несёт; только уменьшение. `identity()` —
+  `view_version` (`analysis-view-v1`), `fingerprint`, representation, цвет,
+  размер — пишется в события стадий (`AI/PASSED.view`, `ENHANCEMENT/ASSESSED.view`,
+  `ENHANCEMENT/ADVISED.view`, `QC.metrics.view`, `CREATIVE_REVIEW/ADVISED.view`).
+- **Только по действительному манифесту:** нет `NORMALIZE/PASSED` —
+  `NORMALIZE_NOT_PASSED`; манифест устарел — `NORMALIZE_STALE`; файл
+  representation отсутствует / изменён — `REPRESENTATION_INVALID`. Обратного
+  пути «открыть source как есть» нет.
+- **Один view на объект:** worker строит view один раз после Normalization и
+  передаёт тот же объект QC, Enhancement (правила и советник) и Vision; нет
+  view — `VIEW/FAILED`, исход `VIEW_UNAVAILABLE`, дальше не идём. Операции
+  сервиса (`enhancement.assess`, `enhancement.advise`, `creative.review`) строят
+  view так же — через `open_asset_view`.
+- **Отпечатки стадий** включают `view_fingerprint` (representation + версия
+  views): смена normalizer или кода views делает оценки stale.
+- **Файл изображения декодируют только** `normalizer.py` (representation, views),
+  `source_facts.py` (факты) и `ingest.py` (размеры при регистрации) —
+  архитектурный тест `tests/test_analysis_view.py::test_no_stage_opens_image_files_itself`.
+- **Качество JPEG** — факт источника (`facts.jpeg_quality`, таблицы
+  квантования), а не свойство view.
+- **Vision получает JPEG** варианта `preview` (раньше PNG отправлялись как PNG
+  с альфой): одинаковый вход для всех форматов.
+- **Readiness не использует AnalysisView:** факты источника + metadata + правила
+  площадки + export plan (`STOCK_READINESS_CONTRACT.md`, readiness-v2).
+- **AVIF принимается ingest** и проходит pipeline на своём lossless derivative;
+  HEIC / HEIF — нет (`MISSING_CODEC`, без `pillow-heif`).

@@ -172,6 +172,10 @@ def run_asset(asset_id: int) -> dict:
             return refuse(normalizer.DECODE_ERROR, f"{type(exc).__name__}: {exc}")
         derivative = {**built, "path": built["path"].relative_to(ingest.ROOT).as_posix()}
 
+    source_color = planned["preserved"]["color"]
+    color = normalizer.representation_color(source_color, derivative)
+    normalizer.check_color(source_color, color)
+
     manifest = {
         "normalizer_version": normalizer.NORMALIZER_VERSION,
         "params_hash": normalizer.PARAMS_HASH,
@@ -180,6 +184,7 @@ def run_asset(asset_id: int) -> dict:
         "facts_fingerprint": fingerprint(asset["file_hash"]),
         "representation": planned["representation"],
         "derivative": derivative,
+        "color": color,
         "transforms": planned["transforms"],
         "preserved": planned["preserved"],
         "decoder": normalizer.decoder_versions(),

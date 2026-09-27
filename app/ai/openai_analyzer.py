@@ -1,11 +1,8 @@
-﻿import base64
+import base64
 import os
-from io import BytesIO
-from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from PIL import Image, ImageOps
 
 from app.ai.schema import AIAnalysis
 from app.ai.analyzer import AIAnalyzer
@@ -14,9 +11,7 @@ from app.ai.analyzer import AIAnalyzer
 load_dotenv()
 
 
-# The Responses API rejects images that require more than 30,000 patches.
-# 6,144 px keeps a 4:3 photograph at 27,648 patches, leaving safe headroom.
-MAX_ANALYSIS_IMAGE_EDGE = 6_144
+# Изображение — вариант view "preview" (2048 px): лимит Responses API в 30 000 патчей не достигается.
 
 
 class OpenAIAnalyzer(AIAnalyzer):
@@ -35,33 +30,9 @@ class OpenAIAnalyzer(AIAnalyzer):
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
-    def analyze(self, image_path: Path) -> AIAnalysis:
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            raise FileNotFoundError(
-                f"Image not found: {image_path}"
-            )
-
-        suffix = image_path.suffix.lower()
-
-        mime_types = {
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".png": "image/png",
-            ".webp": "image/webp",
-        }
-
-        mime_type = mime_types.get(suffix)
-
-        if not mime_type:
-            raise ValueError(
-                f"Unsupported image format: {suffix}"
-            )
-
-        image_bytes, mime_type = self._prepare_image(
-            image_path, mime_type
-        )
+    def analyze(self, view) -> AIAnalysis:
+        """AnalysisView → JPEG (вариант preview). Файл провайдер сам не открывает."""
+        image_bytes, mime_type = view.jpeg("preview", quality=95), "image/jpeg"
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         response = self.client.responses.create(
@@ -121,31 +92,3 @@ Important:
         result_text = response.output_text.strip()
 
         return AIAnalysis.model_validate_json(result_text)
-
-    @staticmethod
-    def _prepare_image(
-        image_path: Path, mime_type: str
-    ) -> tuple[bytes, str]:
-        """Return the original image or a resized in-memory copy for OpenAI."""
-        with Image.open(image_path) as source:
-            image = ImageOps.exif_transpose(source)
-
-            if max(image.size) <= MAX_ANALYSIS_IMAGE_EDGE:
-                return image_path.read_bytes(), mime_type
-
-            image.thumbnail(
-                (MAX_ANALYSIS_IMAGE_EDGE, MAX_ANALYSIS_IMAGE_EDGE),
-                Image.Resampling.LANCZOS,
-            )
-
-            output = BytesIO()
-            if mime_type == "image/jpeg":
-                if image.mode not in ("RGB", "L"):
-                    image = image.convert("RGB")
-                image.save(output, format="JPEG", quality=95, optimize=True)
-            elif mime_type == "image/webp":
-                image.save(output, format="WEBP", quality=95, method=6)
-            else:
-                image.save(output, format="PNG", optimize=True)
-
-        return output.getvalue(), mime_type

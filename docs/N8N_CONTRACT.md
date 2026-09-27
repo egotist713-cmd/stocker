@@ -96,6 +96,8 @@ Content-Type: application/json
 | `normalize.evaluate`, `normalize.run`, `normalize.get` | ✅ | факты и внутреннее представление; source не меняется, ничего не улучшается |
 | `enhancement.assess`, `enhancement.advise`, `enhancement.get` | ✅ | метрики качества и рекомендация (модель — только для спорных); ничего не улучшает |
 
+Операции, читающие пиксели (`enhancement.assess`, `enhancement.advise`, `creative.review`), требуют
+действительного `NORMALIZE/PASSED`: сначала `normalize.run` (`asset.process` делает это сам).
 Операции оценки адресуются одним `asset_id`; пакетной переоценки нет. Workflow,
 вызывающий их в цикле, обязан ограничивать число объектов за запуск (как
 `stocker-retry`, §6.1).

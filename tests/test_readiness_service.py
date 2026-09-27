@@ -3,9 +3,10 @@ import json
 import sqlite3
 
 import pytest
+from PIL import ImageCms
 
 from app import metadata as metadata_service
-from app import qc
+from app import normalization, qc
 from app import readiness as rd
 from app.database.db import get_asset
 from app.service import dispatch
@@ -26,9 +27,13 @@ def small_images_allowed(monkeypatch):
     monkeypatch.setattr(rd, "PROFILES", profiles)
 
 
-def _approved_asset(root, name="photo.jpg", seed=0) -> int:
-    """Asset с QC, Vision и metadata после gate (auto_approved)."""
-    asset_id = _vision_asset(root, name=name, seed=seed)
+SRGB_ICC = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+def _approved_asset(root, name="photo.jpg", seed=0, icc_profile=SRGB_ICC) -> int:
+    """Asset с фактами, QC, Vision и metadata после gate (auto_approved); цвет — объявленный sRGB."""
+    asset_id = _vision_asset(root, name=name, seed=seed, icc_profile=icc_profile)
+    normalization.run_asset(asset_id)
     qc.save_qc_result(asset_id, qc.check_asset(get_asset(asset_id)))
     metadata_service.build(asset_id, analyzer=FakeMetadataAnalyzer())
     return asset_id
@@ -44,6 +49,16 @@ def _row(root, asset_id):
 
 
 # --- оценка и событие ------------------------------------------------------------
+
+
+def test_undeclared_color_blocks_before_export(stocker_root, small_images_allowed):
+    # Readiness — по фактам источника: цвет не объявлен → не sRGB «по умолчанию».
+    asset_id = _approved_asset(stocker_root, icc_profile=None)
+    readiness = dispatch("readiness.evaluate", {"asset_id": asset_id})["data"]["readiness"]
+    assert readiness["ready_for"] == []
+    for platform in ("adobe", "shutterstock"):
+        codes = {c["code"]: c["level"] for c in readiness["platforms"][platform]["checks"]}
+        assert codes["COLOR_SPACE_UNDECLARED"] == rd.BLOCKER
 
 
 def test_evaluate_writes_event_and_is_ready(stocker_root, small_images_allowed):
@@ -110,16 +125,16 @@ def test_changed_source_blocks(stocker_root, small_images_allowed):
     assert "SOURCE_NOT_OK" in [c["code"] for c in readiness["platforms"]["adobe"]["checks"]]
 
 
-def test_unreadable_file_records_failed_event(stocker_root, small_images_allowed):
+def test_changed_file_blocks_without_decoding(stocker_root, small_images_allowed):
+    # Readiness пиксели не читает: испорченный файл — SOURCE_NOT_OK по хешу, а не сбой декодирования.
     asset_id = _approved_asset(stocker_root)
     (stocker_root / "data" / "incoming" / "photo.jpg").write_bytes(b"not an image")
 
     envelope = dispatch("readiness.evaluate", {"asset_id": asset_id})
 
-    assert envelope["ok"] is False and envelope["outcome"] == "READINESS_FAILED"
-    assert envelope["data"]["error"]["error_type"]
-    ((status, message),) = _readiness_events(stocker_root, asset_id)
-    assert status == "FAILED" and message["error_type"]
+    assert envelope["ok"] and envelope["data"]["readiness"]["ready_for"] == []
+    codes = {c["code"]: c["level"] for c in envelope["data"]["readiness"]["platforms"]["adobe"]["checks"]}
+    assert codes["SOURCE_NOT_OK"] == rd.BLOCKER
 
 
 def test_unknown_asset(stocker_root):

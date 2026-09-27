@@ -9,16 +9,18 @@ v2 (калибровка на 108 отобранных фото, 27.09.2026): v1
 
 Модель здесь не вызывается: явные случаи решают правила, спорные помечаются
 disputed — рекомендацию для них даёт локальная модель отдельно. Topaz не
-запускается. Файл только читается.
+запускается. Пиксели — только из AnalysisView (ориентирован, sRGB или undeclared, 8 бит);
+качество JPEG — факт источника (таблицы квантования), а не свойство view.
 """
 
 import hashlib
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+from app import normalizer
 
 RULES_VERSION = "enhancement-rules-v2"
 
@@ -125,8 +127,8 @@ def _tile_sharpness(analysis: Image.Image, scale: float) -> dict:
     }
 
 
-def measure(image: Image.Image) -> dict:
-    quality = jpeg_quality(image)
+def measure(image: Image.Image, jpeg_quality: int | None = None) -> dict:
+    """Метрики по пикселям view; jpeg_quality — факт источника (facts.jpeg_quality)."""
     image = image.convert("RGB")
     scale = min(1.0, ANALYSIS_SIDE / max(image.size))
     analysis = image.resize((round(image.width * scale), round(image.height * scale)), Image.LANCZOS) if scale < 1 else image
@@ -145,13 +147,13 @@ def measure(image: Image.Image) -> dict:
         "blockiness": round(float(np.median(blocks)), 3),
         "detail_ratio": round(float(np.median(details)), 3),
         **_tile_sharpness(analysis, scale),
-        "jpeg_quality": quality,
+        "jpeg_quality": jpeg_quality,
     }
 
 
-def read_metrics(path: Path) -> dict:
-    with Image.open(path) as image:
-        return measure(image)
+def measure_view(view, jpeg_quality: int | None) -> dict:
+    """Метрики по AnalysisView (full, в масштабе 100 %); sharpest_point — в координатах view."""
+    return measure(view.full, jpeg_quality)
 
 
 # --- Правила (пороги v2, калибровка — контракт §4.2) ---------------------------------
@@ -234,7 +236,9 @@ def decide(found: list[dict]) -> dict:
 
 
 def fingerprint(file_hash: str | None) -> str:
-    payload = json.dumps({"rules_version": RULES_VERSION, "file_hash": file_hash}, sort_keys=True)
+    # Вход — AnalysisView: смена representation или кода views делает оценку stale.
+    payload = json.dumps({"rules_version": RULES_VERSION, "file_hash": file_hash,
+                          "view": normalizer.view_fingerprint(file_hash)}, sort_keys=True)
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

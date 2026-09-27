@@ -58,8 +58,10 @@ def _db_facts(asset: dict, events: list[dict]) -> dict:
     """Входы fingerprint из БД — без чтения файла."""
     qc = _json(asset["qc_result"]) or {}
     source_invalid = _last(events, "SOURCE", "INVALID")
+    source_facts = _last(events, "NORMALIZE", "EVALUATED")
     return {
         "file_hash": asset["file_hash"],
+        "facts_event_id": source_facts["id"] if source_facts else None,
         "source_event_id": source_invalid["id"] if source_invalid else None,
         "qc_passed": bool(qc.get("passed")),
     }
@@ -79,24 +81,26 @@ def _stored(event: dict | None) -> dict | None:
     return {key: value for key, value in result.items() if key != "actor"}
 
 
-def _file_facts(asset: dict) -> dict:
-    """Сведения о файле; исходник только читается (оригинал не меняется, §3.5b)."""
+def _file_facts(asset: dict, events: list[dict]) -> dict:
+    """
+    Сведения о файле из фактов источника (NORMALIZE/EVALUATED), а не из пикселей и не
+    только из ICC. Целостность source проверяется по хешу; файл не меняется (§3.5b).
+    """
     path = ingest.source_file(asset)
-    qc_metrics = (_json(asset["qc_result"]) or {}).get("metrics", {})
-
-    if not path.exists():
-        return {
-            "source": "missing",
-            "format": qc_metrics.get("format"),
-            "width": asset["width"] or 0,
-            "height": asset["height"] or 0,
-            "file_size": asset["file_size"] or 0,
-            "color_profile": None,
-            "color_profile_description": None,
-        }
-
-    source = "ok" if ingest.sha256_file(path) == asset["file_hash"] else "changed"
-    return {"source": source, **rd.read_file_facts(path)}
+    facts = (_stored(_last(events, "NORMALIZE", "EVALUATED")) or {}).get("facts")
+    source = "missing" if not path.exists() else "ok" if ingest.sha256_file(path) == asset["file_hash"] else "changed"
+    if facts is None:
+        return {"source": source, "format": None, "width": asset["width"] or 0, "height": asset["height"] or 0,
+                "file_size": asset["file_size"] or 0, "color": None}
+    color = facts["color_profile"]
+    return {
+        "source": source,
+        "format": facts["format"],
+        "width": facts["width"],
+        "height": facts["height"],
+        "file_size": facts["file_size"],
+        "color": {k: color.get(k) for k in ("kind", "description", "source", "declared")},
+    }
 
 
 def summary(asset: dict, events: list[dict], metadata: dict | None) -> dict:
@@ -137,7 +141,7 @@ def evaluate_asset(asset_id: int) -> dict:
         return {"asset_id": asset_id, "outcome": UNCHANGED, "readiness": last}
 
     try:
-        facts = {**facts, **_file_facts(asset)}
+        facts = {**facts, **_file_facts(asset, events)}
     except Exception as exc:  # noqa: BLE001 — сбой чтения файла фиксируется событием
         message = {"error_type": type(exc).__name__, "error": str(exc)[:500]}
         with transaction() as connection:

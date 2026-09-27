@@ -2,10 +2,10 @@
 Enhancement decision: события ENHANCEMENT/* (docs/STOCK_READINESS_CONTRACT.md §4.2).
 
 Метрики и правила — app/enhancement.py; рекомендация модели для спорных
-случаев — app/ai/enhancement_advisor.py. Здесь — чтение файла (только чтение,
-оригинал не меняется), идемпотентная запись событий и текущее состояние для
-представления. Решение не блокирует pipeline: Topaz не запускается, Vision
-работает с оригиналом.
+случаев — app/ai/enhancement_advisor.py. Пиксели — только AnalysisView
+(app/analysis_view.py): файл сам здесь не открывается. Здесь — идемпотентная
+запись событий и текущее состояние для представления. Решение не блокирует
+pipeline: Topaz не запускается.
 
 Модель не отменяет правила: она вызывается только для disputed (правила не
 приняли решения), и её ответ — рекомендация.
@@ -15,8 +15,9 @@ import json
 import time
 from datetime import datetime, timezone
 
+from app import analysis_view
 from app import enhancement as en
-from app import ingest
+from app import normalization
 from app.ai.analyzer import AIResponseError
 from app.ai.enhancement_advisor import INPUTS, EnhancementAdvisor, LMStudioEnhancementAdvisor
 from app.database.db import get_asset, get_connection, insert_event, transaction
@@ -78,18 +79,28 @@ def _write(asset_id: int, status: str, message: dict) -> int:
 
 
 def _failed(asset_id: int, stage: str, outcome: str, error_type: str, error: str, **extra) -> dict:
-    message = {"stage": stage, "error_type": error_type, "error": error[:500], **extra}
+    """FAILED идемпотентен: та же причина при тех же входах (fingerprint) — без нового события."""
+    asset = get_asset(asset_id)
+    current = en.fingerprint(asset["file_hash"]) if asset else None
+    previous_event = _last_event(asset_id, "FAILED")
+    previous = _stored(previous_event)
+    newer = [_last_event(asset_id, status) for status in ("ASSESSED", "ADVISED")]
+    if (previous and previous.get("fingerprint") == current and previous.get("error_type") == error_type
+            and previous.get("stage") == stage and not any(e and e["id"] > previous_event["id"] for e in newer)):
+        return {"asset_id": asset_id, "outcome": outcome, "assessment": None, "error": previous}
+    message = {"stage": stage, "error_type": error_type, "error": error[:500], "fingerprint": current, **extra}
     _write(asset_id, "FAILED", message)
     return {"asset_id": asset_id, "outcome": outcome, "assessment": None, "error": message}
 
 
-def _source_problem(asset: dict) -> tuple[str, str] | None:
-    path = ingest.source_file(asset)
-    if not path.exists():
-        return "SOURCE_MISSING", f"Source file not found: {asset['source_path']}"
-    if ingest.sha256_file(path) != asset["file_hash"]:
-        return "SOURCE_CHANGED", "Source file hash does not match assets.file_hash"
-    return None
+def _open_view(asset_id: int, view):
+    """Переданный view (worker: один на все стадии) или view объекта; иначе (код, причина)."""
+    if view is not None:
+        return view, None
+    try:
+        return analysis_view.open_asset_view(asset_id), None
+    except analysis_view.ViewUnavailable as exc:
+        return None, (exc.code, str(exc))
 
 
 def _advice_for(advised_event: dict | None, assessed_event: dict | None) -> dict | None:
@@ -158,24 +169,25 @@ def get(asset_id: int) -> dict:
     return {**summary(asset, assessed, advised), "result": _stored(assessed), "advice": _advice_for(advised, assessed)}
 
 
-def assess_asset(asset_id: int) -> dict:
-    """Метрики и решение правилами. Идемпотентно: тот же файл и правила — без нового события."""
+def assess_asset(asset_id: int, view=None) -> dict:
+    """Метрики и решение правилами по AnalysisView. Идемпотентно: тот же view и правила — без нового события."""
     asset = _require_asset(asset_id)
 
     last = _stored(_last_event(asset_id, "ASSESSED"))
     if last and last.get("fingerprint") == en.fingerprint(asset["file_hash"]):
         return {"asset_id": asset_id, "outcome": UNCHANGED, "assessment": last}
 
-    problem = _source_problem(asset)
+    view, problem = _open_view(asset_id, view)
     if problem:
         return _failed(asset_id, "rules", ENHANCEMENT_FAILED, *problem)
 
     try:
-        metrics = en.read_metrics(ingest.source_file(asset))
-    except Exception as exc:  # noqa: BLE001 — сбой чтения фиксируется событием
+        quality = ((normalization.get(asset_id).get("facts")) or {}).get("jpeg_quality")
+        metrics = en.measure_view(view, quality)
+    except Exception as exc:  # noqa: BLE001 — сбой расчёта фиксируется событием
         return _failed(asset_id, "rules", ENHANCEMENT_FAILED, type(exc).__name__, str(exc))
 
-    result = en.assess(metrics, asset["file_hash"])
+    result = {**en.assess(metrics, asset["file_hash"]), "view": view.identity()}
     _write(asset_id, "ASSESSED", result)
     return {"asset_id": asset_id, "outcome": ASSESSED, "assessment": result}
 
@@ -188,7 +200,7 @@ def _provenance(advisor: EnhancementAdvisor) -> dict:
     }
 
 
-def advise_asset(asset_id: int, advisor: EnhancementAdvisor | None = None) -> dict:
+def advise_asset(asset_id: int, advisor: EnhancementAdvisor | None = None, view=None) -> dict:
     """
     Рекомендация модели — только для disputed. Для решённых правилами случаев
     модель не вызывается (NOT_DISPUTED): она не отменяет детерминированный QC.
@@ -208,7 +220,7 @@ def advise_asset(asset_id: int, advisor: EnhancementAdvisor | None = None) -> di
     if existing:
         return {"asset_id": asset_id, "outcome": UNCHANGED, "assessment": result, "advice": existing}
 
-    problem = _source_problem(asset)
+    view, problem = _open_view(asset_id, view)
     if problem:
         return _failed(asset_id, "advisor", ADVISOR_FAILED, *problem)
 
@@ -216,7 +228,7 @@ def advise_asset(asset_id: int, advisor: EnhancementAdvisor | None = None) -> di
     provenance = _provenance(advisor)
     started = time.perf_counter()
     try:
-        advice = advisor.advise(ingest.source_file(asset), result)
+        advice = advisor.advise(view, result)
     except Exception as exc:  # noqa: BLE001 — сбой модели фиксируется событием и не блокирует pipeline
         extra = {**provenance, "duration_s": round(time.perf_counter() - started, 2)}
         if isinstance(exc, AIResponseError):
@@ -226,6 +238,7 @@ def advise_asset(asset_id: int, advisor: EnhancementAdvisor | None = None) -> di
     message = {
         **provenance,
         "inputs": INPUTS,
+        "view": view.identity(),
         "assessment_event_id": assessed_event["id"],
         "advised_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "duration_s": round(time.perf_counter() - started, 2),

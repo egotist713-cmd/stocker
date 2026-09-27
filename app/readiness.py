@@ -1,9 +1,14 @@
 """
-Stock Readiness readiness-v1: готов ли объект к экспорту на площадку.
+Stock Readiness readiness-v2: готов ли объект к экспорту на площадку.
 
 Контракт: docs/STOCK_READINESS_CONTRACT.md. Детерминированные правила без БД
 и без AI: одинаковые входы дают одинаковый результат. Ничего не меняет —
-ни metadata, ни файл. Единственное чтение файла — read_file_facts().
+ни metadata, ни файл. Пиксели не читает (не AnalysisView): файл описывают факты
+источника (NORMALIZE/EVALUATED), цвет — как он объявлен в источнике.
+
+v2 (28.09.2026): цвет из фактов, а не только из ICC; необъявленное цветовое
+пространство (undeclared / Uncalibrated) не считается sRGB — blocker
+COLOR_SPACE_UNDECLARED для площадок, требующих sRGB (паспорт §35ZR).
 """
 
 import hashlib
@@ -12,14 +17,13 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app import metadata_builder as mb
 from app import review_gate as rg
 from app.ai.schema import AIAnalysis
 from app.textnorm import normalize_text
 
-READINESS_VERSION = "readiness-v1"
+READINESS_VERSION = "readiness-v2"
 
 READY_METADATA_STATES = (rg.AUTO_APPROVED, mb.APPROVED)
 
@@ -55,6 +59,7 @@ class Profile:
     category_required: bool
     max_categories: int
     verified_at: str
+    color_space: str | None = "srgb"  # цветовое пространство файла площадки
 
 
 ADOBE = Profile(
@@ -136,22 +141,6 @@ def color_profile_kind(icc_bytes: bytes | None) -> tuple[str, str | None]:
 
     same = all(abs(a - r) <= _PRIMARY_TOLERANCE for pa, pr in zip(actual, reference) for a, r in zip(pa, pr))
     return (SRGB if same else OTHER), description
-
-
-def read_file_facts(path: Path) -> dict:
-    """Формат, размеры, размер файла и цветовой профиль. Файл только читается."""
-    from PIL import Image
-
-    with Image.open(path) as image:
-        kind, description = color_profile_kind(image.info.get("icc_profile"))
-        return {
-            "format": image.format,
-            "width": image.width,
-            "height": image.height,
-            "file_size": path.stat().st_size,
-            "color_profile": kind,
-            "color_profile_description": description,
-        }
 
 
 # --- Бренды (§3.3a) ----------------------------------------------------------------
@@ -299,12 +288,18 @@ def file_checks(profile: Profile, facts: dict) -> tuple[list[dict], list[str]]:
         checks.append(_check("FORMAT_CONVERSION", DERIVATIVE, f"{facts['format']} is not accepted; JPEG derivative"))
         operations.append("to_jpeg")
 
-    if facts["color_profile"] == OTHER:
-        described = facts.get("color_profile_description") or "unknown"
-        checks.append(_check("COLOR_PROFILE_CONVERSION", DERIVATIVE, f"Color profile '{described}' is not sRGB"))
-        operations.append("to_srgb")
-    elif facts["color_profile"] == MISSING:
-        checks.append(_check("COLOR_PROFILE_MISSING", WARNING, "No ICC profile; assumed sRGB"))
+    color = facts.get("color")
+    if color is None:
+        checks.append(_check("SOURCE_FACTS_MISSING", BLOCKER, "No source facts (NORMALIZE/EVALUATED); color space is unknown"))
+    elif profile.color_space:
+        described = color.get("description") or color["kind"]
+        if not color.get("declared"):
+            # Цвет не объявлен — это не sRGB (решение 28.09.2026): площадке нужен sRGB, угадывать нельзя.
+            checks.append(_check("COLOR_SPACE_UNDECLARED", BLOCKER,
+                                 f"Color space is not declared ({color['kind']}); {profile.color_space} is required and not assumed"))
+        elif color["kind"] != profile.color_space:
+            checks.append(_check("COLOR_PROFILE_CONVERSION", DERIVATIVE, f"Color space '{described}' is not {profile.color_space}"))
+            operations.append(f"to_{profile.color_space}")
 
     if facts["file_size"] > profile.max_file_size:
         checks.append(_check("FILE_TOO_LARGE", DERIVATIVE,
@@ -397,6 +392,7 @@ def fingerprint(facts: dict, metadata: dict | None, platforms: list[str]) -> str
         "readiness_version": READINESS_VERSION,
         "profiles": [PROFILES[p].version for p in sorted(platforms)],
         "file_hash": facts.get("file_hash"),
+        "facts_event_id": facts.get("facts_event_id"),    # последнее NORMALIZE/EVALUATED
         "source_event_id": facts.get("source_event_id"),  # последнее SOURCE/INVALID
         "qc_passed": facts.get("qc_passed"),
         "state": metadata.get("state"),
@@ -444,7 +440,7 @@ def evaluate_platform(profile: Profile, facts: dict, metadata: dict, vision: AIA
 
 
 def evaluate(facts: dict, metadata: dict | None, vision: AIAnalysis | None, platforms: list[str] | None = None) -> dict:
-    """Результат §3.7. facts: file_hash, source, qc_passed, format, width, height, file_size, color_profile."""
+    """Результат §3.7. facts: file_hash, source, qc_passed, format, width, height, file_size, color (факты источника)."""
     platforms = sorted(platforms or PROFILES)
     unknown = [p for p in platforms if p not in PROFILES]
     if unknown:

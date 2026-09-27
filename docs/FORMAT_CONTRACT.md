@@ -101,7 +101,7 @@ IMG_0001.HEIC
 | Кадр | основной (primary) кадр; остальные кадры — только факт `frames` |
 | Ориентация | применена |
 | Пиксели | 8 бит на канал, RGB |
-| Цвет | **преобразован в sRGB** из встроенного ICC (нет ICC — считается sRGB) |
+| Цвет | **объявленный** — в sRGB по ICC; **не объявленный** (`undeclared` / `uncalibrated`) — без преобразования, `color_space: undeclared`, sRGB **не предполагается** (решение 28.09.2026; `INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md` §4, §14) |
 | Альфа-канал | сведён на белый фон; факт `has_alpha` |
 | HDR | базовое SDR-изображение (gain map не применяется); PQ/HLG — тональное отображение в SDR (будущее, §7) |
 | Встроенные данные | видео, карты глубины, gain map — игнорируются |
@@ -148,10 +148,10 @@ Ultra HDR 113; Motion Photo 74; GPS 106; тег Software 112; отказы — 3
 | Случай | Normalize (анализ) | Факт (§3.1) | Export (см. `EXPORT_PREPARATION_CONTRACT.md`) |
 |---|---|---|---|
 | **Цветовые профили** (Display P3, Adobe RGB, ProPhoto) | ICC → sRGB, намерение `perceptual` (для анализа важно правдоподобие цвета, а не точность) | `color_profile` + описание | `to_srgb`, намерение и точность — профиль площадки |
-| **Нет ICC** | считается sRGB | `missing` | профиль sRGB встраивается в файл площадки |
+| **Нет ICC** | объявлен иначе (EXIF sRGB, PNG sRGB, nclx) — по объявлению; не объявлен — без преобразования (не sRGB) | `kind` по объявлению или `undeclared` | не объявлен — Readiness blocker `COLOR_SPACE_UNDECLARED` (28.09.2026) |
 | **CMYK** (TIFF, JPEG из полиграфии) | CMYK → sRGB через ICC; **без ICC — `NORMALIZE/FAILED` `COLOR_SPACE_UNDECLARED`** (профиль не предполагается; уточнено 27.09.2026) | `color_mode=CMYK` | в sRGB; CMYK площадкам не отдаётся |
-| **Цвет не объявлен** (нет ICC, sRGB / cICP / nclx, EXIF ColorSpace) | явное правило (`INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md` §7): views как sRGB, `color_assumption` в манифесте | `color_profile.kind=missing` | `to_srgb` не нужен; ICC sRGB встраивается |
-| **EXIF ColorSpace = Uncalibrated без ICC** | `NORMALIZE/FAILED` `COLOR_SPACE_UNDECLARED` (кроме DCF `R03` → Adobe RGB) | `kind=uncalibrated` / `adobe_rgb` | — |
+| **Цвет не объявлен** (нет ICC, sRGB / cICP / nclx, EXIF ColorSpace) | **не** `FAILED`; view без цветового преобразования, `color_space: undeclared` (решение 28.09.2026) | `color_profile.kind=undeclared`, `declared=false` | Readiness blocker `COLOR_SPACE_UNDECLARED` (площадке нужен sRGB) |
+| **EXIF ColorSpace = Uncalibrated без ICC** | как «не объявлен» (решение 28.09.2026); DCF `R03` → Adobe RGB объявлен, но без ICC — `NORMALIZE/FAILED` `COLOR_CONVERSION_UNSUPPORTED` | `kind=uncalibrated` / `adobe_rgb` | `uncalibrated` — Readiness blocker `COLOR_SPACE_UNDECLARED` |
 | **16 бит** (TIFF, PNG), 10/12 бит (HEIC, AVIF) | в 8 бит (масштабирование, не обрезка) | `bit_depth` | 8 бит JPEG |
 | **Оттенки серого** | в RGB | `color_mode=L` | JPEG RGB или grayscale — по профилю площадки |
 | **Альфа-канал** (PNG) | сведение на белый фон | `has_alpha` | фото площадкам — без прозрачности |

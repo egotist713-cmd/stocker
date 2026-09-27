@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app import enhancement_decision, worker
+from app import enhancement_decision, normalization, worker
 from app.ingest import ingest_file
 from app.service import dispatch
 from app.service.mcp_server import tools
@@ -19,7 +19,9 @@ def _enhancement_events(root, asset_id):
 
 @pytest.fixture
 def asset_id(stocker_root) -> int:
-    return ingest_file(make_image(stocker_root))
+    asset_id = ingest_file(make_image(stocker_root))
+    normalization.run_asset(asset_id)  # пиксели — только через AnalysisView (NORMALIZE/PASSED)
+    return asset_id
 
 
 def test_assess_writes_event_with_actor(stocker_root, asset_id):
@@ -56,8 +58,8 @@ def test_get_and_asset_view(stocker_root, asset_id):
     assert view["pipeline"]["enhancement"]["event_id"] == data["event_id"]
 
 
-@pytest.mark.parametrize("damage,error_type", [("delete", "SOURCE_MISSING"), ("replace", "SOURCE_CHANGED")])
-def test_missing_or_changed_source_records_failed(stocker_root, asset_id, damage, error_type):
+@pytest.mark.parametrize("damage", ["delete", "replace"])
+def test_missing_or_changed_source_records_failed(stocker_root, asset_id, damage):
     path = stocker_root / "data" / "incoming" / "photo.jpg"
     if damage == "delete":
         path.unlink()
@@ -68,7 +70,26 @@ def test_missing_or_changed_source_records_failed(stocker_root, asset_id, damage
 
     assert envelope["ok"] is False and envelope["outcome"] == "ENHANCEMENT_FAILED"
     ((status, message),) = _enhancement_events(stocker_root, asset_id)
-    assert status == "FAILED" and message["error_type"] == error_type
+    assert status == "FAILED" and message["error_type"] == "REPRESENTATION_INVALID"
+
+
+def test_repeated_failure_writes_one_event(stocker_root, asset_id):
+    (stocker_root / "data" / "incoming" / "photo.jpg").unlink()
+    for _ in range(3):
+        dispatch("enhancement.assess", {"asset_id": asset_id})
+    assert [st for st, _ in _enhancement_events(stocker_root, asset_id)] == ["FAILED"]
+
+
+def test_assess_requires_normalization(stocker_root):
+    # Без NORMALIZE/PASSED view нет — и обратного пути «открыть source как есть» тоже нет.
+    asset_id = ingest_file(make_image(stocker_root))
+    envelope = dispatch("enhancement.assess", {"asset_id": asset_id})
+    assert envelope["ok"] is False and envelope["data"]["error"]["error_type"] == "NORMALIZE_NOT_PASSED"
+
+
+def test_assessment_records_the_view(stocker_root, asset_id):
+    view = dispatch("enhancement.assess", {"asset_id": asset_id})["data"]["assessment"]["view"]
+    assert view["view_version"] == "analysis-view-v1" and view["color_space"] == "undeclared" and view["size"] == [64, 48]
 
 
 def test_unknown_asset(stocker_root):
@@ -87,7 +108,7 @@ def test_tools_are_exposed_to_agent():
 
 
 def test_worker_continues_when_assessment_crashes(stocker_root, monkeypatch):
-    def broken(asset_id):
+    def broken(asset_id, view=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(enhancement_decision, "assess_asset", broken)

@@ -1,5 +1,3 @@
-﻿from pathlib import Path
-
 from app.ai.schema import AIAnalysis
 
 
@@ -23,7 +21,8 @@ class AIAnalyzer:
     будет подключаться отдельно.
     """
 
-    def analyze(self, image_path: Path) -> AIAnalysis:
+    def analyze(self, view) -> AIAnalysis:
+        """view — AnalysisView (app/analysis_view.py): провайдер файл сам не открывает."""
         raise NotImplementedError(
             "AI provider is not configured yet."
         )

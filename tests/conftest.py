@@ -35,11 +35,12 @@ def stocker_root(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
-def make_image(root: Path, name: str = "photo.jpg", seed: int = 0, size=(64, 48)) -> Path:
+def make_image(root: Path, name: str = "photo.jpg", seed: int = 0, size=(64, 48), icc_profile: bytes | None = None) -> Path:
+    """Случайный JPEG. Без icc_profile цвет не объявлен (undeclared) — как у многих реальных файлов."""
     rng = np.random.default_rng(seed)
     pixels = rng.integers(0, 256, size=(size[1], size[0], 3), dtype=np.uint8)
     path = root / "data" / "incoming" / name
-    Image.fromarray(pixels).save(path, format="JPEG")
+    Image.fromarray(pixels).save(path, format="JPEG", **({"icc_profile": icc_profile} if icc_profile else {}))
     return path
 
 

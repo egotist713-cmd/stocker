@@ -1,7 +1,9 @@
 import pytest
 from PIL import Image
 
-from app import qc
+from app import normalization, qc
+from app.database.db import get_asset
+from app.ingest import ingest_file
 
 
 @pytest.fixture
@@ -14,7 +16,9 @@ def platform_minimum(monkeypatch):
 def _check(root, size):
     path = root / "data" / "incoming" / "img.jpg"
     Image.new("RGB", size, "gray").save(path, "JPEG")
-    return qc.check_asset({"source_path": "data/incoming/img.jpg"})
+    asset_id = ingest_file(path)
+    normalization.run_asset(asset_id)
+    return qc.check_asset(get_asset(asset_id))
 
 
 @pytest.mark.parametrize("size,passed,errors,warnings", [

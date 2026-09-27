@@ -3893,6 +3893,105 @@ HEIC и TIFF нет ни в одном наборе — покрыты толь�
 
 ---
 
+# 35ZR. 2026-09-28 — Шаг 3: AnalysisView, разделение ICC, Readiness по фактам, AVIF в ingest
+
+### Решения пользователя
+
+1. Шаг 2 принят. `undeclared` / `Uncalibrated` / `declared` и правила цвета —
+   как реализовано. Source immutable. Internal derivative — только внутреннее
+   представление, никогда не platform export. Export Preparation не трогать;
+   `export_metadata_contamination_case` — fixture до этапа Export.
+2. **Разделение ICC:** ICC источника — факт (facts / provenance); ICC derivative
+   описывает фактическое пространство самого derivative; view, конвертированный
+   в sRGB, — sRGB независимо от источника; нельзя одновременно считать P3 ICC
+   сохранённым байт в байт и тот же representation — уже sRGB. Нужны регрессии.
+3. **Шаг 3 через единый слой** `open_view` / `AnalysisView`: QC, Enhancement и
+   Vision не открывают source / derivative сами и сами не решают ни ориентацию,
+   ни цвет; все получают один и тот же подготовленный view.
+4. **Readiness — не на AnalysisView:** факты источника + metadata + правила
+   площадки + export plan; `undeclared` / Uncalibrated — не sRGB; площадке нужен
+   sRGB → `COLOR_SPACE_UNDECLARED` до формирования export.
+5. Граница Normalization: делает — ориентацию, интерпретацию / конвертацию
+   цвета, representation / derivative, битность, альфу, кадры / потоки; не
+   делает — sharpening, denoise, upscale, Topaz, WB, кривые, контраст,
+   творческие изменения.
+6. AVIF — в ingest. Новую сотню в БД не регистрировать; проверить оба набора,
+   `check_consistency`, идемпотентность; checkpoint в паспорте.
+
+### Сделано
+
+- **ICC (контракт §4a):** `normalize-facts-v4` — `color_profile.icc` {sha256,
+  size, color_space}. Манифест (`PARAMS.manifest_version = 2`) — блок `color`
+  representation {space, declared, icc_sha256, icc_is_source, pixels_converted};
+  инвариант `normalizer.check_color` (противоречие → ошибка, события нет).
+  View без ICC и EXIF (`image.info = {}`), пространство — `color_space`.
+  Объявленный не-sRGB без ICC — `COLOR_CONVERSION_UNSUPPORTED` уже в `plan()`.
+  Исправлено попутно: CMYK / Gray с ICC конвертировались как RGB (профиль
+  применялся к пикселям не того пространства); CMYK без профиля во view — отказ.
+- **`app/analysis_view.py` (контракт §14):** `open_asset_view` — только по
+  действительному манифесту (`NORMALIZE_NOT_PASSED` / `NORMALIZE_STALE` /
+  `REPRESENTATION_INVALID`, без обратного пути к source); варианты — уменьшения
+  одного full; `identity()` в событиях стадий; `normalizer.view_fingerprint`
+  входит в отпечатки Enhancement и Creative Review.
+- **Стадии на view:** QC (размеры, резкость, доли тёмного / светлого — по view;
+  размер файла — по source), Enhancement (метрики по view full; `jpeg_quality` —
+  факт источника; `sharpest_point` — в координатах view), советник Enhancement,
+  Vision (Local и OpenAI: JPEG варианта preview), Creative Review. Worker строит
+  view один раз и передаёт тот же объект; нет view — `VIEW/FAILED`,
+  `VIEW_UNAVAILABLE`.
+- **Readiness v2:** цвет из фактов `NORMALIZE/EVALUATED`; `COLOR_SPACE_UNDECLARED`
+  (blocker) и `SOURCE_FACTS_MISSING`; `COLOR_PROFILE_MISSING` («считается sRGB»)
+  удалён; `Profile.color_space = "srgb"`; `read_file_facts` удалён — Readiness
+  файл не декодирует (целостность — по хешу).
+- **AVIF в ingest** (`SUPPORTED_EXTENSIONS`); HEIC / HEIF — нет.
+- Найдено и исправлено: `ENHANCEMENT/FAILED` писался при каждом повторе (как
+  `NORMALIZE/FAILED` в §35ZQ) — теперь идемпотентен.
+- Тесты: `tests/test_analysis_view.py` (14: отказы без манифеста / stale /
+  изменённый файл, канонический view, без увеличения, один view на QC /
+  Enhancement / Vision, отпечаток view в событиях, остановка без view, AVIF
+  через весь pipeline на derivative, HEIC не принимается, архитектурная
+  граница «файл декодируют только normalizer / source_facts / ingest»,
+  Readiness без view); ICC-регрессии в `tests/test_normalizer.py` (факт ICC;
+  P3 derivative — P3-пиксели и P3 ICC; view из него — sRGB без ICC источника;
+  четыре противоречивые записи отклоняются; противоречие не пишет событие;
+  CMYK с ICC). Мутации «CMYK как RGB», «view сохраняет ICC» и «стадия открывает
+  view сама» ловятся тестами.
+
+### Проверка
+
+Сравнение «до / после» (код a051560 — стадии открывают source сами — против
+AnalysisView; только чтение, без БД):
+
+| | Существующий (129, 127 файлов) | Новая сотня (100, не зарегистрирована) |
+|---|---|---|
+| Representation | source 127 | source 94, derivative 6 (AVIF) |
+| Вход Vision | идентичен 109 (sRGB); отличается 18 — Display P3 теперь конвертирован в sRGB | идентичен 77; отличается 22 PNG (раньше — PNG с альфой, теперь JPEG, альфа на белом) и 1 ProPhoto (теперь конвертирован) |
+| Enhancement (правила) | изменений 0 | изменений 0 (не нужно 70, risky 14, recommended 11, disputed 5) |
+| QC | изменений 0 | изменений 0 |
+| Readiness, цвет | «ICC нет — считается sRGB» → нет замечаний: 7 (EXIF sRGB) | «считается sRGB» → `COLOR_SPACE_UNDECLARED`: 30; → нет замечаний: 24 (PNG sRGB / EXIF sRGB) |
+| Source изменён | 0 | 0 |
+
+Запись в рабочую БД (копия до — в scratchpad): Normalization 126 + 3 FAILED
+(#2 `SOURCE_CHANGED`, #67 / #68 `SOURCE_MISSING`); Enhancement 126 `ASSESSED`
+(у 7 объектов прежняя оценка была ещё **rules-v1** от 26.09 — это догоняющая
+переоценка v2, а не эффект view); советник (Qwen) для 5 disputed: у 4 прежний
+совет v2 тот же (`enhancement_recommended`, sharpness), #48 — первый совет v2;
+Readiness 109 `EVALUATED`, `ready_for` не изменился ни у одного.
+Повторный прогон: Normalization / Enhancement / советник / Readiness —
+`UNCHANGED`, 0 новых событий. `check_consistency`: OK, сирот 0.
+`pytest`: 584 passed, 5 skipped.
+
+### Статус
+
+🟢 Internal Normalization (шаги 1–3) — DONE. Export Preparation — не начат.
+
+### Дальше
+
+Export Preparation — отдельным этапом по решению пользователя (включить
+`test_export_contains_only_platform_whitelist`).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -4070,7 +4169,7 @@ CALIBRATION ON USER-SELECTED PHOTOS (incoming)
     🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
-    🟡 IN PROGRESS — факты v3 DONE; контракт внутреннего представления ПРИНЯТ; engine normalize-v1 (шаг 2) DONE; шаг 3 (стадии на views + Readiness цвет) — не начат; Export — не начат (§35ZO, §35ZP, §35ZQ)
+    🟢 DONE (Internal Normalization) — факты v4; engine normalize-v1; AnalysisView — единый вход пикселей QC / Enhancement / Vision; Readiness по фактам; AVIF в ingest. Export — не начат (§35ZO–§35ZR)
 
 ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
     🟢 DONE v2 — 28 → 4 рекомендации на 108 отобранных (§35ZM)

@@ -6,10 +6,19 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from app import analysis_view
 from app.ai import local_analyzer
 from app.ai.analyzer import AIResponseError
 from app.ai.local_analyzer import LocalAnalyzer, response_schema
 from app.ai.schema import AIAnalysis
+
+UNDECLARED = {"kind": "undeclared", "source": None, "declared": False}
+
+
+def _view(path):
+    """Модель получает AnalysisView; ориентацию, битность и размер решает view."""
+    return analysis_view.from_file(path, UNDECLARED, "source", "test")
+
 
 ENV_VARS = ("LMSTUDIO_BASE_URL", "LMSTUDIO_MODEL", "LMSTUDIO_API_KEY", "LMSTUDIO_TIMEOUT")
 
@@ -54,7 +63,7 @@ def test_prepare_image_applies_exif_orientation(tmp_path):
     exif[0x0112] = 6  # Orientation: при показе кадр поворачивается на 90 градусов
     Image.new("RGB", (60, 40), "white").save(path, exif=exif)
 
-    data, _ = LocalAnalyzer._prepare_image(path, "image/jpeg")
+    data, _ = LocalAnalyzer._prepare_image(_view(path))
 
     assert Image.open(BytesIO(data)).size == (40, 60)
 
@@ -63,7 +72,7 @@ def test_prepare_image_limits_long_edge(tmp_path):
     path = tmp_path / "big.jpg"
     Image.new("RGB", (4096, 3072), "white").save(path)
 
-    data, _ = LocalAnalyzer._prepare_image(path, "image/jpeg")
+    data, _ = LocalAnalyzer._prepare_image(_view(path))
 
     assert Image.open(BytesIO(data)).size == (2048, 1536)
 
@@ -88,7 +97,7 @@ def test_invalid_output_raises_with_raw_text(tmp_path, clean_env):
     _stub_response(analyzer, "```json\n{not valid")
 
     with pytest.raises(AIResponseError) as info:
-        analyzer.analyze(path)
+        analyzer.analyze(_view(path))
 
     assert info.value.raw_output == "```json\n{not valid"
 
@@ -99,7 +108,7 @@ def test_valid_output_is_parsed(tmp_path, clean_env):
     analyzer = LocalAnalyzer()
     _stub_response(analyzer, '{"title": "White square", "confidence": 0.9}')
 
-    assert analyzer.analyze(path).title == "White square"
+    assert analyzer.analyze(_view(path)).title == "White square"
 
 
 def test_response_schema_requires_every_field():
@@ -124,7 +133,7 @@ def test_request_uses_strict_json_schema(tmp_path, clean_env):
     analyzer = LocalAnalyzer()
     captured = _stub_response(analyzer, '{"title": "x"}')
 
-    analyzer.analyze(path)
+    analyzer.analyze(_view(path))
 
     response_format = captured["response_format"]
     assert response_format["type"] == "json_schema"
@@ -135,11 +144,11 @@ def test_request_uses_strict_json_schema(tmp_path, clean_env):
 @pytest.mark.parametrize("suffix", [".tif", ".tiff"])
 def test_tiff_is_sent_to_model_as_jpeg(tmp_path, clean_env, suffix):
     path = tmp_path / f"photo{suffix}"
-    Image.new("CMYK", (40, 30), (0, 50, 100, 0)).save(path, compression="tiff_lzw")
+    Image.new("RGB", (40, 30), (0, 50, 100)).save(path, compression="tiff_lzw")
     analyzer = LocalAnalyzer()
     captured = _stub_response(analyzer, '{"title": "x"}')
 
-    analyzer.analyze(path)
+    analyzer.analyze(_view(path))
 
     url = captured["messages"][0]["content"][1]["image_url"]["url"]
     assert url.startswith("data:image/jpeg;base64,")
@@ -150,7 +159,7 @@ def test_16bit_tiff_is_scaled_not_clipped(tmp_path):
     path = tmp_path / "gray16.tif"
     Image.fromarray(np.full((30, 40), 40000, dtype=np.uint16)).save(path)
 
-    data, _ = LocalAnalyzer._prepare_image(path, "image/jpeg")
+    data, _ = LocalAnalyzer._prepare_image(_view(path))
 
     red, green, blue = Image.open(BytesIO(data)).getpixel((5, 5))
     assert abs(red - 40000 // 256) <= 2

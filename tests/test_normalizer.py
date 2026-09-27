@@ -4,6 +4,7 @@ representation source / lossless derivative, отказы §7, analysis views §
 """
 
 import io
+from pathlib import Path
 import json
 
 import numpy as np
@@ -67,7 +68,8 @@ def test_jpeg_is_used_as_is(stocker_root):
     manifest = result["manifest"]
     assert result["outcome"] == normalization.NORMALIZED
     assert manifest["representation"] == "source" and manifest["derivative"] is None and manifest["transforms"] == []
-    assert manifest["preserved"]["color"] == {"kind": "undeclared", "source": None, "declared": False}
+    assert manifest["preserved"]["color"] == {"kind": "undeclared", "source": None, "declared": False, "icc": None}
+    assert manifest["color"] == {"space": "undeclared", "declared": False, "icc_sha256": None, "icc_is_source": False, "pixels_converted": False}
     assert manifest["normalizer_version"] == "normalize-v1" and manifest["params_hash"] == normalizer.PARAMS_HASH
     assert not (stocker_root / "data" / "internal").exists()
 
@@ -265,3 +267,104 @@ def test_worker_pipeline_records_representation(stocker_root):
     data = dispatch("normalize.get", {"asset_id": asset_id})["data"]
     assert data["normalized"] and data["representation"] == "source" and not data["representation_stale"]
     assert data["manifest"]["source_sha256"] == sha256_file(stocker_root / "data" / "incoming" / "photo.jpg")
+
+
+# --- ICC: источник / representation / view — разные вещи (§4a) ------------------------
+
+
+def _sha(data: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(data).hexdigest()
+
+
+def test_source_icc_is_a_fact(tmp_path):
+    path = tmp_path / "p3.jpg"
+    Image.new("RGB", (40, 30), (200, 100, 50)).save(path, icc_profile=P3_ICC)
+    icc = read_facts(path)["color_profile"]["icc"]
+    assert icc == {"sha256": _sha(P3_ICC), "size": len(P3_ICC), "color_space": "RGB"}
+
+
+def test_p3_derivative_keeps_p3_pixels_and_p3_icc(stocker_root):
+    """ICC источника байт в байт ⇔ пиксели не конвертированы: derivative остаётся P3."""
+    asset_id = register(stocker_root, "p3.avif", avif_bytes(orientation=1))
+    manifest = normalization.run_asset(asset_id)["manifest"]
+    color = manifest["color"]
+    assert color == {"space": "display_p3", "declared": True, "icc_sha256": _sha(P3_ICC),
+                     "icc_is_source": True, "pixels_converted": False}
+    assert manifest["preserved"]["color"]["icc"]["sha256"] == _sha(P3_ICC)
+
+    derivative = stocker_root / manifest["derivative"]["path"]
+    with Image.open(derivative) as image, Image.open(stocker_root / "data/incoming/p3.avif") as source:
+        assert _sha(image.info["icc_profile"]) == color["icc_sha256"]
+        # Пиксели derivative — те же декодированные пиксели source (без конвертации в sRGB).
+        assert image.tobytes() == source.convert(image.mode).tobytes()
+
+
+def test_view_of_p3_is_srgb_and_carries_no_source_icc(stocker_root):
+    asset_id = register(stocker_root, "p3v.avif", avif_bytes(orientation=1))
+    manifest = normalization.run_asset(asset_id)["manifest"]
+    path = stocker_root / manifest["derivative"]["path"]
+
+    image, info = normalizer.open_view(path, "full", manifest["preserved"]["color"], manifest["representation"])
+
+    assert info["color_space"] == "srgb" and info["color_converted"]
+    assert "icc_profile" not in image.info  # view не выдаёт себя за P3
+    with Image.open(path) as derivative:
+        rgb = derivative.convert("RGB")
+        expected = ImageCms.profileToProfile(rgb, ImageCms.ImageCmsProfile(io.BytesIO(P3_ICC)),
+                                             ImageCms.createProfile("sRGB"), renderingIntent=0, outputMode="RGB")
+    # Альфа (один прозрачный пиксель) на белом; остальные пиксели — ровно конвертация P3 → sRGB.
+    assert image.getpixel((5, 5)) == expected.getpixel((5, 5)) != (200, 100, 50)
+
+
+def test_srgb_view_drops_source_icc_too(tmp_path):
+    image, info = _view(tmp_path, Image.new("RGB", (40, 30), (200, 100, 50)), icc_profile=SRGB_ICC)
+    assert info["color_space"] == "srgb" and "icc_profile" not in image.info
+
+
+@pytest.mark.parametrize("record, error", [
+    # ICC источника при конвертированных пикселях — то самое противоречие.
+    ({"space": "srgb", "icc_sha256": "SRC", "icc_is_source": True, "pixels_converted": True}, "must not carry the source ICC"),
+    # Конвертировали, но назвали пространство источника.
+    ({"space": "display_p3", "icc_sha256": "NEW", "icc_is_source": False, "pixels_converted": True}, "own color space"),
+    # Не конвертировали, но ICC уже другой (например, подменён на sRGB).
+    ({"space": "display_p3", "icc_sha256": "NEW", "icc_is_source": False, "pixels_converted": False}, "source ICC unchanged"),
+    # Не конвертировали, но называем sRGB.
+    ({"space": "srgb", "icc_sha256": "SRC", "icc_is_source": True, "pixels_converted": False}, "keep the source color space"),
+])
+def test_color_record_contradictions_are_rejected(record, error):
+    source = {"kind": "display_p3", "declared": True, "icc": {"sha256": "SRC"}}
+    with pytest.raises(ValueError, match=error):
+        normalizer.check_color(source, {"declared": True, **record})
+
+
+def test_contradictory_color_record_writes_no_event(stocker_root, monkeypatch):
+    asset_id = register(stocker_root, "bad.avif", avif_bytes(orientation=1))
+    normalization.evaluate_asset(asset_id)
+    original = normalizer.build_derivative
+
+    def claims_conversion(source, target):
+        return {**original(source, target), "pixels_converted": True}  # ICC источника + «конвертировано»
+
+    monkeypatch.setattr(normalizer, "build_derivative", claims_conversion)
+    with pytest.raises(ValueError):
+        normalization.run_asset(asset_id)
+    assert [st for st, _ in norm_events(stocker_root, asset_id)] == ["EVALUATED"]
+
+
+def test_declared_non_srgb_without_icc_is_refused_at_plan(tmp_path):
+    facts = _facts(tmp_path)
+    facts = {**facts, "color_profile": {"kind": "adobe_rgb", "source": "exif_dcf", "declared": True, "icc": None}}
+    with pytest.raises(normalizer.NormalizationRefused) as refused:
+        normalizer.plan(facts)
+    assert refused.value.code == "COLOR_CONVERSION_UNSUPPORTED"
+
+
+def test_cmyk_with_icc_converts_in_cmyk_space(tmp_path):
+    cmyk_icc = next(iter(sorted((Path("C:/Windows/System32/spool/drivers/color")).glob("RSWOP.icm"))), None)
+    if cmyk_icc is None:
+        pytest.skip("no CMYK ICC on this system")
+    image, info = _view(tmp_path, Image.new("CMYK", (40, 30), (0, 0, 0, 0)), fmt="JPEG", icc_profile=cmyk_icc.read_bytes())
+    assert info["color_converted"] and info["color_space"] == "srgb"
+    assert min(image.getpixel((0, 0))) > 200  # «без краски» — почти белый, а не инверсия

@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from app import worker
+from app import analysis_view, normalization, worker
 from app.ai.analyzer import AIResponseError
 from app.database.db import get_asset
 from app.ingest import ingest_file
@@ -45,13 +45,15 @@ def test_ai_passed_event_records_provenance(stocker_root):
 def test_ai_result_and_event_are_atomic(stocker_root, monkeypatch):
     # Сбой между записью результата и события не должен оставлять ai_result без AI/PASSED.
     asset_id = ingest_file(make_image(stocker_root))
+    normalization.run_asset(asset_id)
+    view = analysis_view.open_asset_view(asset_id)
 
     def crash(*args, **kwargs):
         raise RuntimeError("power loss")
 
     monkeypatch.setattr(worker, "insert_event", crash)
     with pytest.raises(RuntimeError):
-        worker.run_ai(asset_id, stocker_root / "data" / "incoming" / "photo.jpg", FakeAnalyzer())
+        worker.run_ai(asset_id, view, FakeAnalyzer())
 
     assert get_asset(asset_id)["ai_result"] is None
     assert ("AI", "PASSED") not in [(s, st) for s, st, _ in events(stocker_root, asset_id)]

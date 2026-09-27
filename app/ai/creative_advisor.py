@@ -9,12 +9,10 @@ Creative Review Advisor: оценка коммерческой ценности 
 """
 
 import os
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from PIL import Image, ImageOps
 from pydantic import ValidationError
 
 from app.ai.analyzer import AIResponseError
@@ -31,7 +29,7 @@ DEFAULT_MODEL = "qwen3-vl-8b-instruct"
 DEFAULT_API_KEY = "lm-studio"
 DEFAULT_TIMEOUT = 180.0
 
-OVERVIEW_EDGE = 1536
+OVERVIEW_EDGE = 1536  # = view "overview" (normalizer.PARAMS)
 USE_CASES_MAX = 5
 
 INPUTS = ["image_overview", "vision_summary"]
@@ -49,15 +47,14 @@ class CreativeAdvisor:
     prompt_version: Optional[str] = None
     profile: Optional[CreativeProfile] = None
 
-    def review(self, image_path: Path, vision: AIAnalysis) -> CreativeReview:
+    def review(self, view, vision: AIAnalysis) -> CreativeReview:
+        """view — AnalysisView (app/analysis_view.py); файл советник сам не открывает."""
         raise NotImplementedError("Creative advisor is not configured.")
 
 
-def overview(image_path: Path) -> str:
-    with Image.open(image_path) as source:
-        image = ImageOps.exif_transpose(source)
-        image.thumbnail((OVERVIEW_EDGE, OVERVIEW_EDGE), Image.Resampling.LANCZOS)
-        return _jpeg_data_url(image)
+def overview(view) -> str:
+    """Вариант view "overview" (1536 px); ориентацию и цвет решает AnalysisView."""
+    return _jpeg_data_url(view.variant("overview"))
 
 
 # Шаблон не знает тематик: аудитория и ориентиры — из профиля (app/creative_profiles.py).
@@ -128,14 +125,14 @@ class LMStudioCreativeAdvisor(CreativeAdvisor):
             max_retries=0,
         )
 
-    def review(self, image_path: Path, vision: AIAnalysis) -> CreativeReview:
+    def review(self, view, vision: AIAnalysis) -> CreativeReview:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[{
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt_for(vision, self.profile)},
-                    {"type": "image_url", "image_url": {"url": overview(Path(image_path))}},
+                    {"type": "image_url", "image_url": {"url": overview(view)}},
                 ],
             }],
             response_format=json_schema_response_format("CreativeReview", response_schema()),

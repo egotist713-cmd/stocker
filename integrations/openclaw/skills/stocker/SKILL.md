@@ -41,7 +41,7 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__normalize_get` | facts about the original file (format, color profile, HDR, Motion Photo, metadata present — never values) and its internal representation | `{"asset_id": N}` |
 | `stocker__normalize_run` | build the internal representation (original used as is, or a lossless internal copy for AVIF); never improves or changes the photo; unsafe cases fail with a reason | `{"asset_id": N}` |
 | `stocker__enhancement_get` | image quality: does it need enhancement (Topaz)? decision + reasons (noise / sharpness / artifacts / resolution) | `{"asset_id": N}` |
-| `stocker__enhancement_assess` | measure image quality now (rules; nothing is enhanced) | `{"asset_id": N}` |
+| `stocker__enhancement_assess` | measure image quality now (rules; nothing is enhanced); needs `normalize_run` first — otherwise fails with NORMALIZE_NOT_PASSED | `{"asset_id": N}` |
 | `stocker__enhancement_advise` | model recommendation only if the rules could not decide (`disputed`); otherwise returns NOT_DISPUTED | `{"asset_id": N}` |
 | `stocker__creative_get` | commercial value: commercial_score, recommendation (proceed / attention / skip_suggested) and why | `{"asset_id": N}` |
 | `stocker__creative_review` | review commercial value now (model; recommendation only, never blocks export) | `{"asset_id": N}` or `{"asset_id": N, "profile": "auto"}` (auto picks industrial / architecture / nature from the photo) |
