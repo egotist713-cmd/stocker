@@ -1,6 +1,6 @@
 """
 Факты об исходном файле (docs/INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md §3,
-docs/FORMAT_CONTRACT.md §3.1; normalize-facts-v2).
+docs/FORMAT_CONTRACT.md §3.1; normalize-facts-v3).
 
 Первый шаг Normalization: файл только читается и описывается. Ничего не
 меняется и не конвертируется.
@@ -29,7 +29,8 @@ from PIL import Image, ImageCms
 from app import readiness as rd
 from app.enhancement import jpeg_quality
 
-FACTS_VERSION = "normalize-facts-v2"
+# v3 (28.09.2026): необъявленный цвет — kind "undeclared" (не "missing"), признак declared.
+FACTS_VERSION = "normalize-facts-v3"
 
 _SIGNATURES = (
     (b"\xff\xd8\xff", "JPEG"),
@@ -243,7 +244,11 @@ def _color(image: Image.Image, container: str | None, png: dict, nclx: dict | No
         if interop == "R03":
             return {"kind": "adobe_rgb", "description": "EXIF Uncalibrated + DCF R03", "source": "exif_dcf", "nclx": None}
         return {"kind": "uncalibrated", "description": "EXIF ColorSpace Uncalibrated, no ICC", "source": "exif_colorspace", "nclx": None}
-    return {"kind": "missing", "description": None, "source": None, "nclx": None}
+    # Цвет не объявлен ничем — это факт, а не sRGB (решение пользователя 28.09.2026).
+    return {"kind": "undeclared", "description": None, "source": None, "nclx": None}
+
+
+UNDECLARED_KINDS = ("undeclared", "uncalibrated")
 
 
 # --- Факты ---------------------------------------------------------------------------
@@ -289,6 +294,8 @@ def read_facts(path: Path, original_filename: str | None = None) -> dict:
             alpha_used = image.getchannel("A").getextrema()[0] < 255
 
         color = _color(image, container, png, nclx)
+        # Операции, которым нужно цветовое пространство, при declared=False не принимают sRGB молча.
+        color["declared"] = color["kind"] not in UNDECLARED_KINDS
         head = data[:512 * 1024]
         gain_map = b"hdrgm" in head
         if gain_map:

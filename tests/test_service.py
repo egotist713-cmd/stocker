@@ -197,7 +197,7 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
             "stale": False,
             "failed": None,
             "container": "JPEG",
-            "color_profile": "missing",
+            "color_profile": "undeclared",
             "hdr": "none",
             "motion_video": False,
             "event_id": envelope["data"]["pipeline"]["normalize"]["event_id"],

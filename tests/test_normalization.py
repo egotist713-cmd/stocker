@@ -122,6 +122,7 @@ def test_exif_color_space_without_icc(tmp_path, color_space, expected):
     path = write(tmp_path, "cs.jpg", jpeg_bytes(Image.new("RGB", (200, 100), "gray"), exif=exif))
     color = read_facts(path)["color_profile"]
     assert (color["kind"], color["source"]) == (expected, "exif_colorspace")
+    assert color["declared"] is (expected == "srgb")  # Uncalibrated не приравнивается к sRGB
 
 
 def test_absent_interop_ifd_is_not_a_crash_or_damage(tmp_path):
@@ -168,7 +169,7 @@ def test_png_alpha_and_16_bit(tmp_path):
 
     assert (alpha["color_mode"], alpha["has_alpha"], alpha["jpeg_quality"]) == ("RGB", True, None)
     assert alpha["alpha_used"] is True
-    assert alpha["color_profile"]["kind"] == "missing"
+    assert alpha["color_profile"]["kind"] == "undeclared" and alpha["color_profile"]["declared"] is False
     assert (deep["color_mode"], deep["bit_depth"]) == ("L", 16)
 
 
@@ -256,7 +257,7 @@ def test_evaluate_writes_event_and_is_idempotent(stocker_root, asset_id):
     assert envelope["ok"] and envelope["outcome"] == "EVALUATED"
     assert envelope["data"]["facts"]["format"] == "JPEG"
     ((status, message),) = _norm_events(stocker_root, asset_id)
-    assert status == "EVALUATED" and message["actor"] == N8N and message["facts_version"] == "normalize-facts-v2"
+    assert status == "EVALUATED" and message["actor"] == N8N and message["facts_version"] == "normalize-facts-v3"
 
     assert dispatch("normalize.evaluate", {"asset_id": asset_id})["outcome"] == "UNCHANGED"
     assert len(_norm_events(stocker_root, asset_id)) == 1
