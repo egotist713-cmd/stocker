@@ -3744,6 +3744,74 @@ Normalization шаг 2 — engine (единое нормализованное �
 
 ---
 
+# 35ZP. 2026-09-27 — Контракт внутреннего представления; независимая сотня
+
+### Решения пользователя
+
+1. Шаг 2 начинается **с контракта** внутреннего представления, а не с кода
+   конвертации: immutable source, internal derivative, что сохраняется без
+   потерь, что допустимо нормализовать для AI / QC, что запрещено (улучшения,
+   sharpening, denoise, upscaling, Topaz, Creative Review, изменение
+   содержимого), версионирование, `NORMALIZE/FAILED` без догадок, атомарность.
+2. Новая сотня (`data/samples/2026-09-27`) — проверить **только фактами**, без
+   Enhancement / Creative Review, не оценивая качество, не меняя файлы.
+3. **Два набора не смешивать:** существующие 129 и новая сотня.
+4. Новый реальный случай → контракт → тесты → повторная проверка обоих наборов
+   → только потом engine. Internal Normalization ≠ Platform Export.
+
+### Сделано
+
+- **`docs/INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md`** (проект): термины;
+  immutable source; representation = source (pass-through) или internal
+  derivative (AVIF / HEIF); что сохраняется без потерь; analysis views (только
+  в памяти, только уменьшение, цвет в sRGB во view); запрещённые изменения;
+  версии и fingerprint; таблица `FAILED` и явных правил по реальным случаям;
+  атомарность derivative (временный файл → адресное имя → событие одной
+  транзакцией); internal ≠ platform; таблица покрытия двух наборов; решения
+  пользователя (§12).
+- `scripts/scan_source_facts.py` — факты по папке или по объектам Stocker
+  (`--registered`) без событий и без изменения файлов (SHA256 до / после).
+- **`normalize-facts-v2`** (`app/source_facts.py`) — пробелы, найденные новой
+  сотней: битность из заголовков (JPEG SOF / PNG IHDR / AVIF pixi / TIFF);
+  цвет PNG (sRGB / gAMA / cHRM / cICP), AVIF (`nclx` — второй блок `colr`), EXIF
+  ColorSpace (sRGB / DCF Adobe RGB / Uncalibrated); HDR по передаточной
+  функции; `alpha_used`; кадры заявленные / читаемые; индекс MPF с проверкой
+  смещений; `orientation_raw`; безопасное чтение IFD; `software`; provenance
+  (IPTC `digitalSourceType`, C2PA по сегментам). Разбор JPEG — по маркерам
+  сегментов (поиск по байтам давал ложную битность 124 / 163 и ложный C2PA).
+- Факты v2 записаны для существующего набора (126 `EVALUATED`, 3 `FAILED`);
+  новая сотня в Stocker **не** регистрировалась.
+
+### Найдено
+
+| | Существующий (129) | Новая сотня (100) |
+|---|---|---|
+| Форматы | JPEG | JPEG 72, PNG 22, AVIF 6 |
+| Цвет | sRGB 109 (7 — только EXIF), Display P3 18 | sRGB 69 (PNG-блок 22), без объявления 29, Uncalibrated 1, ProPhoto 1 |
+| HDR | Ultra HDR 113 | — |
+| Альфа | — | 21 (используется 7) |
+| Ориентация `0` | 18 | 1 |
+| MPF | 113 × 2 / 2 | 1 × 0 / 2 (устаревший индекс) |
+| Motion Photo | 74 | — |
+| `digitalSourceType = compositeWithTrainedAlgorithmicMedia` | 4 | **57** (Topaz Gigapixel) |
+
+HEIC и TIFF нет ни в одном наборе — покрыты только синтетическими тестами.
+Имена части файлов новой сотни похожи на идентификаторы сторонних сервисов
+(`…-612x612`, `…_b.jpg` Flickr) — для технической проверки это не важно; при
+отправке на площадки права нужно проверять отдельно (Stocker не может
+установить авторство по байтам файла).
+
+### Проверка
+
+`pytest`: 531 passed, 4 skipped (`test_normalization.py` — 35).
+`check_consistency`: OK.
+
+### Статус
+
+🟡 Контракт — на согласовании (решения §12); engine не начат.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -3921,7 +3989,7 @@ CALIBRATION ON USER-SELECTED PHOTOS (incoming)
     🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
-    🟡 IN PROGRESS — шаг 1 (факты, NORMALIZE/EVALUATED) DONE (§35ZO); далее engine
+    🟡 IN PROGRESS — шаг 1 (факты v2) DONE; контракт внутреннего представления — на согласовании; engine не начат (§35ZO, §35ZP)
 
 ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
     🟢 DONE v2 — 28 → 4 рекомендации на 108 отобранных (§35ZM)

@@ -85,6 +85,7 @@ IMG_0001.HEIC
 | `orientation` | EXIF 1–8 |
 | `bit_depth` | 8, 10, 12, 16 |
 | `color_mode` | `RGB` / `L` (оттенки серого) / `CMYK` / с альфой |
+| **v2 (27.09.2026)** | `bit_depth` — из заголовков (JPEG SOF, PNG IHDR, AVIF `pixi`, TIFF 258), не из декодера; `color_profile.source` — `icc` / `png_srgb_chunk` / `png_cicp` / `png_gama_chrm` / `nclx` / `exif_colorspace` / `exif_dcf`; `alpha_used`; `frames {declared, readable}`; `mpf {declared, within_file}`; `orientation_raw`; `software` (история инструментов); `provenance {digital_source_type, c2pa}`; `metadata_present.exif_damaged`. Правила представления — `INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md` |
 | `color_profile` | `srgb` / `display_p3` / `adobe_rgb` / `other` / `missing` + описание (определение по primaries — как в Readiness) |
 | `hdr` | `none` / `gain_map` (Ultra HDR) / `pq` / `hlg` |
 | `has_alpha` | bool |
@@ -148,7 +149,9 @@ Ultra HDR 113; Motion Photo 74; GPS 106; тег Software 112; отказы — 3
 |---|---|---|---|
 | **Цветовые профили** (Display P3, Adobe RGB, ProPhoto) | ICC → sRGB, намерение `perceptual` (для анализа важно правдоподобие цвета, а не точность) | `color_profile` + описание | `to_srgb`, намерение и точность — профиль площадки |
 | **Нет ICC** | считается sRGB | `missing` | профиль sRGB встраивается в файл площадки |
-| **CMYK** (TIFF, JPEG из полиграфии) | CMYK → sRGB через ICC (без ICC — стандартный профиль, факт) | `color_mode=CMYK` | в sRGB; CMYK площадкам не отдаётся |
+| **CMYK** (TIFF, JPEG из полиграфии) | CMYK → sRGB через ICC; **без ICC — `NORMALIZE/FAILED` `COLOR_SPACE_UNDECLARED`** (профиль не предполагается; уточнено 27.09.2026) | `color_mode=CMYK` | в sRGB; CMYK площадкам не отдаётся |
+| **Цвет не объявлен** (нет ICC, sRGB / cICP / nclx, EXIF ColorSpace) | явное правило (`INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md` §7): views как sRGB, `color_assumption` в манифесте | `color_profile.kind=missing` | `to_srgb` не нужен; ICC sRGB встраивается |
+| **EXIF ColorSpace = Uncalibrated без ICC** | `NORMALIZE/FAILED` `COLOR_SPACE_UNDECLARED` (кроме DCF `R03` → Adobe RGB) | `kind=uncalibrated` / `adobe_rgb` | — |
 | **16 бит** (TIFF, PNG), 10/12 бит (HEIC, AVIF) | в 8 бит (масштабирование, не обрезка) | `bit_depth` | 8 бит JPEG |
 | **Оттенки серого** | в RGB | `color_mode=L` | JPEG RGB или grayscale — по профилю площадки |
 | **Альфа-канал** (PNG) | сведение на белый фон | `has_alpha` | фото площадкам — без прозрачности |
