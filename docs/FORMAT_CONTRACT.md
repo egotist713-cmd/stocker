@@ -1,0 +1,174 @@
+# STOCKER — КОНТРАКТ ФОРМАТОВ: SOURCE → NORMALIZE → EXPORT
+
+> **Статус:** 🟡 ПРОЕКТ (27.09.2026). Архитектура зафиксирована решением
+> пользователя; **реализации нет** — сначала контракт, чтобы не переделывать
+> pipeline. Версия нормализатора — `normalize-v1` (будущая).
+>
+> Связанные документы: паспорт §3A.9–3A.11, §35ZJ;
+> `STOCK_READINESS_CONTRACT.md` §3.5b (original → derivative → platform export).
+
+---
+
+## 1. Принципы
+
+1. **Stocker не привязан к формату исходника.** Входные форматы: JPEG,
+   HEIF/HEIC, AVIF, TIFF, PNG (WebP — кандидат, §7).
+2. **Оригинал (`source`) никогда не изменяется** — только читается; SHA256 в
+   `assets.file_hash` остаётся проверкой целостности.
+3. **Анализ работает с нормализованным представлением**, а не с файлом
+   напрямую: QC, Enhancement, Vision, Metadata, Readiness, Creative Review
+   получают одинаково подготовленное изображение.
+4. **Формат — ответственность слоя Export.** Конвертация HEIF/HEIC, AVIF, PNG,
+   TIFF в JPEG выполняется **только при подготовке экспорта**, отдельным
+   производным файлом, и никогда не заменяет оригинал.
+5. **Нормализованное представление — кэш, а не истина:** воспроизводимо из
+   оригинала и версии нормализатора, может быть удалено в любой момент.
+
+```text
+source (оригинал, только чтение)
+   → normalize            представление для анализа + факты о файле
+   → QC → Enhancement → Vision → Metadata → Readiness     (универсальные слои)
+   → Export preparation   производный файл под требования площадки
+   → platform derivative  (Adobe JPEG sRGB, Shutterstock JPEG sRGB, …)
+```
+
+```text
+IMG_0001.HEIC
+   ├── original                      (read only)
+   ├── normalized preview            (кэш для анализа)
+   ├── Adobe export JPEG sRGB        (derivative, purpose=export, platform=adobe)
+   └── Shutterstock export JPEG sRGB (derivative, purpose=export, platform=shutterstock)
+```
+
+---
+
+## 2. Текущее состояние (проверено 27.09.2026)
+
+| Что | Сейчас | Нужно |
+|---|---|---|
+| Приём файлов (ingest) | `.jpg .jpeg .png .tif .tiff` | + `.heic .heif .avif` |
+| Декодирование | Pillow 12.3: JPEG, PNG, TIFF, **AVIF, WebP** — да; **HEIC — нет** (нужен `pillow-heif`, новая зависимость) | один нормализатор |
+| Где открывается файл | **каждая стадия сама**: QC (`qc.check_asset`), Enhancement (`read_metrics`), Vision (`_prepare_image`), Creative Review (`overview`), Readiness (`read_file_facts`) | одна точка — `normalize` |
+| Ориентация EXIF | учитывают только Vision и Creative Review | в нормализаторе, для всех |
+| Цветовой профиль | анализ игнорирует ICC (P3-пиксели идут в модель как sRGB); Readiness только определяет профиль | анализ — в sRGB; профиль исходника — факт |
+| TIFF → JPEG | только в памяти внутри Vision | в нормализаторе (для анализа) и в Export (для площадки) |
+| Размер файла в Readiness | размер **всего файла** | размер изображения без встроенного видео; итог — по derivative |
+
+**Факты по отобранным фотографиям пользователя** (`data/incoming`, 109 JPEG):
+
+| Особенность | Файлов | Следствие |
+|---|---|---|
+| Motion Photo — встроенное видео MP4 (`*.MV.jpg`) | **69** (медиана **29 %** размера файла) | не участвует в анализе; **удаляется при экспорте**; `FILE_TOO_LARGE` сейчас завышен |
+| GPS-координаты в EXIF | **95** | **удаляются при экспорте по умолчанию** (приватность) |
+| Ultra HDR — карта усиления (gain map) | **106** | анализ — по базовому SDR-изображению; в export — удаляется (обычный SDR JPEG), пока площадки не подтвердят поддержку |
+
+---
+
+## 3. Normalize
+
+### 3.1. Факты об исходнике (`source facts`)
+
+Нормализатор один раз разбирает оригинал и фиксирует факты (событие §3.4):
+
+| Факт | Пример |
+|---|---|
+| `container`, `codec` | `JPEG`, `HEIF/HEVC`, `AVIF/AV1`, `TIFF/LZW`, `PNG` |
+| `width`, `height` | **после** применения ориентации EXIF |
+| `orientation` | EXIF 1–8 |
+| `bit_depth` | 8, 10, 12, 16 |
+| `color_profile` | `srgb` / `display_p3` / `adobe_rgb` / `other` / `missing` + описание (определение по primaries — как в Readiness) |
+| `hdr` | `none` / `gain_map` (Ultra HDR) / `pq` / `hlg` |
+| `has_alpha` | bool |
+| `frames` | число кадров (HEIC-последовательность, многостраничный TIFF, анимированный AVIF/PNG) |
+| `embedded` | `motion_video` (размер), `depth_map`, `gain_map` |
+| `metadata_present` | `exif`, `gps`, `xmp`, `iptc` — только **наличие**, без значений (GPS не сохраняется) |
+| `file_size`, `image_payload_size` | размер файла и размер изображения без встроенного видео |
+
+### 3.2. Нормализованное представление (для анализа)
+
+| Свойство | Правило |
+|---|---|
+| Кадр | основной (primary) кадр; остальные кадры — только факт `frames` |
+| Ориентация | применена |
+| Пиксели | 8 бит на канал, RGB |
+| Цвет | **преобразован в sRGB** из встроенного ICC (нет ICC — считается sRGB) |
+| Альфа-канал | сведён на белый фон; факт `has_alpha` |
+| HDR | базовое SDR-изображение (gain map не применяется); PQ/HLG — тональное отображение в SDR (будущее, §7) |
+| Встроенные данные | видео, карты глубины, gain map — игнорируются |
+| Варианты | `full` (исходное разрешение — метрики QC/Enhancement 100 %), `preview` (длинная сторона 2048 — Vision, Metadata), `overview` (1536 — Creative Review, советник Enhancement) |
+
+Стадии анализа **не открывают исходный файл сами** — получают представление от
+нормализатора (одна точка декодирования, одинаковые пиксели для всех).
+
+### 3.3. Хранение
+
+v1 — в памяти процесса (как сейчас). Кэш на диске
+(`data/normalized/<asset_id>/<normalize-version>/<variant>.jpg`) — только если
+понадобится по производительности; всегда удаляем и воспроизводим.
+
+### 3.4. События
+
+| stage | status | message |
+|---|---|---|
+| `NORMALIZE` | `PASSED` | `normalizer_version`, `source facts` (§3.1) |
+| `NORMALIZE` | `FAILED` | `error_type` (`UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `MISSING_CODEC`), `error` — pipeline останавливается, как при `QC/FAILED` |
+
+(`SOURCE/NORMALIZED` уже занято нормализацией **пути** `source_path` — это
+другое событие.)
+
+---
+
+## 4. Export preparation и platform derivative
+
+Производный файл строится **из оригинала** (не из preview) по плану экспорта
+Readiness (`STOCK_READINESS_CONTRACT.md` §3.5, §3.5b):
+
+| Шаг | Правило |
+|---|---|
+| Декодирование | оригинал в полном разрешении, ориентация применена |
+| Цвет | в **sRGB** (`to_srgb`) |
+| Формат | **JPEG** для Adobe; JPEG для Shutterstock (TIFF допустим, но не нужен) — `to_jpeg` для HEIC / AVIF / PNG / TIFF |
+| Размер | `downscale_to_mp`, `fit_file_size` — по профилю площадки |
+| Встроенные данные | **удаляются**: видео Motion Photo, gain map, карты глубины (`strip_embedded`) |
+| Метаданные | **GPS удаляется по умолчанию** (`strip_location`); IPTC/XMP с title / keywords площадки — записываются в файл (будущее) |
+| Проверка | повторный разбор derivative: формат, MP, профиль, размер — соответствуют профилю площадки |
+| Учёт | `DERIVATIVE/CREATED`: `path`, `sha256`, `source_sha256`, `purpose=export`, `platform`, `operations`, `normalizer_version` |
+
+Readiness дополняется операциями `strip_embedded` и `strip_location` в плане
+экспорта; `FILE_TOO_LARGE` оценивается по `image_payload_size`, а не по
+размеру файла со встроенным видео.
+
+---
+
+## 5. Влияние на существующие контракты (при реализации)
+
+| Где | Изменение |
+|---|---|
+| ingest | принимает `.heic .heif .avif`; проверка «файл — изображение» через нормализатор |
+| QC | работает по представлению `full`; `RESOLUTION_*` — по размерам после ориентации |
+| Enhancement | метрики — по `full` (уже sRGB, ориентация применена); fingerprint += `normalizer_version` |
+| Vision / Metadata AI / Creative Review | `preview` / `overview` из нормализатора вместо своих `_prepare_image` / `overview` |
+| Readiness | факты формата из `NORMALIZE/PASSED`; операции `strip_embedded`, `strip_location`; размер по `image_payload_size` |
+| fingerprints | включают `normalizer_version`: смена нормализатора → оценки `stale` |
+
+---
+
+## 6. Порядок реализации (когда пользователь решит)
+
+1. Факты об исходнике (только чтение) + `NORMALIZE/PASSED|FAILED` — без
+   изменения анализа.
+2. Единый `normalize()` для всех стадий (замена пяти мест открытия файла) —
+   регрессия на выборках 26.09 и `incoming`.
+3. Анализ в sRGB (ICC → sRGB).
+4. HEIC/HEIF — зависимость `pillow-heif` (установка — с подтверждения
+   пользователя); AVIF — Pillow уже умеет.
+5. Export preparation: derivative-файлы, `strip_embedded`, `strip_location`.
+
+## 7. Открытые вопросы
+
+- Удаление GPS по умолчанию при экспорте — предложение; нужно решение
+  пользователя (возможно, сохранять страну/город в metadata, но не координаты).
+- HDR-исходники (PQ/HLG в HEIC/AVIF): тональное отображение для анализа и
+  экспорта.
+- WebP на входе (веб-контент): Pillow поддерживает; включать ли в список.
+- Поддерживают ли площадки Ultra HDR JPEG с gain map — проверить при Export.
