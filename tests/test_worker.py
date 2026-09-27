@@ -55,6 +55,20 @@ def test_ai_result_and_event_are_atomic(stocker_root, monkeypatch):
     assert ("AI", "PASSED") not in [(s, st) for s, st, _ in events(stocker_root, asset_id)]
 
 
+def test_ingest_asset_and_event_are_atomic(stocker_root, monkeypatch):
+    from app import ingest
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("power loss")
+
+    monkeypatch.setattr(ingest, "insert_event", crash)
+    with pytest.raises(RuntimeError):
+        ingest_file(make_image(stocker_root))
+
+    with sqlite3.connect(stocker_root / "data" / "db" / "stocker.db") as connection:
+        assert connection.execute("SELECT count(*) FROM assets").fetchone()[0] == 0
+
+
 def test_ai_failure_is_recorded_not_raised(stocker_root):
     analyzer = FakeAnalyzer(error=ConnectionError("LM Studio is down"))
 

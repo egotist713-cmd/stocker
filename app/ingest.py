@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
-from app.database.db import add_asset, get_connection, init_database
+from app.database.db import get_connection, init_database, insert_asset, insert_event, transaction
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,35 +89,20 @@ def ingest_file(path: Path) -> int | None:
 
     db_path = ROOT / "data" / "db" / "stocker.db"
 
-    asset_id = add_asset(
-        filename=path.name,
-        source_path=to_source_path(path),
-        file_hash=file_hash,
-        extension=path.suffix.lower(),
-        width=width,
-        height=height,
-        file_size=file_size,
-        db_path=db_path,
-    )
-
-    with get_connection(db_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO processing_events (
-                asset_id,
-                stage,
-                status,
-                message
-            )
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                asset_id,
-                "INGEST",
-                "DONE",
-                f"Registered {image_format} {width}x{height}",
-            ),
+    # Asset и событие регистрации — одной транзакцией (аудит атомарности 27.09.2026):
+    # сбой между ними оставлял бы asset без INGEST/DONE.
+    with transaction(db_path) as connection:
+        asset_id = insert_asset(
+            connection,
+            filename=path.name,
+            source_path=to_source_path(path),
+            file_hash=file_hash,
+            extension=path.suffix.lower(),
+            width=width,
+            height=height,
+            file_size=file_size,
         )
+        insert_event(connection, asset_id, "INGEST", "DONE", f"Registered {image_format} {width}x{height}")
 
     print(f"ADDED: ID={asset_id}")
     print(f"  File:   {path.name}")

@@ -113,30 +113,36 @@ def add_asset(
 ) -> int:
     """Add a new asset and return its database ID."""
     with get_connection(db_path) as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO assets (
-                filename,
-                source_path,
-                file_hash,
-                extension,
-                width,
-                height,
-                file_size
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                filename,
-                source_path,
-                file_hash,
-                extension,
-                width,
-                height,
-                file_size,
-            ),
+        return insert_asset(connection, filename, source_path, file_hash, extension, width, height, file_size)
+
+
+def insert_asset(
+    connection: sqlite3.Connection,
+    filename: str,
+    source_path: str,
+    file_hash: str | None = None,
+    extension: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    file_size: int | None = None,
+) -> int:
+    """Insert an asset inside an open transaction (together with its INGEST/DONE event)."""
+    cursor = connection.execute(
+        """
+        INSERT INTO assets (
+            filename,
+            source_path,
+            file_hash,
+            extension,
+            width,
+            height,
+            file_size
         )
-        return int(cursor.lastrowid)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (filename, source_path, file_hash, extension, width, height, file_size),
+    )
+    return int(cursor.lastrowid)
 
 
 def add_event(
