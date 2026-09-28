@@ -4956,6 +4956,32 @@ Metadata для них не пересчитывать. В следующих п
 
 ---
 
+# 35ZZO. 2026-09-28 — Core batch 7 (#95–#107)
+
+Решения пользователя по партии 6: #83 / #85 / #89 подтверждают, что обычные
+товарные знаки (Monarch, P.I.T.) Vision выносит в `brands` — новых правил не
+нужно; для #85 decision остался human_review, добавилась только причина
+`LEGAL_CLAIM: certified` из нового Metadata результата. Brand watch —
+report-only в каждой партии.
+
+- 12 объектов (#95, 97–107): QC → Enhancement (пропуск) → Vision → Metadata
+  (`auto_approved`) → Readiness → Publication — **publication_approved**, adobe
+  и shutterstock `approved`; Creative — не запускался / `NO_CURRENT_ADVICE`; по 9
+  событий. Сюжеты — снос / стройтехника, лифтовые механизмы, промышленное
+  оборудование; `text_visible` пуст у всех 12.
+- **#96 human_review** (decision и reason не изменились): `TRADEMARK: P.I.T.`,
+  `TEXT_BRAND_OR_LEGAL: P.I.T.`; Readiness / Publication / Creative —
+  `not_applicable`; 6 событий. `GENUINE` — descriptive (объект и так на проверке).
+- Агрегат: publication_approved 12, human_review 1, blocked / stale /
+  source_invalid 0; approved Adobe 12, Shutterstock 12; `ADVISOR_ATTENTION` 0;
+  событий 114 (12×9 + 6); изменений decision gate — 0. Повтор `from=qc` и
+  `from=publication` — `NOTHING_TO_DO` ×13, 0 событий. Инвариант — 0 нарушений;
+  `check_consistency` OK.
+- Brand watch: 0 новых случаев.
+- Каталог: publication_approved 83, human_review 21, stale 22, source_invalid 3.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
