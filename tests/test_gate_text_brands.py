@@ -156,7 +156,8 @@ def test_regate_same_decision_keeps_readiness_and_creative_current(stocker_root,
     assert state["state"] == asset_state.PLATFORM_READY
     assert state["stages"]["readiness"]["status"] == "current" and state["stages"]["creative_review"]["status"] == "current"
     after = events(stocker_root, asset_id)
-    assert reprocess.run(asset_id, dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
+    assert reprocess.run(asset_id, reprocess_from="metadata", dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
+    assert reprocess.run(asset_id, dry_run=False)["refused"]["code"] == "NOTHING_STALE"
     assert events(stocker_root, asset_id) == after
 
 
