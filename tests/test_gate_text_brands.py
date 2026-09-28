@@ -114,3 +114,71 @@ def test_policy_change_is_stale_and_regated_without_metadata_ai(stocker_root, mo
     added = [(s, st) for s, st, _ in events(stocker_root, asset_id)[len(before):]]
     assert ("METADATA_AI", "PASSED") not in added and ("METADATA", "GATED") in added  # только gate, модель не вызывалась
     assert asset_state.get(asset_id)["stages"]["metadata"]["status"] == "current"
+
+
+# --- Смена политики gate: решение не изменилось / изменилось ------------------------------------
+
+
+def _platform_ready(root, monkeypatch, vision):
+    import dataclasses
+
+    from app import creative_review
+    from app import readiness as rd
+    from app.ai.creative_advisor import prompt_version_for
+    from tests.conftest import OfflineCreativeAdvisor
+
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+    class Fixed(FakeAnalyzer):
+        def analyze(self, view):
+            return vision
+
+    asset_id = worker.process_file(make_image(root, icc_profile=srgb), analyzer=Fixed())
+    advisor = OfflineCreativeAdvisor()
+    advisor.prompt_version = prompt_version_for(advisor.profile)
+    creative_review.review_asset(asset_id, advisor)
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.PLATFORM_READY and state["stages"]["creative_review"]["status"] == "current"
+    return asset_id
+
+
+def test_regate_same_decision_keeps_readiness_and_creative_current(stocker_root, monkeypatch):
+    asset_id = _platform_ready(stocker_root, monkeypatch, VISION)
+    monkeypatch.setattr(rg, "POLICY_VERSION", "gate-v1.4-test")
+    assert asset_state.get(asset_id)["stages"]["creative_review"]["reason"] == "UPSTREAM_STALE:readiness"  # до re-gate
+
+    before = events(stocker_root, asset_id)
+    result = reprocess.run(asset_id, dry_run=False)
+    assert [(e["stage"], e["outcome"]) for e in result["executed"]] == [("metadata", "GATED"), ("readiness", "SKIPPED_CURRENT")]
+    assert [(s, st) for s, st, _ in events(stocker_root, asset_id)[len(before):]] == [("METADATA", "GATED"), ("REPROCESS", "DONE")]
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.PLATFORM_READY
+    assert state["stages"]["readiness"]["status"] == "current" and state["stages"]["creative_review"]["status"] == "current"
+    after = events(stocker_root, asset_id)
+    assert reprocess.run(asset_id, dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
+    assert events(stocker_root, asset_id) == after
+
+
+def test_regate_changed_decision_invalidates_downstream(stocker_root, monkeypatch):
+    # Под старой политикой надпись «Schneider Electric» (без brands) проходила; новая — человеку.
+    vision = VISION.model_copy(update={"text_visible": ["Schneider Electric"], "brands": []})
+    original = rg.classify_text_item
+    monkeypatch.setattr(rg, "classify_text_item",  # «старая политика»: без правил v1.3
+                        lambda text, v: {**original(text, v), "category": "descriptive", "rule": "DEFAULT"}
+                        if original(text, v)["rule"] in ("PROPER_NAME", "MIXED_CASE_NAME") else original(text, v))
+    asset_id = _platform_ready(stocker_root, monkeypatch, vision)
+    monkeypatch.setattr(rg, "classify_text_item", original)
+    monkeypatch.setattr(rg, "POLICY_VERSION", "gate-v1.4-test")
+
+    result = reprocess.run(asset_id, dry_run=False)
+    assert [(e["stage"], e["outcome"]) for e in result["executed"]] == [("metadata", "GATED"),
+                                                                          ("readiness", reprocess.NOT_APPLICABLE)]
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.HUMAN_REVIEW and state["reasons"] == ["TEXT_BRAND_OR_LEGAL"]
+    assert state["stages"]["readiness"]["status"] == "not_applicable" and state["ready_for"] == []
+    assert state["stages"]["creative_review"]["status"] == "not_applicable"
+    readiness = dispatch("readiness.get", {"asset_id": asset_id})["data"]
+    assert readiness["result"] is None and readiness["last_result"]["current"] is False
+    creative = dispatch("creative.get", {"asset_id": asset_id})["data"]
+    assert creative["result"] is None and creative["last_result"]["current"] is False
