@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app import analysis_view
+from app import asset_state
+from app import stock_readiness
 from app import enhancement_decision
 from app import metadata as metadata_service
 from app import normalization
@@ -152,6 +154,30 @@ def run_normalization(asset_id: int) -> str:
     return result["outcome"]
 
 
+def run_readiness(asset_id: int) -> str | None:
+    """
+    Stock Readiness после metadata gate (STOCK_READINESS_CONTRACT §3.9). Только если
+    metadata одобрена и всё выше актуально (ASSET_STATE_CONTRACT): оценка на
+    устаревших входах не пишется. Правила, без модели; не блокирует pipeline.
+    """
+    try:
+        stages = asset_state.get(asset_id)["stages"]
+        if stages["readiness"]["status"] == asset_state.NOT_APPLICABLE:
+            print("READINESS: skipped (metadata not approved)")
+            return None
+        stale = [s for s in ("normalize", "view", "qc", "vision", "metadata") if stages[s]["status"] != asset_state.CURRENT]
+        if stale:
+            print(f"READINESS: skipped (upstream not current: {stale[0]})")
+            return None
+        result = stock_readiness.evaluate_asset(asset_id)
+    except Exception as exc:  # noqa: BLE001 — оценка готовности не должна останавливать обработку
+        print(f"READINESS: skipped ({type(exc).__name__}: {exc})")
+        return None
+    ready_for = (result.get("readiness") or {}).get("ready_for")
+    print(f"READINESS: {result['outcome']} (ready_for={ready_for})")
+    return result["outcome"]
+
+
 def run_enhancement(asset_id: int, view: analysis_view.AnalysisView) -> str | None:
     """
     Enhancement decision правилами (docs/STOCK_READINESS_CONTRACT.md §4.2) по тому же view.
@@ -227,6 +253,7 @@ def process_asset(
 
     if outcome == AI_PASSED:
         run_metadata(asset_id, metadata_analyzer)
+        run_readiness(asset_id)
 
     return outcome
 

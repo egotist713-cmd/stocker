@@ -4472,6 +4472,52 @@ architecture, params, quantization (Q5_K_M, 5 bit), format (gguf), size_bytes,
 
 ---
 
+# 35ZZC. 2026-09-28 — Этап Readiness: стадия после metadata
+
+### Решение пользователя
+
+После исправления `readiness.get` продолжить собственно этап Readiness
+(порядок: Readiness → проверка зависимости Readiness от Metadata → Creative
+Review → Publication Gate → массовый пересчёт). Creative Review, Publication,
+n8n-оркестрацию и GGUF-хеширование не трогать.
+
+### Сделано
+
+- `asset.reprocess`: Readiness — последняя стадия всех цепочек
+  (`PIPELINE_ORDER` … metadata → readiness), `reprocess_from = readiness`;
+  при неодобренной metadata — `SKIPPED_NOT_APPLICABLE` без события; после
+  `stop` на metadata план заканчивается (ранее план ошибочно показывал
+  Readiness `run` после остановки — исправлено). `allowed_actions` для stale
+  Readiness → `asset.reprocess {reprocess_from: readiness}`.
+- Worker: `run_readiness` после metadata gate — только если metadata одобрена
+  и normalize / view / qc / vision / metadata актуальны; ошибки не
+  останавливают обработку. Следствие: новые файлы (в т.ч. через n8n
+  `asset.process_file`) заканчиваются оценкой Readiness.
+- Тесты: `tests/test_reprocess.py` +7 (Readiness после gate; нет оценки для
+  human_review; защита от устаревшего upstream; **правка metadata → Readiness
+  stale → пересчёт только Readiness, +2 события, повтор no-op**; metadata ушла
+  в human_review → Readiness не применим, старая оценка — история; blocked
+  Readiness — актуальное решение; not_applicable не пишет событий).
+  `test_human_review_to_approve`: одобрение человеком делает прежний Readiness
+  `stale`, пересчёт → current.
+
+### Проверка на рабочей БД (копия до — в scratchpad)
+
+- 9 объектов, устаревших только по Readiness (#3, 4, 6, 7, 10, 11, 12, 13,
+  14): dry-run — по одному шагу `readiness run (FINGERPRINT_CHANGED)`, 0
+  событий; пересчёт — `READINESS/EVALUATED` + `REPROCESS/DONE` у каждого (18);
+  все 9 — **`platform_ready`** (adobe, shutterstock), у каждого актуальна вся
+  цепочка source → QC → Vision → metadata → Readiness. Повтор — `NOTHING_TO_DO`,
+  0 событий.
+- human_review #5, #8, #37, #38 с `reprocess_from = readiness` —
+  `SKIPPED_NOT_APPLICABLE`, 0 событий.
+- Итог: platform_ready 9, human_review 4, stale 113 (все с QC),
+  source_invalid 3; `check_consistency` OK.
+
+`pytest`: 671 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

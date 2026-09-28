@@ -394,7 +394,7 @@ _REPROCESS = {
     "qc": _action("asset.reprocess", "pipeline", reprocess_from="qc"),
     "vision": _action("asset.reprocess", "pipeline", reprocess_from="vision"),
     "metadata": _action("asset.reprocess", "pipeline", reprocess_from="metadata"),
-    "readiness": _action("readiness.evaluate", "pipeline"),  # Readiness не подключена к reprocess
+    "readiness": _action("asset.reprocess", "pipeline", reprocess_from="readiness"),
 }
 _NEXT = {
     "normalize": _action("normalize.run", "pipeline"),

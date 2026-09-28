@@ -12,7 +12,7 @@ SHA256 до любой записи. dry_run (по умолчанию) — то�
 
 import json
 
-from app import analysis_view, asset_state, enhancement_decision, normalization, qc, worker
+from app import analysis_view, asset_state, enhancement_decision, normalization, qc, stock_readiness, worker
 from app import metadata as metadata_service
 from app import metadata_builder as mb
 from app.ai.enhancement_advisor import advisor_enabled
@@ -22,18 +22,20 @@ from app.database.db import get_asset, insert_event, transaction
 STAGE = "REPROCESS"
 
 # Стадии, которые reprocess умеет выполнять (подключены к pipeline), в порядке обработки.
-STAGES = ("normalize", "qc", "enhancement", "vision", "metadata")
+STAGES = ("normalize", "qc", "enhancement", "vision", "metadata", "readiness")
 
 # Что пересчитывается от стадии: порядок pipeline (QC пропускает к Vision), а не только
 # зависимость по данным. Enhancement — советующая, от неё никто не зависит.
 # view — производный шаг (AnalysisView в памяти из representation): ничего не пишет.
-PIPELINE_ORDER = ("normalize", "view", "qc", "enhancement", "vision", "metadata")
+# Readiness — после metadata (правила площадок; только для одобренной metadata).
+PIPELINE_ORDER = ("normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness")
 DOWNSTREAM = {
-    "normalize": ("normalize", "view", "qc", "enhancement", "vision", "metadata"),
-    "qc": ("qc", "enhancement", "vision", "metadata"),
+    "normalize": ("normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness"),
+    "qc": ("qc", "enhancement", "vision", "metadata", "readiness"),
     "enhancement": ("enhancement",),
-    "vision": ("vision", "metadata"),
-    "metadata": ("metadata",),
+    "vision": ("vision", "metadata", "readiness"),
+    "metadata": ("metadata", "readiness"),
+    "readiness": ("readiness",),
 }
 
 # Что должно быть актуально, чтобы стадию можно было запускать.
@@ -44,10 +46,11 @@ UPSTREAM = {
     "enhancement": ("normalize", "view"),
     "vision": ("normalize", "view", "qc"),
     "metadata": ("normalize", "view", "qc", "vision"),
+    "readiness": ("normalize", "view", "qc", "vision", "metadata"),
 }
 
 # Не подключены к pipeline — reprocess их не запускает (устаревание остаётся видно в state).
-NOT_CONNECTED = ("readiness", "creative_review", "publication")
+NOT_CONNECTED = ("creative_review", "publication")
 
 WRITES = {
     "normalize": ["NORMALIZE/EVALUATED", "NORMALIZE/PASSED"],
@@ -56,6 +59,7 @@ WRITES = {
     "enhancement": ["ENHANCEMENT/ASSESSED", "ENHANCEMENT/ADVISED (только disputed)"],
     "vision": ["assets.ai_result", "AI/PASSED|FAILED"],
     "metadata": ["METADATA_AI/PASSED|FAILED", "assets.metadata_json", "METADATA/DRAFTED", "METADATA/GATED"],
+    "readiness": ["READINESS/EVALUATED|FAILED"],
 }
 
 # Исходы.
@@ -66,6 +70,7 @@ REFUSED = "REFUSED"
 STOPPED = "STOPPED"
 
 DERIVED = "DERIVED"  # view построен заново в памяти (ничего не записано)
+NOT_APPLICABLE = "SKIPPED_NOT_APPLICABLE"  # Readiness при неодобренной metadata — не оценивается
 
 
 class ReprocessError(Exception):
@@ -141,7 +146,11 @@ def plan(asset_id: int, reprocess_from: str | None = None, through: str | None =
         stage = stages[name]
         # Станет неактуальной, если пересчитывается то, от чего она зависит по данным.
         upstream_rerun = [d for d in asset_state.DEPENDS_ON[name] if d in will_run]
-        if stage["status"] == asset_state.CURRENT and not upstream_rerun:
+        if name == "readiness" and stage["status"] == asset_state.NOT_APPLICABLE and "metadata" not in will_run:
+            action, why = "skip", f"not_applicable:{stage.get('reason')}"
+        elif name == "readiness" and "metadata" in will_run:
+            action, why = "run", "UPSTREAM_RERUN:metadata (if metadata stays approved)"
+        elif stage["status"] == asset_state.CURRENT and not upstream_rerun:
             action, why = "skip", "current"
         else:
             action = "run"
@@ -154,6 +163,8 @@ def plan(asset_id: int, reprocess_from: str | None = None, through: str | None =
             will_run.add(name)
         result["steps"].append({"stage": name, "action": action, "why": why, "status": stage["status"],
                                 "writes": WRITES[name] if action == "run" else []})
+        if action == "stop":
+            break  # дальше выполнение не пойдёт — план не обещает того, чего не будет
     return result
 
 
@@ -183,6 +194,9 @@ def run(
         normalized_now = any(e["stage"] == "normalize" and e["outcome"] != "SKIPPED_CURRENT" for e in executed)
         if name == "view" and normalized_now:
             pass  # representation только что пересоздана — view строится заново (ниже)
+        elif name == "readiness" and current[name]["status"] == asset_state.NOT_APPLICABLE:
+            executed.append({"stage": name, "outcome": NOT_APPLICABLE})  # metadata не одобрена
+            continue
         elif current[name]["status"] == asset_state.CURRENT:
             executed.append({"stage": name, "outcome": "SKIPPED_CURRENT"})
             continue
@@ -214,14 +228,14 @@ def run(
 
         outcome = _execute(name, asset_id, view, analyzer, metadata_analyzer)
         executed.append({"stage": name, "outcome": outcome})
-        if outcome in ("NORMALIZE_FAILED", "QC_FAILED", worker.AI_FAILED, "METADATA_AI_FAILED"):
+        if outcome in ("NORMALIZE_FAILED", "QC_FAILED", worker.AI_FAILED, "METADATA_AI_FAILED", "READINESS_FAILED"):
             stopped = {"stage": name, "code": outcome}
             break
 
     after = asset_state.get(asset_id)
     # REPROCESS/DONE — только если хотя бы одна стадия реально пересчитана (контракт §6):
     # пропуски актуальных и производный view событием не считаются.
-    ran = [e for e in executed if e["outcome"] not in ("SKIPPED_CURRENT", DERIVED)]
+    ran = [e for e in executed if e["outcome"] not in ("SKIPPED_CURRENT", DERIVED, NOT_APPLICABLE)]
     outcome = STOPPED if stopped else (REPROCESSED if ran else NOTHING_TO_DO)
     if ran:  # no-op пересчёт событий не пишет
         _write_summary(asset_id, {
@@ -252,4 +266,6 @@ def _execute(name: str, asset_id: int, view, analyzer, metadata_analyzer) -> str
         return worker.run_ai(asset_id, view, analyzer or LocalAnalyzer())
     if name == "metadata":
         return metadata_service.build(asset_id, force=True, analyzer=metadata_analyzer)["outcome"]
+    if name == "readiness":
+        return stock_readiness.evaluate_asset(asset_id)["outcome"]
     raise ReprocessError("UNKNOWN_STAGE", name)

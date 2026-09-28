@@ -38,7 +38,7 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__metadata_edit` | change title / description / keywords | `{"asset_id": N, "title": "..."}` |
 | `stocker__metadata_gate` | re-evaluate the review gate | `{"asset_id": N}` |
 | `stocker__metadata_escalate` | send to human review | `{"asset_id": N, "reason": "..."}` |
-| `stocker__asset_reprocess` | recompute stale results of ONE asset (state `stale`, see `reprocess_from`). Default is a dry run that only shows the plan; run for real (`"dry_run": false`) only after the user agreed. Never loop over many assets | `{"asset_id": N}` then `{"asset_id": N, "dry_run": false}` |
+| `stocker__asset_reprocess` | recompute stale results of ONE asset (state `stale`, see `reprocess_from`; chain ends with stock readiness). Default is a dry run that only shows the plan; run for real (`"dry_run": false`) only after the user agreed. Never loop over many assets | `{"asset_id": N}` then `{"asset_id": N, "dry_run": false}` |
 | `stocker__normalize_get` | facts about the original file (format, color profile, HDR, Motion Photo, metadata present — never values) and its internal representation | `{"asset_id": N}` |
 | `stocker__normalize_run` | build the internal representation (original used as is, or a lossless internal copy for AVIF); never improves or changes the photo; unsafe cases fail with a reason | `{"asset_id": N}` |
 | `stocker__enhancement_get` | image quality: does it need enhancement (Topaz)? decision + reasons (noise / sharpness / artifacts / resolution) | `{"asset_id": N}` |

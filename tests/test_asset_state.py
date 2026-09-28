@@ -58,7 +58,9 @@ def _db(root):
 # --- Основной путь ----------------------------------------------------------------------
 
 
-def test_processed_asset_is_metadata_approved_then_platform_ready(stocker_root, small_images_allowed):
+def test_metadata_approved_without_readiness_then_platform_ready(stocker_root, small_images_allowed, monkeypatch):
+    # Readiness не выполнялся (например, отключён) — состояние metadata_approved, затем оценка.
+    monkeypatch.setattr(worker, "run_readiness", lambda asset_id: None)
     asset_id = processed(stocker_root)
     result = state(asset_id)
     assert result["state"] == asset_state.METADATA_APPROVED and result["metadata_approved"]
@@ -262,7 +264,7 @@ def test_readiness_is_stale_after_metadata_edit(stocker_root, small_images_allow
     result = state(asset_id)
     assert result["metadata_state"] == "auto_approved"
     assert result["state"] == asset_state.STALE and result["reprocess_from"] == "readiness"
-    assert ops(result) == ["readiness.evaluate"]
+    assert ops(result) == ["asset.reprocess"] and result["allowed_actions"][0]["params"] == {"reprocess_from": "readiness"}
 
 
 def test_old_readiness_is_not_applicable_after_human_review(stocker_root, small_images_allowed):
@@ -319,8 +321,14 @@ def test_human_review_to_approve(stocker_root, in_human_review):
 
     result = state(in_human_review)
     assert result["metadata_state"] == "approved" and result["metadata_approved"]
-    assert result["state"] == asset_state.METADATA_APPROVED and "readiness.evaluate" in ops(result)
+    # Readiness был оценён до эскалации: одобрение человека — новый вход, старая оценка устарела.
+    assert result["state"] == asset_state.STALE and result["reprocess_from"] == "readiness"
     assert ("METADATA", "APPROVED") in [(s, st) for s, st, _ in events(stocker_root, in_human_review)]
+    from app import reprocess
+
+    rerun = reprocess.run(in_human_review, dry_run=False)
+    assert [(e["stage"], e["outcome"]) for e in rerun["executed"]] == [("readiness", "EVALUATED")]
+    assert state(in_human_review)["stages"]["readiness"]["status"] == "current"
 
 
 def test_human_review_to_reject(stocker_root, in_human_review):

@@ -58,12 +58,12 @@ class ProcessParams(AssetParams):
     force: bool = False
 
 
-REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata"]
+REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata", "readiness"]
 
 
 class ReprocessParams(AssetParams):
     reprocess_from: REPROCESS_STAGES | None = None
-    through: Literal["normalize", "view", "qc", "enhancement", "vision", "metadata"] | None = None
+    through: Literal["normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness"] | None = None
     dry_run: bool = True
 
 
@@ -173,7 +173,7 @@ DESCRIPTIONS = {
     "asset.process": 'Re-run source check, QC, Vision and metadata for a registered asset. Args: {"asset_id": 5}, optional "force": true',
     "asset.reprocess": (
         "Controlled recompute of stale results: the given stage (default: state.reprocess_from) and its downstream "
-        "(qc -> enhancement -> vision -> metadata), only stages that are not current; upstream is never rewritten. "
+        "(qc -> enhancement -> vision -> metadata -> readiness), only stages that are not current; upstream is never rewritten. "
         "Refused for source_invalid / rejected / non-current upstream. dry_run=true by default: returns the plan "
         "(what would run and be replaced) without writing. Args: "
         '{"asset_id": 5} or {"asset_id": 5, "reprocess_from": "vision", "dry_run": false}'

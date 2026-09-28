@@ -311,10 +311,11 @@ ingest → processing → (stale ↔ пересчёт) → human_review ──ap
 
 | `reprocess_from` | Цепочка (порядок pipeline) |
 |---|---|
-| `normalize` | normalize → **view** → qc → enhancement → vision → metadata |
-| `qc` | qc → enhancement → vision → metadata |
-| `vision` | vision → metadata |
-| `metadata` | metadata |
+| `normalize` | normalize → **view** → qc → enhancement → vision → metadata → readiness |
+| `qc` | qc → enhancement → vision → metadata → readiness |
+| `vision` | vision → metadata → readiness |
+| `metadata` | metadata → readiness |
+| `readiness` | readiness (с 28.09.2026, §35ZZC) |
 | `enhancement` | enhancement (советующая, от неё никто не зависит) |
 
 - Порядок — **один** порядок pipeline для всех цепочек (`PIPELINE_ORDER`:
@@ -322,8 +323,14 @@ ingest → processing → (stale ↔ пересчёт) → human_review ──ap
   хвост этого порядка, особой логики у `normalize` нет. `view` — производный шаг
   (AnalysisView в памяти из representation): ничего не пишет; строится заново,
   если Normalize в этом проходе реально выполнился, иначе — `SKIPPED_CURRENT`.
-  Порядок pipeline, а не только зависимость по данным (QC пропускает к Vision). Readiness, Creative Review, Publication **не запускаются** (не подключены к
-  pipeline): их устаревание остаётся видно в `state`.
+  Порядок pipeline, а не только зависимость по данным (QC пропускает к Vision).
+  Creative Review и Publication **не запускаются** (не подключены к pipeline): их
+  устаревание остаётся видно в `state`. Readiness — последняя стадия цепочки
+  (правила площадок, без модели): выполняется, только если metadata одобрена
+  (`auto_approved` / `approved`); иначе `SKIPPED_NOT_APPLICABLE` (не считается
+  выполнением, событий не пишет). Если план предполагает пересборку metadata,
+  Readiness в плане — `run` «если metadata останется одобренной». После `stop` на
+  metadata план заканчивается (дальше выполнение не идёт).
 - Запускается только стадия, которая сейчас **не актуальна**; актуальная —
   `SKIPPED_CURRENT`. Повтор при неизменных входах — `NOTHING_TO_DO`, **ни одного
   события** (и `REPROCESS/DONE` пишется только если что-то выполнено).

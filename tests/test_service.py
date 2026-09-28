@@ -227,12 +227,12 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
             "confidence": None,
             "event_id": envelope["data"]["pipeline"]["enhancement"]["event_id"],
         },
-        "stock_readiness": {
-            "evaluated": False,
+        "stock_readiness": {  # worker оценивает Readiness после gate; 64×48 — ниже минимума площадок
+            "evaluated": True,
             "stale": False,
-            "platforms": {"adobe": "not_evaluated", "shutterstock": "not_evaluated"},
+            "platforms": {"adobe": "blocked", "shutterstock": "blocked"},
             "ready_for": [],
-            "event_id": None,
+            "event_id": envelope["data"]["pipeline"]["stock_readiness"]["event_id"],
         },
         "creative_review": {
             "reviewed": False,

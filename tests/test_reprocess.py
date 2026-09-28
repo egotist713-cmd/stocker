@@ -74,12 +74,12 @@ def test_dry_run_shows_plan_and_writes_nothing(stocker_root):
     assert result["outcome"] == reprocess.DRY_RUN and result["executed"] == []
     assert result["state"] == "stale" and result["reasons"] == ["STALE:qc:NO_FINGERPRINT"]
     assert result["reprocess_from"] == "qc"
-    assert stages(result) == [("qc", "run"), ("enhancement", "skip"), ("vision", "run"), ("metadata", "run")]
+    assert stages(result) == [("qc", "run"), ("enhancement", "skip"), ("vision", "run"), ("metadata", "run"), ("readiness", "run")]
     steps = {s["stage"]: s for s in result["steps"]}
     assert steps["qc"]["why"] == "NO_FINGERPRINT" and steps["vision"]["why"] == "NO_FINGERPRINT"
     assert steps["metadata"]["why"] == "UPSTREAM_STALE:vision"
     assert "assets.ai_result" in steps["vision"]["writes"] and steps["enhancement"]["writes"] == []
-    assert {n["stage"] for n in result["not_run"]} == {"readiness", "creative_review", "publication"}
+    assert {n["stage"] for n in result["not_run"]} == {"creative_review", "publication"}
     assert events(stocker_root, asset_id) == before
 
 
@@ -88,7 +88,7 @@ def test_metadata_is_planned_when_vision_will_rerun(stocker_root, monkeypatch):
     asset_id = processed(stocker_root)
     monkeypatch.setitem(asset_state.VISION_IDENTITIES, "fake", lambda: {**FakeAnalyzer.current_identity(), "model": "v2"})
     result = reprocess.run(asset_id, reprocess_from="vision")
-    assert stages(result) == [("vision", "run"), ("metadata", "run")]
+    assert stages(result) == [("vision", "run"), ("metadata", "run"), ("readiness", "run")]
     assert result["steps"][1]["why"] == "UPSTREAM_STALE:vision"
     assert result["steps"][0]["why"] == "FINGERPRINT_CHANGED"
 
@@ -104,9 +104,10 @@ def test_reprocess_from_vision_runs_vision_then_metadata(stocker_root):
     result = run(asset_id, reprocess_from="vision", dry_run=False)
 
     assert result["outcome"] == reprocess.REPROCESSED
-    assert executed(result) == [("vision", "AI_PASSED"), ("metadata", "DRAFTED")]
+    assert executed(result) == [("vision", "AI_PASSED"), ("metadata", "DRAFTED"), ("readiness", "EVALUATED")]
     state = asset_state.get(asset_id)
     assert state["stages"]["vision"]["status"] == "current" and state["stages"]["metadata"]["status"] == "current"
+    assert state["stages"]["readiness"]["status"] == "current"
     # Upstream не тронут: ни одного нового события QC / NORMALIZE / ENHANCEMENT.
     assert [e for e in events(stocker_root, asset_id) if e[0] in ("QC", "NORMALIZE", "ENHANCEMENT")] == qc_before
 
@@ -118,12 +119,13 @@ def test_reprocess_from_qc_runs_the_chain(stocker_root):
     result = run(asset_id, dry_run=False)
 
     assert executed(result) == [("qc", "QC_PASSED"), ("enhancement", "SKIPPED_CURRENT"),
-                                ("vision", "AI_PASSED"), ("metadata", "DRAFTED")]
+                                ("vision", "AI_PASSED"), ("metadata", "DRAFTED"), ("readiness", "EVALUATED")]
     state = asset_state.get(asset_id)
-    assert all(state["stages"][s]["status"] == "current" for s in ("normalize", "view", "qc", "enhancement", "vision", "metadata"))
-    assert state["state"] == asset_state.METADATA_APPROVED  # Readiness ещё не оценён — reprocess его не запускает
+    assert all(state["stages"][s]["status"] == "current" for s in reprocess.PIPELINE_ORDER)
+    # 64×48 ниже минимума площадок: актуальная оценка Readiness — blocked (не «готов», не «stale»).
+    assert state["state"] == asset_state.BLOCKED and state["reasons"][0] == "READINESS_BLOCKED"
     done = [json.loads(m) for s, st, m in events(stocker_root, asset_id) if (s, st) == ("REPROCESS", "DONE")]
-    assert len(done) == 1 and done[0]["state_before"] == "stale" and done[0]["state_after"] == "metadata_approved"
+    assert len(done) == 1 and done[0]["state_before"] == "stale" and done[0]["state_after"] == "blocked"
 
 
 def test_repeat_is_a_noop(stocker_root):
@@ -242,7 +244,7 @@ def test_human_metadata_is_never_overwritten(stocker_root, human):
 
 def test_not_connected_stage_is_refused(stocker_root):
     asset_id = processed(stocker_root)
-    result = dispatch("asset.reprocess", {"asset_id": asset_id, "reprocess_from": "readiness"})
+    result = dispatch("asset.reprocess", {"asset_id": asset_id, "reprocess_from": "creative_review"})
     assert result["ok"] is False and result["error"]["code"] == "INVALID_PARAMS"
 
 
@@ -267,12 +269,13 @@ def test_from_normalize_uses_the_same_pipeline_chain(stocker_root):
     asset_id = processed(stocker_root)
     make_legacy(stocker_root, asset_id)
     planned = reprocess.run(asset_id, reprocess_from="normalize")
-    assert [s["stage"] for s in planned["steps"]] == ["normalize", "view", "qc", "enhancement", "vision", "metadata"]
+    assert [s["stage"] for s in planned["steps"]] == list(reprocess.PIPELINE_ORDER)
     assert stages(planned) == [("normalize", "skip"), ("view", "skip"), ("qc", "run"), ("enhancement", "skip"),
-                               ("vision", "run"), ("metadata", "run")]
+                               ("vision", "run"), ("metadata", "run"), ("readiness", "run")]
     result = run(asset_id, reprocess_from="normalize", dry_run=False)
     assert executed(result) == [("normalize", "SKIPPED_CURRENT"), ("view", "SKIPPED_CURRENT"), ("qc", "QC_PASSED"),
-                                ("enhancement", "SKIPPED_CURRENT"), ("vision", "AI_PASSED"), ("metadata", "DRAFTED")]
+                                ("enhancement", "SKIPPED_CURRENT"), ("vision", "AI_PASSED"), ("metadata", "DRAFTED"),
+                                ("readiness", "EVALUATED")]
 
 
 def test_from_normalize_after_normalizer_change_reruns_every_pixel_stage(stocker_root, monkeypatch):
@@ -281,10 +284,11 @@ def test_from_normalize_after_normalizer_change_reruns_every_pixel_stage(stocker
     planned = reprocess.run(asset_id)
     assert planned["reprocess_from"] == "normalize"
     assert stages(planned) == [("normalize", "run"), ("view", "derive"), ("qc", "run"), ("enhancement", "run"),
-                               ("vision", "run"), ("metadata", "run")]
+                               ("vision", "run"), ("metadata", "run"), ("readiness", "run")]
     result = run(asset_id, dry_run=False)
     assert executed(result) == [("normalize", "NORMALIZED"), ("view", "DERIVED"), ("qc", "QC_PASSED"),
-                                ("enhancement", "ASSESSED"), ("vision", "AI_PASSED"), ("metadata", "DRAFTED")]
+                                ("enhancement", "ASSESSED"), ("vision", "AI_PASSED"), ("metadata", "DRAFTED"),
+                                ("readiness", "EVALUATED")]
     state = asset_state.get(asset_id)
     assert all(state["stages"][s]["status"] == "current" for s in reprocess.PIPELINE_ORDER)
 
@@ -303,7 +307,7 @@ def test_from_metadata_with_current_vision(stocker_root):
     add_event(asset_id, "AI", "PASSED", json.dumps(passed))  # новый актуальный Vision event, metadata — на старом
     assert asset_state.get(asset_id)["reprocess_from"] == "metadata"
     result = run(asset_id, reprocess_from="metadata", dry_run=False)
-    assert executed(result) == [("metadata", "DRAFTED")]
+    assert executed(result) == [("metadata", "DRAFTED"), ("readiness", "EVALUATED")]
     assert asset_state.get(asset_id)["stages"]["metadata"]["status"] == "current"
 
 
@@ -441,3 +445,89 @@ def test_current_readiness_result_is_returned_as_result(stocker_root, monkeypatc
     data = dispatch("readiness.get", {"asset_id": asset_id})["data"]
     assert data["stale"] is False and data["result"]["ready_for"] == data["ready_for"] == ["adobe", "shutterstock"]
     assert "last_result" not in data
+
+
+# --- Этап Readiness: стадия после metadata, зависимость от metadata ---------------------------
+
+
+@pytest.fixture
+def small_images_allowed(monkeypatch):
+    import dataclasses
+
+    from app import readiness as rd
+
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+
+
+def readiness_events(root, asset_id):
+    return [st for s, st, _ in events(root, asset_id) if s == "READINESS"]
+
+
+def test_worker_evaluates_readiness_after_gate(stocker_root, small_images_allowed):
+    asset_id = processed(stocker_root)
+    assert readiness_events(stocker_root, asset_id) == ["EVALUATED"]
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.PLATFORM_READY and state["ready_for"] == ["adobe", "shutterstock"]
+
+
+def test_worker_does_not_evaluate_readiness_for_human_review(stocker_root):
+    asset_id = worker.process_file(make_image(stocker_root, icc_profile=SRGB_ICC), analyzer=BrandVision())
+    assert asset_state.get(asset_id)["state"] == asset_state.HUMAN_REVIEW
+    assert readiness_events(stocker_root, asset_id) == []
+
+
+def test_worker_readiness_guard_skips_on_stale_upstream(stocker_root):
+    asset_id = processed(stocker_root)
+    make_legacy(stocker_root, asset_id, qc_legacy=False)  # Vision устарел
+    before = events(stocker_root, asset_id)
+    assert worker.run_readiness(asset_id) is None
+    assert events(stocker_root, asset_id) == before
+
+
+def test_metadata_edit_makes_readiness_stale_and_reprocess_reevaluates_only_it(stocker_root, small_images_allowed):
+    asset_id = processed(stocker_root)
+    dispatch("metadata.edit", {"asset_id": asset_id, "add_keywords": ["factory floor"]})
+    state = asset_state.get(asset_id)
+    assert state["reprocess_from"] == "readiness" and state["stages"]["readiness"]["reason"] == "FINGERPRINT_CHANGED"
+
+    planned = reprocess.run(asset_id)
+    assert stages(planned) == [("readiness", "run")]
+    before = events(stocker_root, asset_id)
+    result = run(asset_id, dry_run=False)
+    assert executed(result) == [("readiness", "EVALUATED")]
+    added = [(s, st) for s, st, _ in events(stocker_root, asset_id)[len(before):]]
+    assert added == [("READINESS", "EVALUATED"), ("REPROCESS", "DONE")]
+    assert asset_state.get(asset_id)["state"] == asset_state.PLATFORM_READY
+    assert run(asset_id, reprocess_from="readiness", dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
+    assert len(events(stocker_root, asset_id)) == len(before) + 2
+
+
+def test_readiness_is_skipped_when_metadata_goes_to_human_review(stocker_root, small_images_allowed):
+    asset_id = processed(stocker_root)
+    make_legacy(stocker_root, asset_id, qc_legacy=False)
+    planned = reprocess.run(asset_id, reprocess_from="vision")
+    assert stages(planned)[-1] == ("readiness", "run")  # план: если metadata останется одобренной
+
+    result = run(asset_id, reprocess_from="vision", dry_run=False, analyzer=BrandVision())
+    assert executed(result)[-1] == ("readiness", reprocess.NOT_APPLICABLE)  # metadata ушла человеку
+    assert readiness_events(stocker_root, asset_id) == ["EVALUATED"]  # только старая, история
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.HUMAN_REVIEW and state["stages"]["readiness"]["status"] == "not_applicable"
+
+
+def test_current_blocked_readiness_is_a_final_decision_not_stale(stocker_root):
+    asset_id = processed(stocker_root)  # 64×48 < 4 MP площадок
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.BLOCKED and state["reasons"][:2] == ["READINESS_BLOCKED", "RESOLUTION_TOO_LOW"]
+    assert state["stages"]["readiness"]["status"] == "current"
+    before = events(stocker_root, asset_id)
+    assert run(asset_id, reprocess_from="readiness", dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
+    assert events(stocker_root, asset_id) == before
+
+
+def test_not_applicable_skip_alone_writes_no_event(stocker_root):
+    asset_id = worker.process_file(make_image(stocker_root, icc_profile=SRGB_ICC), analyzer=BrandVision())
+    before = events(stocker_root, asset_id)
+    result = run(asset_id, reprocess_from="readiness", dry_run=False)
+    assert executed(result) == [("readiness", reprocess.NOT_APPLICABLE)] and result["outcome"] == reprocess.NOTHING_TO_DO
+    assert events(stocker_root, asset_id) == before

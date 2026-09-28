@@ -408,8 +408,15 @@ null`, `ready_for: []`, площадки `stale`, а сохранённый ре
 себя все потребители: `asset.get` (`pipeline.stock_readiness`, `state`),
 `asset.list`, `review.queue`.
 
-Следующие шаги (§6): фильтр `asset.list ready_for=<platform>`, счётчики в
-`review.queue.summary`, вызов из worker после gate и после `metadata.approve`.
+**Подключено к pipeline (28.09.2026, паспорт §35ZZC):** worker вызывает Readiness
+после metadata gate — только если metadata одобрена и все обязательные стадии
+выше актуальны (оценка на устаревших входах не пишется); `asset.reprocess`
+включает Readiness последней стадией цепочки. Одобрение metadata человеком —
+новый вход Readiness: прежняя оценка становится `stale`, пересчёт —
+`asset.reprocess` (`reprocess_from = readiness`).
+
+Следующие шаги (§6): фильтр `asset.list ready_for=<platform>`; автоматический
+вызов после `metadata.approve` (сейчас — через `asset.reprocess`).
 
 **Без массовой переоценки для agent и n8n** (решение 26.09.2026): операции
 адресуются **одним** `asset_id`; пакетной операции («переоценить всё») нет.
