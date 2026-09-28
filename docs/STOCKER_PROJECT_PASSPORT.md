@@ -5007,6 +5007,27 @@ report-only в каждой партии.
 
 ---
 
+# 35ZZQ. 2026-09-28 — Core batch 9 (#122–#130, последняя) и итоговый аудит каталога
+
+- Партия 9: все 9 — QC → Enhancement (пропуск) → Vision → Metadata
+  (`auto_approved`) → Readiness → Publication — **publication_approved**, adobe и
+  shutterstock `approved`; Creative — не запускался / `NO_CURRENT_ADVICE`; по 9
+  событий (81); изменений decision — 0. Повтор — `NOTHING_TO_DO` ×9, 0 событий;
+  инвариант — 0 нарушений; `check_consistency` OK; brand watch — 0. У #126 / #127
+  надписи `AUTOMATION ПУБЕРТ 22х0,5` / `AUTOMATION ПУБЛІК 22Х0.5` — technical
+  (цифры); `ЗАМОК ДВЕРИ ШАХТЫ` (#124) — descriptive.
+- **Итоговый аудит** — `docs/AUDIT_2026-09-28_CATALOG.md`: 129 объектов —
+  publication_approved 103 (Adobe 103, Shutterstock 103), human_review 23,
+  source_invalid 3, stale 0; изменения decision против состояния до этапа C — #8,
+  #86, #45, эскалации #46 / #48 / #74 и #80 (auto → эскалация); brand watch по
+  каталогу — #62 `HR`, #78 `OFF`; идемпотентность — dry-run по каталогу без шагов
+  `run`; событий 3795 (+1140 с этапа C); `check_consistency` OK.
+- Требуют человека: 23 human_review + 3 source_invalid (#2, #67, #68).
+- Новых пересчётов не запускалось, архитектура не менялась (решение
+  пользователя: сначала аудит).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
