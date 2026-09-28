@@ -389,12 +389,12 @@ def _action(operation: str, access: str, **params) -> dict:
 
 
 _REPROCESS = {
-    "normalize": _action("normalize.run", "pipeline"),
-    "view": _action("normalize.run", "pipeline"),
-    "qc": _action("asset.process", "pipeline", force=True),
-    "vision": _action("asset.process", "pipeline", force=True),
-    "metadata": _action("metadata.build", "pipeline", force=True),
-    "readiness": _action("readiness.evaluate", "pipeline"),
+    "normalize": _action("asset.reprocess", "pipeline", reprocess_from="normalize"),
+    "view": _action("asset.reprocess", "pipeline", reprocess_from="normalize"),
+    "qc": _action("asset.reprocess", "pipeline", reprocess_from="qc"),
+    "vision": _action("asset.reprocess", "pipeline", reprocess_from="vision"),
+    "metadata": _action("asset.reprocess", "pipeline", reprocess_from="metadata"),
+    "readiness": _action("readiness.evaluate", "pipeline"),  # Readiness не подключена к reprocess
 }
 _NEXT = {
     "normalize": _action("normalize.run", "pipeline"),

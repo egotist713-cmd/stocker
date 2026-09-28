@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from app import creative_review, enhancement_decision, ingest, normalization, qc, stock_readiness, worker
+from app import creative_review, enhancement_decision, ingest, normalization, qc, reprocess, stock_readiness, worker
 from app import metadata as metadata_service
 from app.service import dispatch
 from scripts.check_consistency import find_problems
@@ -25,7 +25,7 @@ from tests.conftest import FakeAnalyzer, make_image
 ROOT = Path(__file__).resolve().parents[1]
 
 # Модули, которые пишут результат + событие; у каждого подменяется insert_event.
-ATOMIC_MODULES = (ingest, normalization, qc, worker, metadata_service, enhancement_decision, creative_review, stock_readiness)
+ATOMIC_MODULES = (ingest, normalization, qc, reprocess, worker, metadata_service, enhancement_decision, creative_review, stock_readiness)
 
 MAX_INJECTED = 14
 

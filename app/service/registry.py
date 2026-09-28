@@ -58,6 +58,15 @@ class ProcessParams(AssetParams):
     force: bool = False
 
 
+REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata"]
+
+
+class ReprocessParams(AssetParams):
+    reprocess_from: REPROCESS_STAGES | None = None
+    through: REPROCESS_STAGES | None = None
+    dry_run: bool = True
+
+
 class BuildParams(AssetParams):
     force: bool = False
 
@@ -162,6 +171,13 @@ DESCRIPTIONS = {
     ),
     "asset.process_file": 'Ingest a new image inside the project and run QC, Vision, metadata and review gate. Args: {"path": "data/incoming/IMG_1.jpg"}',
     "asset.process": 'Re-run source check, QC, Vision and metadata for a registered asset. Args: {"asset_id": 5}, optional "force": true',
+    "asset.reprocess": (
+        "Controlled recompute of stale results: the given stage (default: state.reprocess_from) and its downstream "
+        "(qc -> enhancement -> vision -> metadata), only stages that are not current; upstream is never rewritten. "
+        "Refused for source_invalid / rejected / non-current upstream. dry_run=true by default: returns the plan "
+        "(what would run and be replaced) without writing. Args: "
+        '{"asset_id": 5} or {"asset_id": 5, "reprocess_from": "vision", "dry_run": false}'
+    ),
     "metadata.build": 'Create metadata with Metadata AI (partial draft if it fails), then review gate. Args: {"asset_id": 5}',
     "metadata.rebuild": 'Re-apply Python rules without AI, keep human edits, then review gate. Args: {"asset_id": 5}',
     "metadata.edit": (
@@ -242,6 +258,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("incoming.list", DESCRIPTIONS["incoming.list"], NoParams, READ, ops.incoming_list),
         Operation("asset.process_file", DESCRIPTIONS["asset.process_file"], ProcessFileParams, PIPELINE, ops.asset_process_file),
         Operation("asset.process", DESCRIPTIONS["asset.process"], ProcessParams, PIPELINE, ops.asset_process),
+        Operation("asset.reprocess", DESCRIPTIONS["asset.reprocess"], ReprocessParams, PIPELINE, ops.asset_reprocess),
         Operation("metadata.build", DESCRIPTIONS["metadata.build"], BuildParams, PIPELINE, ops.metadata_build),
         Operation("metadata.rebuild", DESCRIPTIONS["metadata.rebuild"], AssetParams, PIPELINE, ops.metadata_rebuild),
         Operation("metadata.edit", DESCRIPTIONS["metadata.edit"], EditParams, PIPELINE, ops.metadata_edit),

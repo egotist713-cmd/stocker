@@ -4270,6 +4270,68 @@ Vision; старые результаты без отпечатка остают
 
 ---
 
+# 35ZY. 2026-09-28 — Этап C: контролируемый asset.reprocess
+
+### Решение пользователя
+
+Этапы A и B приняты; известное ограничение (замена весов под тем же именем) —
+зафиксировать. Этап C — настоящий контролируемый пересчёт, а не
+`asset.process(force)`: `reprocess_from`, только стадия и её downstream, upstream
+не трогается; dry-run; сначала один объект (#3: `from=vision`, затем
+`from=qc`), повтор (идемпотентность), небольшой batch; проверить
+source_invalid, неактуальный upstream, no-op, историю. Массовый пересчёт 126 и
+n8n — нет; Readiness / Creative / Publication не менять.
+
+### Сделано
+
+- `app/reprocess.py` + операция `asset.reprocess` (`reprocess_from`, `through`,
+  `dry_run=true` по умолчанию; доступ pipeline, **не n8n**). Цепочки — по порядку
+  pipeline (контракт §6); запускаются только неактуальные стадии; отказы до
+  записи (SHA256 source, rejected, `UPSTREAM_NOT_CURRENT`, `NOT_CONNECTED`,
+  `NOTHING_STALE`); проверка upstream перед каждой стадией; metadata с
+  решением / правками человека не пересобирается; один view на пересчёт;
+  `REPROCESS/DONE` — только если что-то выполнено. `allowed_actions` для
+  `stale` → `asset.reprocess {reprocess_from}`.
+- `tests/test_reprocess.py` (17): план без записи; цепочки vision и qc; повтор —
+  ноль событий; `through`; история — только дописывается; отказы: upstream,
+  source (удалён и тот же размер — SHA256), rejected, не подключённая стадия;
+  остановка на QC_FAILED и на сбое Vision; правка и одобрение человека не
+  перезаписываются; права (n8n — FORBIDDEN). `reprocess` добавлен в
+  `ATOMIC_MODULES`. Мутации «без проверки upstream» и «без пропуска актуальных»
+  ловятся.
+
+### #3 (Display P3) на рабочей БД — как менялись state и отпечатки
+
+| Шаг | Итог | Состояние после | Событий |
+|---|---|---|---|
+| исходно | — | `stale` с qc: QC `NO_FINGERPRINT`, Vision `NO_FINGERPRINT` (metadata на Vision event 11, `local-v1`) | 27 |
+| dry-run `from=vision` | `REFUSED` `UPSTREAM_NOT_CURRENT` (qc) | без изменений | 27 |
+| dry-run (по умолчанию) | план: qc run, enhancement skip (актуален), vision run, metadata run | без изменений | 27 |
+| `from=qc through=qc` | QC `QC_PASSED` | QC current `81e7429a8f0f`; `stale` с vision | 29 |
+| dry-run `from=vision` | план: vision run, metadata run | без изменений | 29 |
+| `from=vision` | Vision `AI_PASSED`, metadata `DRAFTED` → gate `auto_approved` | QC / Vision / metadata current; Vision `5ce3bf6ce05c` (= отпечатку прогона на копии БД — те же входы); metadata на Vision event 2659; `stale` только Readiness (не подключён) | 34 |
+| повтор `from=vision`, `from=qc` | `NOTHING_TO_DO` (все `SKIPPED_CURRENT`) | без изменений | 34 |
+| по умолчанию | `REFUSED` `NOT_CONNECTED` (readiness) | без изменений | 34 |
+
+### Остальные проверки на рабочей БД (копия до — в scratchpad)
+
+- #10 одной операцией `from=qc`: QC → Enhancement (актуален, пропуск) → Vision
+  → Metadata; повтор — `NOTHING_TO_DO`.
+- Batch 4: #5, #37 (metadata `human_review`), #4 (P3), #11 (sRGB) — все
+  `REPROCESSED` той же цепочкой; #5 и #37 стали итоговым `human_review`
+  (TEXT_BRAND_OR_LEGAL, PEOPLE_RECOGNIZABLE) — теперь в очереди человека; #4,
+  #11 — `stale` только по Readiness. Повтор batch — 0 событий.
+- #2 / #67 / #68: `REFUSED SOURCE_INVALID` (SHA256), 0 событий.
+- Итог каталога: stale 124 (QC 120, Readiness 4), human_review 2,
+  source_invalid 3; `check_consistency` OK.
+- Наблюдение: Vision с умолчанием `temperature` — при том же отпечатке ответ
+  может отличаться (#10: «Concrete Surface Detail…» / «Concrete Structure
+  Detail…»). Зафиксировано в контракте §6a вместе с ограничением по весам.
+
+`pytest`: 649 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

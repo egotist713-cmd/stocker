@@ -12,6 +12,7 @@ from app import enhancement_decision
 from app import ingest
 from app import metadata as metadata_service
 from app import normalization
+from app import reprocess
 from app import stock_readiness
 from app import worker
 from app.database.db import get_connection, insert_event, transaction
@@ -103,6 +104,15 @@ def asset_process(params) -> dict:
     if outcome == worker.ASSET_NOT_FOUND:
         raise ServiceError("ASSET_NOT_FOUND", f"Asset not found: {params.asset_id}")
     return _changed(params.asset_id, outcome)
+
+
+def asset_reprocess(params) -> dict:
+    """Контролируемый пересчёт (app/reprocess.py); по умолчанию — только план."""
+    try:
+        result = reprocess.run(params.asset_id, params.reprocess_from, params.through, dry_run=params.dry_run)
+    except reprocess.ReprocessError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    return _result(params.asset_id, result["outcome"], result, ok=result["outcome"] not in (reprocess.REFUSED, reprocess.STOPPED))
 
 
 def metadata_build(params) -> dict:

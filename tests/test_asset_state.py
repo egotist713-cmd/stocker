@@ -251,7 +251,8 @@ def test_metadata_on_older_vision_is_stale(stocker_root):
     add_event(asset_id, "AI", "PASSED", json.dumps(passed))  # новый Vision event, metadata — на старом
     result = state(asset_id)
     assert result["stages"]["metadata"]["reason"] == "VISION_CHANGED"
-    assert result["reprocess_from"] == "metadata" and ops(result) == ["metadata.build"]
+    assert result["reprocess_from"] == "metadata" and ops(result) == ["asset.reprocess"]
+    assert result["allowed_actions"][0]["params"] == {"reprocess_from": "metadata"}
 
 
 def test_readiness_is_stale_after_metadata_edit(stocker_root, small_images_allowed):
