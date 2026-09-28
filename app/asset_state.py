@@ -9,7 +9,7 @@ Read-model: вычисляет из результатов стадий и их 
 
 import json
 
-from app import creative_review, enhancement_decision, ingest, normalization, normalizer, stock_readiness
+from app import creative_review, enhancement_decision, ingest, normalization, normalizer, publication, stock_readiness
 from app import metadata_builder as mb
 from app import review_gate as rg
 from app import qc as qc_rules
@@ -60,6 +60,8 @@ DEPENDS_ON = {
     "readiness": ("normalize", "qc", "metadata"),
     # Данные: view (overview) и Vision; применимость и порядок — после актуального Readiness.
     "creative_review": ("view", "vision", "readiness"),
+    # Publication — после актуального Readiness; совет Creative — вход отпечатка, не зависимость.
+    "publication": ("readiness",),
 }
 
 # Текущая идентичность Vision по провайдеру (модель, промпт, схема, кодирование, параметры).
@@ -299,7 +301,7 @@ def _creative_applicability(creative: dict, readiness: dict) -> dict:
 
 def _effective(stages: dict) -> dict:
     """Результат ниже устаревшей / несостоявшейся обязательной стадии тоже не актуален."""
-    for name in (*REQUIRED, *ADVISORY):
+    for name in (*REQUIRED, *ADVISORY, "publication"):
         stage = stages[name]
         if stage["status"] in (MISSING, NOT_APPLICABLE):
             continue
@@ -327,13 +329,14 @@ def derive(asset: dict, events: list[dict], verify_source: bool = False) -> dict
         "metadata": _metadata(asset, events, metadata),
         "readiness": _readiness(asset, events, metadata),
         "creative_review": _creative(asset, events),
-        "publication": _stage(NOT_IMPLEMENTED),
+        "publication": _stage(MISSING),  # вычисляется ниже, после применимости Creative
     }
     source_ok = stages["source"]["status"] == "ok"
     if not source_ok:  # без source ничего ниже не может быть актуальным
         stages["normalize"] = {**stages["normalize"], "status": S_STALE, "reason": "UPSTREAM_STALE:source"} \
             if stages["normalize"]["status"] != MISSING else stages["normalize"]
     stages["creative_review"] = _creative_applicability(stages["creative_review"], stages["readiness"])
+    stages["publication"] = publication.stage_status(asset, events, stages)
     stages = _effective(stages)
 
     state, reasons, reprocess_from = _state(stages, metadata)
@@ -346,7 +349,8 @@ def derive(asset: dict, events: list[dict], verify_source: bool = False) -> dict
         "terminal": state in TERMINAL_STATES,
         "metadata_state": (metadata or {}).get("state"),
         "metadata_approved": (metadata or {}).get("state") in (mb.AUTO_APPROVED, mb.APPROVED),
-        "ready_for": stages["readiness"].get("ready_for", []) if state == PLATFORM_READY else [],
+        "ready_for": stages["readiness"].get("ready_for", []) if state in (PLATFORM_READY, PUBLICATION_APPROVED) else [],
+        "approved_for": stages["publication"].get("approved_for", []) if state == PUBLICATION_APPROVED else [],
         "stages": stages,
     }
     result["problems"] = problems(result)
@@ -384,6 +388,11 @@ def _state(stages: dict, metadata: dict | None) -> tuple[str, list[str], str | N
         if name == "readiness":
             if stage.get("reason") == "READINESS_BLOCKED":
                 return BLOCKED, ["READINESS_BLOCKED", *stage.get("blockers", [])], None
+            pub = stages["publication"]
+            if pub["status"] == S_STALE:
+                return STALE, [f"STALE:publication:{pub['reason']}"], "publication"
+            if pub["status"] == CURRENT and pub.get("approved_for"):
+                return PUBLICATION_APPROVED, [], None
             return PLATFORM_READY, [], None
     return PROCESSING, ["NOT_PROCESSED:metadata"], None
 
@@ -415,6 +424,7 @@ _REPROCESS = {
     "vision": _action("asset.reprocess", "pipeline", reprocess_from="vision"),
     "metadata": _action("asset.reprocess", "pipeline", reprocess_from="metadata"),
     "readiness": _action("asset.reprocess", "pipeline", reprocess_from="readiness"),
+    "publication": _action("asset.reprocess", "pipeline", reprocess_from="publication"),
 }
 _NEXT = {
     "normalize": _action("normalize.run", "pipeline"),
@@ -460,9 +470,11 @@ def allowed_actions(result: dict, metadata: dict | None) -> list[dict]:
         actions.append(_action("metadata.reject", "review"))
     elif state == METADATA_APPROVED:
         actions += [_action("readiness.evaluate", "pipeline"), _action("metadata.reject", "review")]
-    elif state == PLATFORM_READY:
+    elif state in (PLATFORM_READY, PUBLICATION_APPROVED):
         if stages["creative_review"]["status"] != CURRENT:
             actions.append(_action("creative.review", "pipeline"))
+        if stages["publication"]["status"] == MISSING:
+            actions.append(_action("publication.evaluate", "pipeline"))
         actions.append(_action("metadata.reject", "review"))
 
     if state not in (STALE,) and stages["enhancement"]["status"] == S_STALE and stages["view"]["status"] == CURRENT:

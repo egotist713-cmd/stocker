@@ -58,12 +58,13 @@ class ProcessParams(AssetParams):
     force: bool = False
 
 
-REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review"]
+REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review", "publication"]
 
 
 class ReprocessParams(AssetParams):
     reprocess_from: REPROCESS_STAGES | None = None
-    through: Literal["normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review"] | None = None
+    through: Literal["normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review",
+                     "publication"] | None = None
     dry_run: bool = True
 
 
@@ -178,6 +179,15 @@ DESCRIPTIONS = {
         "(what would run and be replaced) without writing. Args: "
         '{"asset_id": 5} or {"asset_id": 5, "reprocess_from": "vision", "dry_run": false}'
     ),
+    "publication.evaluate": (
+        "Publication Gate: may the asset be published to each stock platform. Deterministic, per platform: approved "
+        "only where metadata is approved and current Stock Readiness is ready; Creative Review advice is recorded as "
+        'information and never blocks. Source is verified (SHA256). Changes nothing else. Args: {"asset_id": 5}'
+    ),
+    "publication.get": (
+        "Current Publication Gate decision per platform (approved_for). If stale, result is null and last_result is an "
+        'old, no longer valid decision. Read only. Args: {"asset_id": 5}'
+    ),
     "metadata.build": 'Create metadata with Metadata AI (partial draft if it fails), then review gate. Args: {"asset_id": 5}',
     "metadata.rebuild": 'Re-apply Python rules without AI, keep human edits, then review gate. Args: {"asset_id": 5}',
     "metadata.edit": (
@@ -275,6 +285,8 @@ def build_registry() -> dict[str, Operation]:
         Operation("creative.review", DESCRIPTIONS["creative.review"], CreativeParams, PIPELINE, ops.creative_review),
         Operation("creative.get", DESCRIPTIONS["creative.get"], AssetParams, READ, ops.creative_get),
         Operation("readiness.evaluate", DESCRIPTIONS["readiness.evaluate"], AssetParams, PIPELINE, ops.readiness_evaluate),
+        Operation("publication.evaluate", DESCRIPTIONS["publication.evaluate"], AssetParams, PIPELINE, ops.publication_evaluate),
+        Operation("publication.get", DESCRIPTIONS["publication.get"], AssetParams, READ, ops.publication_get),
         Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),
         Operation("notification.record", DESCRIPTIONS["notification.record"], NotificationParams, PIPELINE, ops.notification_record),
     ]

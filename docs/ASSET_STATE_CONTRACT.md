@@ -125,7 +125,7 @@ Readiness» — порядок (не тратить модель на забло
 | **Профиль при пересчёте** | как у прежней оценки: `auto` → `auto`, явный → тот же, иначе по умолчанию |
 | **`creative.get`** | `result` — только актуальная оценка; иначе `result: null`, `last_result` с `current: false`, `status` / `status_reason` (как `readiness.get`); `pipeline.creative_review.current` |
 
-### 2.2. Publication / Export Gate (будущий, только определение)
+### 2.2. Publication / Export Gate
 
 Отдельное понятие, **не** второй metadata gate. Отвечает на вопрос «можно ли
 выпускать объект в конкретный export profile». Входы: актуальный Readiness для
@@ -133,6 +133,29 @@ Readiness» — порядок (не тратить модель на забло
 Creative Review (если политика gate его требует — решение при реализации),
 решения человека. Отпечаток = отпечатки этих входов + версия политики gate +
 профиль. Результат — на профиль площадки.
+
+### 2.2a. publication-v1 (реализовано 28.09.2026, `app/publication.py`, паспорт §35ZZG)
+
+Решения при реализации — **из существующих контрактов, без новых критериев**:
+
+| Вопрос | Решение и основание |
+|---|---|
+| Результат | **по площадкам**: `platforms.{adobe, shutterstock}.status` = `approved` / `blocked` (+ `reasons` = blocker-ы Readiness площадки, `notes`), `approved_for` — список; общего бинарного флага нет |
+| Когда площадка `approved` | metadata одобрена (`auto_approved` / `approved`) и актуальна; Readiness актуален и **эта** площадка `ready`; source подтверждён **SHA256 непосредственно перед решением** (§3.5a) |
+| Creative Review | **не обязателен и не блокирует** (STOCK_READINESS §4.1: советники необязательны и «не блокируют экспорт»; §4.3: `attention` / `skip_suggested` не отклоняют, «до этого — только информация»). Актуальная рекомендация записывается как информация: `notes` `ADVISOR_ATTENTION` / `ADVISOR_SKIP_SUGGESTED`; нет актуальной оценки — `NO_CURRENT_ADVICE` |
+| Решения человека | `rejected` → отказ; одобрение metadata человеком — как `auto_approved`; отдельного решения человека о выпуске в существующих контрактах нет — не вводится |
+| Отпечаток | версия политики `publication-v1` + версии профилей площадок + SHA256 source + **отпечаток актуального Readiness** (он уже включает metadata, Vision, факты, QC) + **снимок совета** Creative (`current`, `recommendation`) — не отпечаток Creative: новая оценка с тем же советом Publication не обесценивает |
+| Применимость | metadata не одобрена / Readiness не оценён / Readiness blocked → `not_applicable` (прежнее решение — история) |
+| Устаревание | наследуется от Readiness (`UPSTREAM_STALE:readiness`); собственный отпечаток → `FINGERPRINT_CHANGED` с `changed` (`readiness_fingerprint`, `profiles`, `advice`, `source_sha256`, `policy_version`) |
+| Каскады | metadata → Readiness → Creative → Publication `stale`; смена политики gate с тем же решением → после повторного gate Readiness и Publication снова `current` **без** новых оценок |
+| Отказы (без событий) | `PUBLICATION_NOT_APPLICABLE`, `UPSTREAM_NOT_CURRENT`, `SOURCE_INVALID` (SHA256), `REJECTED` |
+| Запуск | по запросу: `publication.evaluate` или `asset.reprocess reprocess_from=publication`; не в цепочках по умолчанию, не в worker, **не для n8n** |
+| Итоговое состояние | актуальное решение с непустым `approved_for` → `publication_approved` (`approved_for` в `state`); иначе `platform_ready`; устаревшее → `stale` (`reprocess_from = publication`) |
+| `publication.get` | `result` — только актуальное решение; иначе `result: null`, `last_result` с `current: false` |
+| Upstream | Publication **ничего не меняет** в metadata, Readiness и Creative Review; событие `PUBLICATION/EVALUATED` — и есть результат |
+
+`publication_approved` ≠ `ready_for_export`: файл площадки создаёт будущий
+Export preparation — только из актуального `approved` для профиля.
 
 ### 2.3. Распространение устаревания
 
@@ -179,7 +202,7 @@ Creative Review (если политика gate его требует — реш
 | 10 | `publication_approved` | (будущее) Publication gate разрешил выпуск для профиля | — |
 | 11 | `ready_for_export` | (будущее) Export preparation создал и проверил файл площадки | нет — «terminal до изменения входов» |
 
-Состояния 10–11 пока недостижимы: Publication gate и Export не реализованы.
+Состояние 10 — с 28.09.2026 (publication-v1, §2.2a); 11 недостижимо: Export не реализован.
 
 **Как применяется приоритет.** После `rejected` и `source_invalid` обязательные
 стадии проверяются **в порядке обработки** (normalize → view → qc → vision →

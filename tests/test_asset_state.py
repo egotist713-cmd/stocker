@@ -72,7 +72,8 @@ def test_metadata_approved_without_readiness_then_platform_ready(stocker_root, s
     assert result["state"] == asset_state.PLATFORM_READY
     assert result["ready_for"] == ["adobe", "shutterstock"]
     assert "creative.review" in ops(result)  # советующая стадия ещё не выполнена
-    assert result["stages"]["publication"]["status"] == "not_implemented"
+    assert result["stages"]["publication"]["status"] == "missing"  # Publication Gate ещё не оценивал
+    assert {"operation": "publication.evaluate", "access": "pipeline"} in result["allowed_actions"]
 
 
 def test_metadata_approval_is_not_platform_readiness(stocker_root, small_images_allowed):

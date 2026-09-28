@@ -39,6 +39,8 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__metadata_gate` | re-evaluate the review gate | `{"asset_id": N}` |
 | `stocker__metadata_escalate` | send to human review | `{"asset_id": N, "reason": "..."}` |
 | `stocker__asset_reprocess` | recompute stale results of ONE asset (state `stale`, see `reprocess_from`; chain ends with stock readiness). Default is a dry run that only shows the plan; run for real (`"dry_run": false`) only after the user agreed. Never loop over many assets | `{"asset_id": N}` then `{"asset_id": N, "dry_run": false}` |
+| `stocker__publication_get` | may the asset be published, per platform (`approved_for`). Only `result` with `current: true` counts; `last_result` is an old decision. Nothing is uploaded: export does not exist yet | `{"asset_id": N}` |
+| `stocker__publication_evaluate` | decide publication per platform now (rules; Creative advice is only a note) — only when the user asks | `{"asset_id": N}` |
 | `stocker__normalize_get` | facts about the original file (format, color profile, HDR, Motion Photo, metadata present — never values) and its internal representation | `{"asset_id": N}` |
 | `stocker__normalize_run` | build the internal representation (original used as is, or a lossless internal copy for AVIF); never improves or changes the photo; unsafe cases fail with a reason | `{"asset_id": N}` |
 | `stocker__enhancement_get` | image quality: does it need enhancement (Topaz)? decision + reasons (noise / sharpness / artifacts / resolution) | `{"asset_id": N}` |

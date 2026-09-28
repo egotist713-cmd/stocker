@@ -234,6 +234,14 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
             "ready_for": [],
             "event_id": envelope["data"]["pipeline"]["stock_readiness"]["event_id"],
         },
+        "publication": {  # Readiness blocked (64×48) — Publication Gate не применим
+            "evaluated": False,
+            "current": False,
+            "status": "not_applicable",
+            "status_reason": "READINESS_BLOCKED",
+            "approved_for": [],
+            "event_id": None,
+        },
         "creative_review": {
             "reviewed": False,
             "profile": None,

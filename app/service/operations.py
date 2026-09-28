@@ -12,6 +12,7 @@ from app import enhancement_decision
 from app import ingest
 from app import metadata as metadata_service
 from app import normalization
+from app import publication
 from app import reprocess
 from app import stock_readiness
 from app import worker
@@ -113,6 +114,22 @@ def asset_reprocess(params) -> dict:
     except reprocess.ReprocessError as exc:
         raise ServiceError(exc.code, str(exc)) from exc
     return _result(params.asset_id, result["outcome"], result, ok=result["outcome"] not in (reprocess.REFUSED, reprocess.STOPPED))
+
+
+def publication_evaluate(params) -> dict:
+    """Publication Gate по площадкам; отказ (не применим / upstream не актуален / source) — без события."""
+    try:
+        result = publication.evaluate_asset(params.asset_id)
+    except publication.PublicationError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    return _result(params.asset_id, result["outcome"], {"publication": result["publication"]})
+
+
+def publication_get(params) -> dict:
+    try:
+        return _result(params.asset_id, None, publication.get(params.asset_id))
+    except publication.PublicationError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
 
 
 def metadata_build(params) -> dict:

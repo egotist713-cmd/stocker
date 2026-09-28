@@ -12,7 +12,7 @@ SHA256 до любой записи. dry_run (по умолчанию) — то�
 
 import json
 
-from app import analysis_view, asset_state, creative_review, enhancement_decision, normalization, qc, stock_readiness, worker
+from app import analysis_view, asset_state, creative_review, enhancement_decision, normalization, publication, qc, stock_readiness, worker
 from app import metadata as metadata_service
 from app import metadata_builder as mb
 from app.ai.enhancement_advisor import advisor_enabled
@@ -22,7 +22,7 @@ from app.database.db import get_asset, insert_event, transaction
 STAGE = "REPROCESS"
 
 # Стадии, которые reprocess умеет выполнять (подключены к pipeline), в порядке обработки.
-STAGES = ("normalize", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review")
+STAGES = ("normalize", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review", "publication")
 
 # Что пересчитывается от стадии: порядок pipeline (QC пропускает к Vision), а не только
 # зависимость по данным. Enhancement — советующая, от неё никто не зависит.
@@ -39,6 +39,8 @@ DOWNSTREAM = {
     # Creative Review — советник по запросу (решение 26.09): в цепочки по умолчанию не входит,
     # только явный reprocess_from=creative_review; модель вызывается осознанно.
     "creative_review": ("creative_review",),
+    # Publication Gate — по запросу (пока не в цепочках по умолчанию и не в worker).
+    "publication": ("publication",),
 }
 
 # Что должно быть актуально, чтобы стадию можно было запускать.
@@ -51,10 +53,11 @@ UPSTREAM = {
     "metadata": ("normalize", "view", "qc", "vision"),
     "readiness": ("normalize", "view", "qc", "vision", "metadata"),
     "creative_review": ("normalize", "view", "qc", "vision", "metadata", "readiness"),
+    "publication": ("normalize", "view", "qc", "vision", "metadata", "readiness"),
 }
 
 # Не подключены к pipeline — reprocess их не запускает (устаревание остаётся видно в state).
-NOT_CONNECTED = ("publication",)
+NOT_CONNECTED = ()
 
 WRITES = {
     "normalize": ["NORMALIZE/EVALUATED", "NORMALIZE/PASSED"],
@@ -65,6 +68,7 @@ WRITES = {
     "metadata": ["METADATA_AI/PASSED|FAILED", "assets.metadata_json", "METADATA/DRAFTED", "METADATA/GATED"],
     "readiness": ["READINESS/EVALUATED|FAILED"],
     "creative_review": ["CREATIVE_REVIEW/ADVISED|FAILED (модель)"],
+    "publication": ["PUBLICATION/EVALUATED"],
 }
 
 # Исходы.
@@ -151,7 +155,7 @@ def plan(asset_id: int, reprocess_from: str | None = None, through: str | None =
         stage = stages[name]
         # Станет неактуальной, если пересчитывается то, от чего она зависит по данным.
         upstream_rerun = [d for d in asset_state.DEPENDS_ON[name] if d in will_run]
-        if name in ("readiness", "creative_review") and stage["status"] == asset_state.NOT_APPLICABLE \
+        if name in ("readiness", "creative_review", "publication") and stage["status"] == asset_state.NOT_APPLICABLE \
                 and "metadata" not in will_run:
             action, why = "skip", f"not_applicable:{stage.get('reason')}"
         elif name == "readiness" and "metadata" in will_run:
@@ -201,7 +205,7 @@ def run(
         normalized_now = any(e["stage"] == "normalize" and e["outcome"] != "SKIPPED_CURRENT" for e in executed)
         if name == "view" and normalized_now:
             pass  # representation только что пересоздана — view строится заново (ниже)
-        elif name in ("readiness", "creative_review") and current[name]["status"] == asset_state.NOT_APPLICABLE:
+        elif name in ("readiness", "creative_review", "publication") and current[name]["status"] == asset_state.NOT_APPLICABLE:
             executed.append({"stage": name, "outcome": NOT_APPLICABLE})  # metadata не одобрена / Readiness blocked
             continue
         elif current[name]["status"] == asset_state.CURRENT:
@@ -289,6 +293,11 @@ def _execute(name: str, asset_id: int, view, analyzer, metadata_analyzer, creati
             return creative_review.review_asset(asset_id, advisor=creative_advisor, profile=_previous_profile(asset_id),
                                                 view=view)["outcome"]
         except creative_review.CreativeReviewError as exc:  # защита стадии сработала — без записи
+            return f"REFUSED:{exc.code}"
+    if name == "publication":
+        try:
+            return publication.evaluate_asset(asset_id)["outcome"]
+        except publication.PublicationError as exc:  # защита стадии сработала — без записи
             return f"REFUSED:{exc.code}"
     raise ReprocessError("UNKNOWN_STAGE", name)
 
