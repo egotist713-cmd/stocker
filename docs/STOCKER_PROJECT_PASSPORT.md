@@ -4041,6 +4041,23 @@ Review → Gate / human review → состояние объекта → n8n orc
 
 ---
 
+# 35ZT. 2026-09-28 — Read-only аудит pipeline после Vision
+
+Перед этапом «Metadata → Readiness → Creative Review → Gate / human review →
+состояние объекта → n8n». Код не менялся. Полностью —
+`docs/AUDIT_2026-09-28_PIPELINE.md`.
+
+- Автоматический pipeline заканчивается на `METADATA/GATED`; Readiness и
+  Creative Review — только операции сервиса, запускались вручную.
+- `assets.status` — наследие (пишет только QC); жизненный цикл де-факто —
+  `metadata.state`; единого состояния объекта нет.
+- Расхождения: два разных «ready»; потерянный source (#67, #68) показан как
+  `ok` с `metadata.approve` в `allowed_actions`; сводка не знает NORMALIZE /
+  VIEW / Enhancement; место gate в целевой цепочке; staleness не идёт вниз
+  (Vision без fingerprint, Creative без `stale`); решений человека — 0.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
