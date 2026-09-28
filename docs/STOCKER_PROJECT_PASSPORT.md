@@ -4982,6 +4982,31 @@ report-only в каждой партии.
 
 ---
 
+# 35ZZP. 2026-09-28 — Core batch 8 (#109–#121)
+
+- 11 объектов (#110, 111, 113–121): QC → Enhancement (пропуск) → Vision →
+  Metadata (`auto_approved`) → Readiness → Publication — **publication_approved**,
+  adobe и shutterstock `approved`; Creative — не запускался / `NO_CURRENT_ADVICE`;
+  по 9 событий.
+- 2 объекта **human_review** (decision не изменился; Readiness / Publication /
+  Creative — `not_applicable`; по 6 событий): #109 — `VALIDATION_ERRORS:
+  BRAND_IN_TEXT`, `TRADEMARK: Monarch`, `TEXT_BRAND_OR_LEGAL: Monarch` (reason
+  тот же); #112 — было `VALIDATION_ERRORS: DESCRIPTION_TOO_LONG`, стало
+  `LEGAL_CLAIM` для keyword `certification` (reason изменился от нового Metadata
+  результата). У #112 в `text_visible` «АТРИОН» при пустом `brands` —
+  descriptive; объект на проверке по другой причине (как #80 до партии 5).
+- Агрегат: publication_approved 11, human_review 2, blocked / stale /
+  source_invalid 0; approved Adobe 11, Shutterstock 11; `ADVISOR_ATTENTION` 0;
+  событий 111 (11×9 + 2×6); изменений decision gate — 0. Повтор `from=qc` и
+  `from=publication` — `NOTHING_TO_DO` ×13, 0 событий. Инвариант — 0 нарушений;
+  `check_consistency` OK.
+- Brand watch: 0 новых случаев. У #114 (publication_approved) — многословная
+  надпись ЗАГЛАВНЫМИ «КОМБИК ПРЕМИУМ ДЛЯ» (descriptive; под brand watch не
+  подпадает).
+- Каталог: publication_approved 94, human_review 23, stale 9, source_invalid 3.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
