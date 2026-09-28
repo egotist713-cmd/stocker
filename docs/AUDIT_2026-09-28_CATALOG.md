@@ -8,6 +8,8 @@
 
 ## 1. Итоговые состояния (129 объектов)
 
+`publication_approved` = **одобрено Publication Gate для публикации на платформе** (по площадкам, `approved_for`), а **не** «уже опубликовано»: фактическая загрузка на Adobe Stock / Shutterstock — будущий отдельный этап (сначала Export preparation → `ready_for_export`).
+
 | Состояние | Объектов |
 |---|---|
 | `publication_approved` | **103** |

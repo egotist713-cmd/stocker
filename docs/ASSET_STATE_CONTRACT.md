@@ -154,6 +154,8 @@ Creative Review (если политика gate его требует — реш
 | `publication.get` | `result` — только актуальное решение; иначе `result: null`, `last_result` с `current: false` |
 | Upstream | Publication **ничего не меняет** в metadata, Readiness и Creative Review; событие `PUBLICATION/EVALUATED` — и есть результат |
 
+`publication_approved` = **одобрено Publication Gate для публикации на платформе** (по площадкам, `approved_for`), а **не** «уже опубликовано»: фактическая загрузка на Adobe Stock / Shutterstock — будущий отдельный этап (сначала Export preparation → `ready_for_export`).
+
 `publication_approved` ≠ `ready_for_export`: файл площадки создаёт будущий
 Export preparation — только из актуального `approved` для профиля.
 
@@ -199,7 +201,7 @@ Export preparation — только из актуального `approved` дл�
 | 7 | `human_review` | metadata gate требует человека (`metadata.state = human_review`), всё выше актуально | нет — решение человека |
 | 8 | `metadata_approved` | metadata одобрена (`auto_approved` / `approved`), Readiness ещё не оценён | нет — `readiness.evaluate` |
 | 9 | `platform_ready` | актуальный Readiness: `ready` хотя бы для одного профиля (`ready_for`) | нет — дальше Publication gate |
-| 10 | `publication_approved` | (будущее) Publication gate разрешил выпуск для профиля | — |
+| 10 | `publication_approved` | одобрено Publication Gate для публикации на платформе (`approved_for`); **не** «опубликовано» | нет — дальше Export preparation |
 | 11 | `ready_for_export` | (будущее) Export preparation создал и проверил файл площадки | нет — «terminal до изменения входов» |
 
 Состояние 10 — с 28.09.2026 (publication-v1, §2.2a); 11 недостижимо: Export не реализован.
