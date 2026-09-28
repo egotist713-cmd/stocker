@@ -192,7 +192,7 @@ def test_normalizer_change_makes_everything_downstream_stale(stocker_root, monke
     stages = result["stages"]
     assert stages["normalize"]["reason"] == "FINGERPRINT_CHANGED"
     for name in ("view", "qc", "vision", "metadata", "enhancement", "creative_review"):
-        if stages[name]["status"] != "missing":
+        if stages[name]["status"] not in ("missing", "not_applicable"):
             assert stages[name]["status"] == "stale", name
 
 

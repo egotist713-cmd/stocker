@@ -241,6 +241,7 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
             "commercial_potential": None,
             "recommendation": None,
             "event_id": None,
+            "current": False,  # Readiness blocked (64×48) — Creative не применим
         },
     }
 

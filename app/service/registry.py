@@ -58,12 +58,12 @@ class ProcessParams(AssetParams):
     force: bool = False
 
 
-REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata", "readiness"]
+REPROCESS_STAGES = Literal["normalize", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review"]
 
 
 class ReprocessParams(AssetParams):
     reprocess_from: REPROCESS_STAGES | None = None
-    through: Literal["normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness"] | None = None
+    through: Literal["normalize", "view", "qc", "enhancement", "vision", "metadata", "readiness", "creative_review"] | None = None
     dry_run: bool = True
 
 

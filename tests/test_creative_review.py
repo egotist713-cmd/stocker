@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from PIL import ImageCms
 from pydantic import ValidationError
 
 from app import creative_profiles as profiles
@@ -13,7 +14,30 @@ from app.service import dispatch
 from app.service.mcp_server import tools
 
 from tests.conftest import OfflineCreativeAdvisor, events, make_image
-from tests.test_service import _vision_asset
+from tests.test_service import VISION
+from tests.test_service import _vision_asset as _base_vision_asset
+
+SRGB_ICC = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+
+@pytest.fixture(autouse=True)
+def small_images_allowed(monkeypatch):
+    import dataclasses
+
+    from app import readiness as rd
+
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+
+
+def _vision_asset(root, name="photo.jpg", seed=0, vision=VISION):
+    """Объект, для которого Creative Review применим: metadata одобрена, Readiness актуален и готов."""
+    from app import metadata as metadata_service
+    from app import stock_readiness
+
+    asset_id = _base_vision_asset(root, name=name, seed=seed, vision=vision, icc_profile=SRGB_ICC)
+    metadata_service.build(asset_id)
+    stock_readiness.evaluate_asset(asset_id)
+    return asset_id
 
 N8N = "workflow:n8n"
 
@@ -173,9 +197,13 @@ def test_failure_records_raw_output(stocker_root):
 
 def test_changed_source_is_not_reviewed(stocker_root):
     asset_id = _vision_asset(stocker_root)
-    make_image(stocker_root, seed=7)
+    make_image(stocker_root, seed=7, icc_profile=SRGB_ICC)
+    before = events(stocker_root, asset_id)
 
-    assert cr.review_asset(asset_id)["outcome"] == cr.REVIEW_FAILED
+    with pytest.raises(cr.CreativeReviewError) as error:
+        cr.review_asset(asset_id, OfflineCreativeAdvisor())
+    assert error.value.code == "UPSTREAM_NOT_CURRENT"  # upstream невалиден — без события
+    assert events(stocker_root, asset_id) == before
 
 
 def test_personal_document_is_not_sent_to_model(stocker_root):

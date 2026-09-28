@@ -79,7 +79,7 @@ def test_dry_run_shows_plan_and_writes_nothing(stocker_root):
     assert steps["qc"]["why"] == "NO_FINGERPRINT" and steps["vision"]["why"] == "NO_FINGERPRINT"
     assert steps["metadata"]["why"] == "UPSTREAM_STALE:vision"
     assert "assets.ai_result" in steps["vision"]["writes"] and steps["enhancement"]["writes"] == []
-    assert {n["stage"] for n in result["not_run"]} == {"creative_review", "publication"}
+    assert {n["stage"] for n in result["not_run"]} == {"publication"}
     assert events(stocker_root, asset_id) == before
 
 
@@ -244,7 +244,7 @@ def test_human_metadata_is_never_overwritten(stocker_root, human):
 
 def test_not_connected_stage_is_refused(stocker_root):
     asset_id = processed(stocker_root)
-    result = dispatch("asset.reprocess", {"asset_id": asset_id, "reprocess_from": "creative_review"})
+    result = dispatch("asset.reprocess", {"asset_id": asset_id, "reprocess_from": "publication"})
     assert result["ok"] is False and result["error"]["code"] == "INVALID_PARAMS"
 
 

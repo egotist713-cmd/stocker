@@ -130,9 +130,36 @@ def _refuse_personal_document(asset_id: int, vision: AIAnalysis) -> None:
 
 
 def get(asset_id: int) -> dict:
+    """Текущая оценка — в result, только если она актуальна; иначе result = None и last_result (история)."""
+    from app import asset_state
+
     _require(asset_id)
     event = _last_event(asset_id, "ADVISED")
-    return {**summary(event), "result": _stored(event)}
+    stage = asset_state.get(asset_id)["stages"]["creative_review"]
+    stored = _stored(event)
+    current = stage["status"] == asset_state.CURRENT
+    base = {**summary(event), "current": current, "status": stage["status"], "status_reason": stage.get("reason")}
+    if stored is None or current:
+        return {**base, "result": stored}
+    return {**base, "result": None, "last_result": {**stored, "current": False}}
+
+
+def _require_upstream(asset_id: int) -> None:
+    """
+    Creative Review пишется только при актуальном upstream (ASSET_STATE_CONTRACT §2.1b):
+    metadata одобрена и актуальна, Readiness актуален и готов хотя бы для одной площадки.
+    Отказ — без события.
+    """
+    from app import asset_state
+
+    stages = asset_state.get(asset_id)["stages"]
+    creative = stages["creative_review"]
+    if creative["status"] == asset_state.NOT_APPLICABLE:
+        raise CreativeReviewError("CREATIVE_NOT_APPLICABLE", f"Creative Review is not applicable: {creative['reason']}")
+    for name in ("normalize", "view", "qc", "vision", "metadata", "readiness"):
+        if stages[name]["status"] != asset_state.CURRENT:
+            raise CreativeReviewError("UPSTREAM_NOT_CURRENT",
+                                      f"Upstream '{name}' is {stages[name]['status']} ({stages[name].get('reason')})")
 
 
 def _write(asset_id: int, status: str, message: dict) -> None:
@@ -144,6 +171,7 @@ def review_asset(asset_id: int, advisor: CreativeAdvisor | None = None, profile:
     """Оценка моделью по профилю. Идемпотентно: тот же файл, Vision, шаблон и профиль — без нового вызова."""
     asset, vision = _require(asset_id)
     _refuse_personal_document(asset_id, vision)
+    _require_upstream(asset_id)
     selection = {"mode": "explicit" if profile else "default"}
     if advisor is None:
         try:

@@ -102,6 +102,29 @@ Readiness» — порядок (не тратить модель на забло
 результаты без отпечатка остаются `STALE`; история задним числом не
 переписывается.
 
+### 2.1b. Creative Review: данные, применимость, устаревание (28.09.2026, паспорт §35ZZD)
+
+**Принцип:** metadata current + approved → Readiness current (готов хотя бы для
+одной площадки) → Creative Review. Creative — **советник**: не меняет metadata,
+одобрение, Readiness и решение о выпуске; запускается **по запросу**
+(`creative.review` или `asset.reprocess reprocess_from=creative_review`), в
+цепочки по умолчанию и в worker **не** входит (решение 26.09: советник, а не
+стадия pipeline).
+
+| Что | Правило |
+|---|---|
+| **Отпечаток (данные)** | SHA256 source · отпечаток AnalysisView (overview — что видит модель) · результат Vision `ai_result` целиком (используются subject / title / description, keywords — для выбора профиля; весь — консервативно) · шаблон + профиль (`prompt_version_for(profile)`). **Не входят:** metadata, Readiness — это не данные оценки |
+| **Применимость** | metadata одобрена и актуальна; Readiness актуален и `ready_for` не пуст. Иначе `not_applicable` (`METADATA_NOT_APPROVED`, `READINESS_NOT_EVALUATED`, `READINESS_BLOCKED`); сохранённая оценка — история (`has_result`) |
+| **Изменение metadata** | Readiness → `stale` → Creative `stale` (`UPSTREAM_STALE:readiness`), запись запрещена. После пересчёта Readiness: готов → Creative снова `current` **без вызова модели** (её данные не менялись); не готов / metadata не одобрена → `not_applicable` |
+| **Изменение Readiness** | то же: устаревание по наследованию, применимость — по новому результату |
+| **human_review** | `not_applicable` (`METADATA_NOT_APPROVED`); `creative.review` → `CREATIVE_NOT_APPLICABLE`, без события |
+| **Readiness blocked** | `not_applicable` (`READINESS_BLOCKED`) — модель не тратится на то, что нельзя продать |
+| **Изменение Vision / view / шаблона** | собственный отпечаток не совпал → `FINGERPRINT_CHANGED` / `PROMPT_CHANGED` → нужна новая оценка (по запросу) |
+| **Запрет записи при stale upstream** | `creative.review` и reprocess проверяют normalize / view / qc / vision / metadata / readiness **перед записью**; неактуально → `UPSTREAM_NOT_CURRENT` без события; устарело между планом и записью → `STOPPED` |
+| **dry-run / no-op** | план `creative_review run / skip`; повтор при тех же входах — `UNCHANGED` / `NOTHING_TO_DO`, ноль событий |
+| **Профиль при пересчёте** | как у прежней оценки: `auto` → `auto`, явный → тот же, иначе по умолчанию |
+| **`creative.get`** | `result` — только актуальная оценка; иначе `result: null`, `last_result` с `current: false`, `status` / `status_reason` (как `readiness.get`); `pipeline.creative_review.current` |
+
 ### 2.2. Publication / Export Gate (будущий, только определение)
 
 Отдельное понятие, **не** второй metadata gate. Отвечает на вопрос «можно ли

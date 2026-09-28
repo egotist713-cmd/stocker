@@ -44,8 +44,8 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 | `stocker__enhancement_get` | image quality: does it need enhancement (Topaz)? decision + reasons (noise / sharpness / artifacts / resolution) | `{"asset_id": N}` |
 | `stocker__enhancement_assess` | measure image quality now (rules; nothing is enhanced); needs `normalize_run` first — otherwise fails with NORMALIZE_NOT_PASSED | `{"asset_id": N}` |
 | `stocker__enhancement_advise` | model recommendation only if the rules could not decide (`disputed`); otherwise returns NOT_DISPUTED | `{"asset_id": N}` |
-| `stocker__creative_get` | commercial value: commercial_score, recommendation (proceed / attention / skip_suggested) and why | `{"asset_id": N}` |
-| `stocker__creative_review` | review commercial value now (model; recommendation only, never blocks export) | `{"asset_id": N}` or `{"asset_id": N, "profile": "auto"}` (auto picks industrial / architecture / nature from the photo) |
+| `stocker__creative_get` | commercial value: commercial_score, recommendation (proceed / attention / skip_suggested) and why. Only `result` with `current: true` is valid; `last_result` is an old review | `{"asset_id": N}` |
+| `stocker__creative_review` | review commercial value now (model; recommendation only, never blocks export). Only for assets ready for at least one platform (state `platform_ready`); otherwise it is refused | `{"asset_id": N}` or `{"asset_id": N, "profile": "auto"}` (auto picks industrial / architecture / nature from the photo) |
 | `stocker__readiness_get` | is the asset ready for Adobe Stock / Shutterstock NOW: top-level `ready_for`, `stale`, `result` (checks, export plan). If `stale` is true, `result` is null and `last_result` is an OLD, no longer valid evaluation — never report its `ready_for` as current | `{"asset_id": N}` |
 | `stocker__readiness_evaluate` | check the asset against Adobe Stock / Shutterstock rules now (no upload) | `{"asset_id": N}` |
 

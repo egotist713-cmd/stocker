@@ -58,7 +58,8 @@ DEPENDS_ON = {
     "vision": ("view",),
     "metadata": ("vision",),
     "readiness": ("normalize", "qc", "metadata"),
-    "creative_review": ("view", "vision"),
+    # Данные: view (overview) и Vision; применимость и порядок — после актуального Readiness.
+    "creative_review": ("view", "vision", "readiness"),
 }
 
 # Текущая идентичность Vision по провайдеру (модель, промпт, схема, кодирование, параметры).
@@ -276,6 +277,22 @@ def _creative(asset: dict, events: list[dict]) -> dict:
     return _stage(CURRENT, current_fp=current)
 
 
+def _creative_applicability(creative: dict, readiness: dict) -> dict:
+    """
+    Creative Review — только для объектов, которые технически можно продавать (STOCK_READINESS
+    §4.3): metadata одобрена и актуальный Readiness готов хотя бы для одной площадки.
+    Иначе не применим; сохранённая оценка остаётся историей (has_result).
+    """
+    has_result = creative["status"] != MISSING
+    if readiness["status"] == NOT_APPLICABLE:
+        return _stage(NOT_APPLICABLE, "METADATA_NOT_APPROVED", has_result=has_result)
+    if readiness["status"] == MISSING:
+        return _stage(NOT_APPLICABLE, "READINESS_NOT_EVALUATED", has_result=has_result)
+    if readiness["status"] == CURRENT and readiness.get("reason") == "READINESS_BLOCKED":
+        return _stage(NOT_APPLICABLE, "READINESS_BLOCKED", has_result=has_result)
+    return creative  # Readiness готов (или устарел — тогда устареет и Creative, по наследованию)
+
+
 # --- Наследование устаревания (§2.3) -------------------------------------------------------
 
 def _effective(stages: dict) -> dict:
@@ -314,6 +331,7 @@ def derive(asset: dict, events: list[dict], verify_source: bool = False) -> dict
     if not source_ok:  # без source ничего ниже не может быть актуальным
         stages["normalize"] = {**stages["normalize"], "status": S_STALE, "reason": "UPSTREAM_STALE:source"} \
             if stages["normalize"]["status"] != MISSING else stages["normalize"]
+    stages["creative_review"] = _creative_applicability(stages["creative_review"], stages["readiness"])
     stages = _effective(stages)
 
     state, reasons, reprocess_from = _state(stages, metadata)

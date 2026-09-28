@@ -115,7 +115,8 @@ def asset_view(asset_id: int) -> dict | None:
     pipeline["normalize"] = normalization.summary_from_events(asset, events)
     pipeline["enhancement"] = enhancement_decision.summary_from_events(asset, events)
     pipeline["stock_readiness"] = stock_readiness.summary(asset, events, metadata)
-    pipeline["creative_review"] = creative_review.summary_from_events(events)
+    pipeline["creative_review"] = {**creative_review.summary_from_events(events),
+                                   "current": derived["stages"]["creative_review"]["status"] == asset_state.CURRENT}
 
     return {
         "id": asset["id"],
