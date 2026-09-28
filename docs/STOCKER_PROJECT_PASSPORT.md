@@ -4058,6 +4058,84 @@ Review → Gate / human review → состояние объекта → n8n orc
 
 ---
 
+# 35ZU. 2026-09-28 — Unified Asset State и Staleness: контракт и регрессии
+
+### Решения пользователя
+
+1. Metadata Gate остаётся внутри Metadata (корректность, privacy / content
+   risks, достаточность, human review **для metadata**). Publication / Export
+   Gate — отдельное понятие после Metadata → Readiness → Creative Review.
+2. Не использовать одно `ready`: metadata approval, platform readiness и
+   ready for export — разные понятия.
+3. Unified Asset State — производное от отдельных результатов стадий, а не
+   один общий статус.
+4. Staleness: у каждого зависимого результата — отпечаток входов;
+   `current != stored → STALE`. Существующие stale-данные не лечить вручную —
+   сначала общий механизм, затем контролируемый пересчёт.
+5. Source integrity: без source объект не готов независимо от
+   `metadata.state`; #67 / #68 — регрессии.
+6. Два интеграционных теста human review (approve / reject). Production
+   pipeline не переписывать; n8n к Readiness / Creative не подключать; AVIF /
+   HEIC не расширять; Export не реализовывать.
+
+### Сделано
+
+- `docs/ASSET_STATE_CONTRACT.md` (проект): граф зависимостей и что каждая
+  стадия реально использует (Creative Review — view overview + Vision
+  subject / title / description / keywords + шаблон / профиль; от metadata и
+  Readiness **не** зависит); правила устаревания и наследования; 11 состояний
+  с приоритетом и переходами; `blocked` / `error` / `human_review`; три
+  «готово»; source integrity; `NORMALIZE_FAILED` / `VIEW_FAILED`;
+  `problems` / `allowed_actions`; миграция для 129 объектов; порядок
+  подключения.
+- `app/asset_state.py` — read-model (ничего не пишет): статусы стадий
+  (`current` / `stale` / `missing` / `failed` / `not_applicable` /
+  `not_implemented`), наследование устаревания по графу, итоговое состояние,
+  `reprocess_from`, `problems`, `allowed_actions`. Source: существование и
+  размер при чтении, SHA256 — при `verify_source=True`, отрицательные
+  свидетельства (`SOURCE/INVALID`, `NORMALIZE/FAILED SOURCE_*`) действуют до
+  положительных. **К `asset.get` / `review.queue` / n8n не подключено.**
+- `tests/test_asset_state.py` (25): metadata_approved → platform_ready;
+  metadata approval ≠ platform readiness (`COLOR_SPACE_UNDECLARED`);
+  read-only; #67 / #68 (auto_approved и human_review без файла — нет
+  `metadata.approve`); изменение source по размеру и по SHA256; отрицательное
+  свидетельство; `NORMALIZE_FAILED`, `VIEW_FAILED`, `QC_FAILED`,
+  `VISION_FAILED`; устаревание от normalizer и от кода views; наследие QC и
+  Vision без отпечатка; смена промпта / неизвестный провайдер; metadata на
+  старом Vision; Readiness после правки metadata; старый Readiness при
+  human_review (#47); устаревший Creative Review — советующий; **human_review →
+  approve** и **human_review → reject** через сервис (агенту approve —
+  `FORBIDDEN`; rejected — terminal даже без файла); partial metadata.
+  Мутации «без проверки source» (5 падений) и «наследие Vision актуально»
+  (1 падение) ловятся.
+
+### Проверка (рабочая БД, только чтение)
+
+| Итоговое состояние | Объектов |
+|---|---|
+| `stale` (`reprocess_from = qc`) | 126 |
+| `source_invalid` (#2 changed, #67 / #68 missing) | 3 |
+
+Стадии: normalize / view — актуальны (126); QC — 129 без отпечатка; Vision —
+126 без отпечатка (все до AnalysisView, включая 18 Display P3); metadata —
+собственный вход актуален (128), но устарела по наследству от Vision;
+Readiness — 109 устарели по наследству, 20 `not_applicable` (в т.ч. #47);
+Creative Review — 126 `FINGERPRINT_CHANGED`; Enhancement — актуален (126).
+`pytest`: 610 passed, 5 skipped.
+
+### Статус
+
+🟡 Контракт — на согласовании; read-model и регрессии — зелёные.
+
+### Дальше
+
+После согласования: подключить `state` к `asset.get` / `review.queue`
+(`pipeline.ready` → `metadata_approved`), явные отпечатки в событиях QC /
+Vision, контролируемый `asset.reprocess`; затем Readiness → Creative Review →
+Publication gate и n8n.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
