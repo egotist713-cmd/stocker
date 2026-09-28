@@ -283,3 +283,19 @@ class _db_update:
 
     def __exit__(self, *exc):
         self.connection.close()
+
+
+def test_on_request_stages_skip_not_applicable_instead_of_refusing(stocker_root):
+    # human_review: Readiness не применим — это не «устаревший upstream»; повтор — no-op без событий.
+    asset_id = ready_asset(stocker_root)
+    dispatch("metadata.escalate", {"asset_id": asset_id, "reason": "check"})
+    before = events(stocker_root, asset_id)
+    for start in ("publication", "creative_review"):
+        result = reprocess.run(asset_id, reprocess_from=start, dry_run=False)
+        assert result["refused"] is None and result["outcome"] == reprocess.NOTHING_TO_DO
+        assert [(e["stage"], e["outcome"]) for e in result["executed"]] == [(start, reprocess.NOT_APPLICABLE)]
+    assert events(stocker_root, asset_id) == before
+    # А устаревший Readiness по-прежнему — отказ.
+    other = ready_asset(stocker_root, seed=3)
+    dispatch("metadata.edit", {"asset_id": other, "add_keywords": ["factory floor"]})
+    assert reprocess.run(other, reprocess_from="publication", dry_run=False)["refused"]["code"] == "UPSTREAM_NOT_CURRENT"

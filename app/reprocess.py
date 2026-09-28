@@ -140,7 +140,11 @@ def plan(asset_id: int, reprocess_from: str | None = None, through: str | None =
     if result["refused"]:
         return result
 
-    bad = [u for u in UPSTREAM[start] if stages[u]["status"] != asset_state.CURRENT]
+    # Неприменимый Readiness (metadata не одобрена) — не «устаревший upstream»: для советника и
+    # Publication это неприменимость (шаг skip ниже), а не отказ UPSTREAM_NOT_CURRENT.
+    ok = (asset_state.CURRENT, asset_state.NOT_APPLICABLE) if start in ("creative_review", "publication") else (asset_state.CURRENT,)
+    bad = [u for u in UPSTREAM[start]
+           if stages[u]["status"] not in (ok if u == "readiness" else (asset_state.CURRENT,))]
     if bad:
         u = bad[0]
         result["refused"] = _refusal("UPSTREAM_NOT_CURRENT", f"Upstream '{u}' is {stages[u]['status']}; reprocess from it first",

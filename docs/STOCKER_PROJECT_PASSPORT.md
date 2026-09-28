@@ -4732,6 +4732,53 @@ Publication и пересчёт; смена Readiness по площадке; с�
 
 ---
 
+# 35ZZH. 2026-09-28 — Production-like batch core pipeline (13 объектов, с QC до Publication)
+
+### Решение пользователя
+
+Publication Gate принят; n8n не подключать. Небольшой batch 10–15 stale
+объектов с QC через весь core pipeline (source → normalize / view → QC →
+Enhancement → Vision → Metadata → Readiness → Publication), Creative Review не
+запускать; обязательно #86 (зафиксировать фактический результат gate-v1.3);
+before / after по каждому объекту, агрегат, инвариант `publication_approved`,
+повтор — 0 событий. Остальные stale не трогать.
+
+### Выполнение (рабочая БД; копия до — в scratchpad; LM Studio — модель загружена по первому запросу)
+
+Состав: #86; #46 АТРИОН, #48 РЕКАНТА, #108 JBL / IEK (однословные бренды);
+#9, #33, #34 (P3); #43, #44, #47 (metadata human_review); #15, #16, #17 (sRGB).
+Для каждого: `asset.reprocess` (по умолчанию, с QC), затем Publication по запросу.
+
+| Объекты | Цепочка | Итог |
+|---|---|---|
+| 9 (#46, 48, 108, 9, 33, 34, 15, 16, 17) | QC → Enhancement (актуален, пропуск) → Vision → Metadata (`auto_approved`, gate-v1.3) → Readiness `EVALUATED` → Publication `EVALUATED` | **publication_approved**: adobe и shutterstock `approved`, notes `NO_CURRENT_ADVICE` (Creative не запускался — устарел), +9 событий |
+| #86 | QC → Vision → Metadata → Readiness `SKIPPED_NOT_APPLICABLE` | **human_review**: gate-v1.3 — `TEXT_BRAND_OR_LEGAL: STMicroelectronics` (brands пуст; было `auto_approved` при v1.2), +6 событий |
+| #43, #47 / #44 | то же | **human_review**: `PEOPLE_RECOGNIZABLE` (child / people), +6 событий |
+
+- Агрегат: publication_approved 9, human_review 4, blocked 0, stale 0,
+  source_invalid 0; Publication approved: Adobe 9, Shutterstock 9;
+  `ADVISOR_ATTENTION` 0 (Creative не актуален — `NO_CURRENT_ADVICE` у 9);
+  событий 105. Изменение решения gate — только #86.
+- Однословные бренды (ограничение gate-v1.3): новый Vision снова оставил
+  `brands` пустым — #46 «АТРИОН», #48 «РЕКАНТА» → `auto_approved`; у #108 в этот
+  раз `text_visible` пуст (раньше JBL / IEK) — недетерминированность Vision.
+- **Найдено и исправлено:** повтор `reprocess_from=publication` для 4
+  human_review возвращал отказ `UPSTREAM_NOT_CURRENT` (неверная причина:
+  Readiness не устарел, а не применим). Для стадий по запросу (Creative,
+  Publication) неприменимый Readiness — теперь шаг `SKIPPED_NOT_APPLICABLE`,
+  `NOTHING_TO_DO` без событий; устаревший Readiness — по-прежнему отказ. Тест
+  добавлен.
+- Повтор batch: `from=qc` — `NOTHING_TO_DO` ×13; `from=publication` —
+  `NOTHING_TO_DO` ×13; 0 событий.
+- Инвариант по каталогу (`publication_approved` только при актуальном
+  Publication с непустым `approved_for`): нарушений 0.
+- Каталог: publication_approved 18, human_review 8, stale 100 (с QC),
+  source_invalid 3. `check_consistency` OK.
+
+`pytest`: 729 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
