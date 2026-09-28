@@ -377,6 +377,37 @@ ingest → processing → (stale ↔ пересчёт) → human_review ──ap
   если сервер их отдаёт**; prompt version / hash; schema hash; request params;
   image encoding; view fingerprint. Массовый пересчёт из-за этого не нужен.
 
+#### Что фактически отдаёт LM Studio (исследовано 28.09.2026, паспорт §35ZZA)
+
+| Поле execution identity | Источник | Есть? |
+|---|---|---|
+| provider | конфигурация Stocker (`lmstudio`) | ✅ |
+| model name / key | ответ `/v1/chat/completions` `model`; `/api/v1/models` `key` | ✅ `qwen3-vl-8b-instruct` |
+| publisher, display_name, architecture, params | `/api/v1/models` | ✅ `unsloth`, `qwen3vl`, `8B` |
+| quantization | `/api/v1/models` (`name`, `bits_per_weight`); `/api/v0` `quantization`; ответ `/api/v0` `model_info.quant` | ✅ `Q5_K_M`, 5 bit |
+| format | `/api/v1/models` `format`; `/api/v0` `compatibility_type` | ✅ `gguf` |
+| size_bytes | `/api/v1/models` | ✅ 7 010 144 672 (= основной GGUF + mmproj — см. ниже) |
+| параметры загрузки экземпляра | `/api/v1/models` `loaded_instances[].config` (context_length, batch sizes, flash_attention, parallel, speculative…) | ✅ |
+| **runtime (движок) и его версия** | только ответ `/api/v0/chat/completions` `runtime` | ✅ `llama.cpp-win-x86_64-nvidia-cuda12-avx2` 2.46.0 |
+| model revision / version | — | ❌ **unavailable** |
+| путь / имя загруженного файла | — (API не отдаёт) | ❌ **unavailable** |
+| **weights hash** | — | ❌ **unavailable** |
+| стабильный идентификатор экземпляра | `loaded_instances[].id` = тот же key; времени загрузки нет | ❌ (нет отдельного id) |
+
+- **Ловушка:** `system_fingerprint` в ответе `/v1` равен имени модели — это **не**
+  идентичность весов; использовать как таковую нельзя.
+- Vision-модель — **два файла**: основной GGUF и проектор изображений `mmproj`.
+  `size_bytes` API = сумма их размеров (проверено: 5 851 114 336 + 1 159 030 336).
+  Файлы лежат на этой же машине (`F:\ai\models\unsloth\Qwen3-VL-8B-Instruct-GGUF\`),
+  но **API не сообщает, какие файлы загружены**: связь key → файлы — вывод по
+  папке и размеру, а не данные LM Studio. Хеш этих файлов Stocker мог бы
+  посчитать сам, но это был бы хеш «вероятно загруженных» файлов — решение
+  отдельное, сейчас не принимается.
+- Итог: execution identity может включать только поля с ✅; отсутствие revision
+  и hash весов остаётся **явным ограничением**. `size_bytes` + quantization +
+  runtime version ловят многие, но не все замены весов.
+
+
 ## 7. Совместимость и миграция для существующих 129 объектов
 
 | Что | Правило |

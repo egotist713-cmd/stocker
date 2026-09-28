@@ -4387,6 +4387,55 @@ n8n — нет; Readiness / Creative / Publication не менять.
 
 ---
 
+# 35ZZA. 2026-09-28 — Инвариант #8 (Readiness) и execution identity Vision: исследование
+
+### Решение пользователя
+
+Этап принят. Перед Readiness — две проверки, без массового пересчёта и без
+переделки Readiness: (1) у #8 после `human_review` не должно быть действующего
+Readiness, который downstream примет за актуальный; (2) что LM Studio реально
+отдаёт для execution identity Vision — без выдумывания, `weights_hash
+unavailable`, если его нет. Для #13 показать план, а не только стадии.
+
+### 1. Инвариант #8 — факты из БД (только чтение, 0 событий)
+
+| | Значение |
+|---|---|
+| metadata | `human_review`, построена на последнем `AI/PASSED` (2732) — **current** |
+| gate | `human_review` (gate-v1.2): TRADEMARK «Вектор Технологий, P220», TEXT_BRAND_OR_LEGAL ×2 |
+| последнее `READINESS/EVALUATED` | id 2541 (27.09, readiness-v2), `ready_for` [adobe, shutterstock]; отпечаток ≠ текущему |
+| asset state | `human_review`; Readiness `not_applicable` (METADATA_NOT_APPROVED); `ready_for` [] |
+| `asset.get` → `pipeline.stock_readiness` | `stale: true`, площадки `stale`, `ready_for` [] |
+| `readiness.get` | верхний уровень: `stale: true`, `ready_for` [] |
+| `asset.list state=platform_ready` | #8 нет |
+| `review.queue` | #8 в очереди человека; `platform_ready` 0 |
+| `readiness.evaluate` сейчас | `NOT_EVALUATED` (metadata не одобрена), события нет |
+
+Инвариант выполняется на всех уровнях, **с одной оговоркой**: `readiness.get`
+возвращает поле `result` — сохранённый старый результат **как есть**, внутри
+которого `ready_for: [adobe, shutterstock]` и `export_plan`. Верхний уровень
+ответа честно говорит `stale`, но потребитель, читающий `result.ready_for`
+напрямую, получит старое «готов». Readiness не менялся (по решению); это —
+первый пункт для этапа Readiness.
+
+План #13 до batch (dry-run по копии БД до batch): normalize `skip` (current),
+view `skip` (current), qc `run` (NO_FINGERPRINT), enhancement `skip`
+(current), vision `run` (NO_FINGERPRINT), metadata `run`
+(UPSTREAM_STALE:vision) — Normalize пропущен потому, что был актуален.
+
+### 2. Execution identity Vision — что фактически отдаёт LM Studio
+
+Таблица — `ASSET_STATE_CONTRACT.md` §6a. Кратко: есть key, publisher,
+architecture, params, quantization (Q5_K_M, 5 bit), format (gguf), size_bytes,
+конфигурация загруженного экземпляра и — только в ответе `/api/v0` — runtime
+(`llama.cpp-win-x86_64-nvidia-cuda12-avx2` 2.46.0). **Нет:** revision, путь /
+имя файла, hash весов, отдельного id экземпляра. `system_fingerprint` в `/v1` =
+имя модели (не идентичность). Vision-модель = основной GGUF + `mmproj`
+(`size_bytes` = сумма размеров; файлы на этой машине в `F:\ai\models`; API не
+говорит, какие загружены). Ничего не подключено к reprocess.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
