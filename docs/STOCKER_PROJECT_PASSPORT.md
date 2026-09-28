@@ -4679,6 +4679,59 @@ gate-v1.3 принят; словарь брендов и усложнение э
 
 ---
 
+# 35ZZG. 2026-09-28 — Publication Gate publication-v1
+
+### Решение пользователя
+
+Переходим к Publication Gate тем же порядком: контракт → зависимости /
+invalidation → regression + mutation → малый batch на 9 `platform_ready`. Не
+придумывать критерии (`creative score >= X`); отдельный детерминированный
+слой; сохранить семантику по площадкам; Creative — вход, только если он
+обязателен по существующему контракту; без бессмысленных каскадов; upstream не
+менять; 113 stale, 3 source_invalid и n8n — не трогать.
+
+### Контракт (`ASSET_STATE_CONTRACT.md` §2.2a) — из существующих текстов
+
+- Решение **по площадкам** (`approved` / `blocked` + причины Readiness, `approved_for`).
+- `approved` = metadata одобрена и актуальна + Readiness актуален и площадка
+  `ready` + source SHA256 непосредственно перед решением.
+- Creative Review **не обязателен и не блокирует** (STOCK_READINESS §4.1, §4.3):
+  рекомендация — `notes` (`ADVISOR_ATTENTION`, `ADVISOR_SKIP_SUGGESTED`,
+  `NO_CURRENT_ADVICE`). В отпечатке — **снимок совета**, а не отпечаток Creative.
+- Отпечаток: `publication-v1` + профили + SHA256 + отпечаток Readiness + совет.
+- Состояние `publication_approved`; по запросу (`publication.evaluate`,
+  `asset.reprocess reprocess_from=publication`); не в worker и не для n8n.
+
+### Тесты (`tests/test_publication.py`, 16)
+
+Решение по площадкам (одна `approved`, другая `blocked RESOLUTION_TOO_LOW`);
+совет — информация; не применим (human_review, Readiness blocked); отказы без
+событий (source тем же размером — SHA256, rejected, upstream); повтор —
+`UNCHANGED`; upstream не меняется; каскад metadata → Readiness → Creative →
+Publication и пересчёт; смена Readiness по площадке; смена совета → stale;
+**тот же совет после новой оценки Creative — без каскада**; **повторный gate
+с тем же решением — Publication снова current без пересчёта**; только по
+запросу, n8n — FORBIDDEN. Мутации «одобрить все площадки, если готова хоть
+одна» (2 падения) и «совет вне отпечатка» (1) ловятся.
+
+### Batch на рабочей БД (9 объектов; копия до — в scratchpad)
+
+- dry-run: у всех upstream current (metadata, Readiness adobe + shutterstock,
+  Creative), план `publication run (NOT_EVALUATED)`, 0 событий.
+- Оценка: 9 × `publication_approved`, `approved_for` [adobe, shutterstock];
+  #10 и #14 — `notes: ADVISOR_ATTENTION` (совет Creative `attention`),
+  остальные — `proceed`, без notes. 18 событий (`PUBLICATION/EVALUATED` +
+  `REPROCESS/DONE`). Повтор — `NOTHING_TO_DO` ×9, `publication.evaluate` —
+  `UNCHANGED` ×9, 0 событий.
+- #5, #8, #37, #38 — `PUBLICATION_NOT_APPLICABLE`; #86 — `UPSTREAM_NOT_CURRENT`;
+  0 событий.
+- Итог: publication_approved 9, human_review 4, stale 113, source_invalid 3;
+  `check_consistency` OK. Сервер перезапущен (события 2815 → 2815); skill в WSL.
+
+`pytest`: 728 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
