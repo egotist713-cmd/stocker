@@ -4831,6 +4831,36 @@ reprocess не подключать. Пользователь выполнил `
 
 ---
 
+# 35ZZK. 2026-09-28 — Core batch 4 (#53–#65)
+
+Решения пользователя по партии 3: #45 не исправлять и не возвращать в approved —
+пример: повторная генерация Metadata AI добавила keyword `safety compliance`,
+сработало существующее правило `LEGAL_CLAIM` для keyword `compliance`; в отчётах
+не расширять интерпретацию за пределы контракта. Gate и Metadata не менять.
+Creative в отчётах — «не запускался / NO_CURRENT_ADVICE». Коммиты — локально, без push.
+
+- 10 объектов (#53, 55, 57, 58, 59, 60, 62, 63, 64, 65): QC → Enhancement
+  (пропуск) → Vision → Metadata (`auto_approved`) → Readiness → Publication —
+  **publication_approved**, adobe и shutterstock `approved`; Creative — не
+  запускался / `NO_CURRENT_ADVICE`; по 9 событий.
+- 3 объекта остались **human_review** (были им и раньше; Readiness /
+  Publication / Creative — `not_applicable`; по 6 событий):
+  #54 — `TEXT_BRAND_OR_LEGAL: АО "ЩЛЗ"` (та же причина); #56 — было
+  `VALIDATION_ERRORS: DESCRIPTION_TOO_LONG`, стало `LEGAL_CLAIM: keywords:
+  compliance`; #61 — было `LEGAL_CLAIM: keywords: certification`, стало
+  `VALIDATION_ERRORS: DESCRIPTION_TOO_LONG`. Решения gate не изменились, причины
+  у #56 / #61 — от повторной генерации Metadata AI.
+- Агрегат: publication_approved 10, human_review 3, blocked / stale /
+  source_invalid 0; approved Adobe 10, Shutterstock 10; `ADVISOR_ATTENTION` 0;
+  событий 108 (10×9 + 3×6). Повтор `from=qc` и `from=publication` —
+  `NOTHING_TO_DO` ×13, 0 событий. Инвариант — 0 нарушений; `check_consistency` OK.
+- Текст / бренды Vision: `brands` пуст у всех; `АО "ЩЛЗ"` — LEGAL_FORM;
+  `EAC` — CONFORMITY_MARK; остальное — технические маркировки и «ЗАМОК ДВЕРИ
+  ШАХТЫ» (descriptive); одиночное `HR` (#62) — descriptive.
+- Каталог: publication_approved 53, human_review 12, stale 61, source_invalid 3.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
