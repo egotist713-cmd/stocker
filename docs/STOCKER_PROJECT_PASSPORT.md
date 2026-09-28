@@ -4806,6 +4806,31 @@ reprocess не подключать. Пользователь выполнил `
 
 ---
 
+# 35ZZJ. 2026-09-28 — Core batch 3 (#31, 32, 35, 36, 39, 40, 41, 42, 45, 49, 50, 51, 52)
+
+Порядок пользователя: копия БД → reprocess `from=qc` → repeat → инвариант →
+`check_consistency` → проверка текста / брендов Vision без изменения правил; по
+13 объектов; Creative не запускать, n8n не подключать, gate и архитектуру не
+менять. Режим разрешений — автоматический (пользователь вернул).
+
+- 12 объектов: QC → Enhancement (пропуск, актуален) → Vision → Metadata
+  (`auto_approved`) → Readiness → Publication — **publication_approved**,
+  adobe и shutterstock `approved`, `NO_CURRENT_ADVICE`; по 9 событий.
+- **#45 → human_review:** `LEGAL_CLAIM: keywords: compliance` — Metadata AI в
+  этот раз сгенерировал ключевое слово «safety compliance» (раньше — нет);
+  сработало существующее правило юридических утверждений (§6A.5), не gate-v1.3.
+  Readiness / Publication / Creative — `not_applicable`; 6 событий.
+- Агрегат: publication_approved 12, human_review 1, blocked / stale /
+  source_invalid 0; approved Adobe 12, Shutterstock 12; `ADVISOR_ATTENTION` 0;
+  событий 114. Повтор `from=qc` и `from=publication` — `NOTHING_TO_DO` ×13, 0
+  событий. Инвариант — 0 нарушений; `check_consistency` OK.
+- Текст / бренды Vision: `brands` пуст у всех; текст только технический
+  (`125x12 mm`, `3`) и одиночные буквы `C`, `S`, `E` у #52 (descriptive) —
+  ограничение однословных брендов не проявилось.
+- Каталог: publication_approved 43, human_review 9, stale 74, source_invalid 3.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
