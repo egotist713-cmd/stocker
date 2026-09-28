@@ -4640,6 +4640,45 @@ Creative Review принят; GGUF не хешировать. Дыру Metadata 
 
 ---
 
+# 35ZZF. 2026-09-28 — gate-v1.3 развёрнут; повторный gate 13 объектов
+
+### Решение пользователя
+
+gate-v1.3 принят; словарь брендов и усложнение эвристики — не сейчас.
+Развернуть и переоценить **только** 13 объектов, у которых
+`GATE_POLICY_CHANGED` — единственная причина устаревания (9 бывших
+`platform_ready`, 4 `human_review`), без Vision / Metadata AI; остальные 115
+(в т.ч. #86) не трогать — у них устарел upstream. Проверить оба сценария
+(решение не изменилось / изменилось), #8, повтор.
+
+### Сделано
+
+- Тесты (`tests/test_gate_text_brands.py`): повторный gate при неизменном
+  решении — `METADATA/GATED` + `REPROCESS/DONE`, Readiness `SKIPPED_CURRENT`,
+  Readiness и Creative снова `current` без пересчёта, повтор — 0 событий;
+  при **изменённом** решении (auto_approved → human_review) — Readiness и
+  Creative `not_applicable`, их `result: null`, `last_result.current: false`.
+- Развёртывание: копия БД (scratchpad), перезапуск сервера — живой #3 сразу
+  `stale` (`GATE_POLICY_CHANGED`), событий 2771 → 2771.
+- Повторный gate 13 объектов (`asset.reprocess reprocess_from=metadata` →
+  `metadata.gate`, модель не вызывалась): **13 из 13 сохранили решение**
+  (9 `auto_approved`, 4 `human_review`), причины те же; изменилось 0.
+  По каждому: `METADATA/GATED` + `REPROCESS/DONE` (26 событий всего).
+  9 — снова `platform_ready`, Readiness `SKIPPED_CURRENT` → current, Creative
+  current (без вызова модели); 4 — `human_review`, Readiness и Creative
+  `not_applicable`. Повтор — `NOTHING_TO_DO` ×13, 0 событий.
+- #8: `human_review` (TRADEMARK, TEXT_BRAND_OR_LEGAL ×2), `ready_for: []`;
+  `readiness.get` — `result: null`, `last_result.current: false`;
+  `creative.get` — `not_applicable (METADATA_NOT_APPROVED)`, `result: null`.
+- #86 не тронут: `stale` с QC, gate ещё v1.2 (получит v1.3 при обычном
+  пересчёте upstream).
+- Итог: platform_ready 9, human_review 4, stale 113 (все с QC),
+  source_invalid 3; `check_consistency` OK.
+
+`pytest`: 712 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
