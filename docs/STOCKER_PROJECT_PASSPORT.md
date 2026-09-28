@@ -4436,6 +4436,42 @@ architecture, params, quantization (Q5_K_M, 5 bit), format (gguf), size_bytes,
 
 ---
 
+# 35ZZB. 2026-09-28 — readiness.get: текущий результат ≠ исторический
+
+### Решения пользователя
+
+1. Execution identity Vision — только реально доступные данные LM Studio
+   (provider, model name, architecture, quantization, size, runtime / version,
+   параметры загрузки); revision и hash весов — явное ограничение. **GGUF на
+   стороне Stocker не хешировать.** Смена модели — сознательное административное
+   изменение execution identity с последующим reprocess.
+2. Перед развитием Readiness закрыть неоднозначность `readiness.get`: у #8
+   `result.ready_for` содержал старое «готов». Историю не удалять и не
+   переписывать; разделить текущий readiness и последний исторический результат.
+
+### Сделано
+
+- `stock_readiness.get`: если последний `READINESS/EVALUATED` устарел →
+  `result: null`, текущий `ready_for: []`, площадки `stale`, а сохранённый
+  результат — в `last_result` с `"current": false`. Актуальный результат — как
+  раньше в `result` (без `last_result`). Одно новое поле; событие не меняется.
+- Контракты (STOCK_READINESS §3.9, SERVICE_CONTRACT) и skill OpenClaw
+  («last_result — старая, недействующая оценка»).
+- Регрессия сценария #8 (`tests/test_reprocess.py`): ready → Vision устарел →
+  `asset.reprocess from=vision` с новым evidence (бренд) → metadata current +
+  `human_review` (TRADEMARK); старый `READINESS/EVALUATED` в истории не изменён;
+  `readiness.get` — `result: null`, `last_result.current = false`;
+  `asset.get`, `asset.list`, `review.queue` согласованы; `readiness.evaluate`
+  → `NOT_EVALUATED`; проверки не пишут событий. Мутация «вернуть старое
+  поведение» ловится.
+- Рабочая БД, #8: `readiness.get` → `stale: true`, `ready_for: []`,
+  `result: null`, `last_result.current: false` (старые adobe / shutterstock —
+  только там); событий 0.
+
+`pytest`: 664 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

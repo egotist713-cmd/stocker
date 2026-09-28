@@ -369,3 +369,75 @@ def test_noop_on_current_object_writes_no_event_from_any_start(stocker_root):
     for start in ("normalize", "qc", "enhancement", "vision", "metadata"):
         assert run(asset_id, reprocess_from=start, dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
     assert events(stocker_root, asset_id) == before
+
+
+# --- Сценарий #8: новый Vision evidence → human_review; старый Readiness — только история ---------
+
+
+class BrandVision(FakeAnalyzer):
+    """Новый Vision увидел бренд на оборудовании (как #8: «Вектор Технологий, P220»)."""
+
+    def analyze(self, view):
+        self.calls += 1
+        return VISION.model_copy(update={"brands": ["Acme"]})
+
+
+def test_case_8_stale_readiness_is_history_not_current(stocker_root, monkeypatch):
+    import dataclasses
+
+    from app import readiness as rd
+
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+    asset_id = processed(stocker_root)
+    ready = dispatch("readiness.evaluate", {"asset_id": asset_id})["data"]["readiness"]
+    assert ready["ready_for"] == ["adobe", "shutterstock"]
+    assert asset_state.get(asset_id)["state"] == asset_state.PLATFORM_READY
+
+    # Vision пересчитан (устарел → reprocess) и увидел бренд: metadata current + human_review.
+    make_legacy(stocker_root, asset_id, qc_legacy=False)
+    result = run(asset_id, reprocess_from="vision", dry_run=False, analyzer=BrandVision())
+    assert [e["stage"] for e in result["executed"] if e["outcome"] != "SKIPPED_CURRENT"][:2] == ["vision", "metadata"]
+
+    before = events(stocker_root, asset_id)
+    # История: старый READINESS/EVALUATED на месте, не изменён.
+    readiness_events = [(st, json.loads(m)) for s, st, m in before if s == "READINESS"]
+    assert [st for st, _ in readiness_events] == ["EVALUATED"]
+    assert readiness_events[0][1]["ready_for"] == ["adobe", "shutterstock"]
+
+    state = asset_state.get(asset_id)
+    assert state["state"] == asset_state.HUMAN_REVIEW and state["stages"]["metadata"]["status"] == "current"
+    assert "TRADEMARK" in state["reasons"] and state["ready_for"] == []
+    assert state["stages"]["readiness"]["status"] == "not_applicable"
+
+    # readiness.get: текущая готовность пуста; старый результат — только как история.
+    data = dispatch("readiness.get", {"asset_id": asset_id}, actor="agent:openclaw")["data"]
+    assert data["stale"] is True and data["ready_for"] == [] and data["result"] is None
+    assert set(data["platforms"].values()) == {"stale"}
+    assert data["last_result"]["current"] is False
+    assert data["last_result"]["ready_for"] == ["adobe", "shutterstock"]  # исторический, явно помечен
+
+    # Остальные потребители согласованы.
+    view = dispatch("asset.get", {"asset_id": asset_id})["data"]
+    assert view["state"]["state"] == "human_review" and view["state"]["ready_for"] == []
+    assert view["pipeline"]["stock_readiness"]["ready_for"] == [] and view["pipeline"]["stock_readiness"]["stale"]
+    assert view["pipeline"]["metadata_approved"] is False
+    assert asset_id not in [i["id"] for i in dispatch("asset.list", {"state": "platform_ready"})["data"]["items"]]
+    queue = dispatch("review.queue", {})["data"]
+    assert asset_id in [i["id"] for i in queue["items"]] and queue["summary"]["platform_ready"] == 0
+    # Переоценка сейчас невозможна (metadata не одобрена) — и события не пишет.
+    assert dispatch("readiness.evaluate", {"asset_id": asset_id})["outcome"] == "NOT_EVALUATED"
+
+    assert events(stocker_root, asset_id) == before  # все проверки выше — только чтение
+
+
+def test_current_readiness_result_is_returned_as_result(stocker_root, monkeypatch):
+    import dataclasses
+
+    from app import readiness as rd
+
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+    asset_id = processed(stocker_root)
+    dispatch("readiness.evaluate", {"asset_id": asset_id})
+    data = dispatch("readiness.get", {"asset_id": asset_id})["data"]
+    assert data["stale"] is False and data["result"]["ready_for"] == data["ready_for"] == ["adobe", "shutterstock"]
+    assert "last_result" not in data

@@ -117,7 +117,7 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 | `normalize.get` | `asset_id` | факты об исходнике: `{evaluated, stale, failed, container, color_profile, hdr, motion_video, event_id, facts}` (`FORMAT_CONTRACT.md` §3) |
 | `enhancement.get` | `asset_id` | последнее решение Enhancement: `{assessed, stale, decision, reasons, event_id, result}` (`STOCK_READINESS_CONTRACT.md` §4.2) |
 | `creative.get` | `asset_id` | последняя коммерческая оценка: `{reviewed, commercial_score, commercial_potential, recommendation, event_id, result}` |
-| `readiness.get` | `asset_id` | последняя оценка Stock Readiness: `{evaluated, stale, platforms, ready_for, event_id, result}` (`STOCK_READINESS_CONTRACT.md` §3.9) |
+| `readiness.get` | `asset_id` | текущая Stock Readiness: `{evaluated, stale, platforms, ready_for, event_id, result}`; `result` — только актуальный результат; если последний устарел — `result: null` и `last_result` с `current: false` (история, `ready_for` / `export_plan` не действуют) (`STOCK_READINESS_CONTRACT.md` §3.9) |
 
 ### Pipeline (`pipeline`) — изменяют состояние, без review-решений
 

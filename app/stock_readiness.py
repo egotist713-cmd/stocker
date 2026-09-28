@@ -118,7 +118,14 @@ def get(asset_id: int) -> dict:
     events = _events(asset_id)
     metadata, _ = _inputs(asset)
     event = _last(events, STAGE, "EVALUATED")
-    return {**summary(asset, events, metadata), "result": _stored(event)}
+    current = summary(asset, events, metadata)
+    stored = _stored(event)
+    if stored is None or not current["stale"]:
+        return {**current, "result": stored}
+    # Устаревший результат — не текущий: result = None, а сохранённый результат отдаётся
+    # отдельно и явно помеченным как история (его ready_for / export_plan не действуют).
+    # История не меняется: это только представление последнего события.
+    return {**current, "result": None, "last_result": {**stored, "current": False}}
 
 
 def evaluate_asset(asset_id: int) -> dict:

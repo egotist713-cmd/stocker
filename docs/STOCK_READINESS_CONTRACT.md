@@ -392,11 +392,21 @@ Vision-события, версии правил и профилей. Поэто
 | Операция | Уровень | human | agent | workflow | Описание |
 |---|---|---|---|---|---|
 | `readiness.evaluate` | pipeline | ✅ | ✅ | ✅ | `{asset_id}` — оценка для всех площадок сразу; детерминирована, решений не принимает, metadata и файл не меняет. `data = {readiness}` (результат §3.7), не asset view |
-| `readiness.get` | read | ✅ | ✅ | ✅ | `{asset_id}` → `{evaluated, stale, platforms, ready_for, event_id, result}` |
+| `readiness.get` | read | ✅ | ✅ | ✅ | `{asset_id}` → `{evaluated, stale, platforms, ready_for, event_id, result}`; при `stale` → `result: null` и `last_result` (см. ниже) |
 
 `asset.get` → `pipeline.stock_readiness` = `{evaluated, stale, platforms,
 ready_for, event_id}` (без checks — они в `readiness.get`). `allowed_actions`
 предлагает `readiness.evaluate`, если metadata готова, а оценки нет или она `stale`.
+
+**Текущий и исторический результат (28.09.2026, паспорт §35ZZB).** Верхний уровень
+(`stale`, `platforms`, `ready_for`) — **текущая** готовность. `result` — полный
+результат, **только если он актуален**. Если последний `READINESS/EVALUATED`
+устарел (изменились metadata, Vision, факты, QC, source, правила), то `result:
+null`, `ready_for: []`, площадки `stale`, а сохранённый результат отдаётся как
+`last_result` с `"current": false` — его `ready_for` и `export_plan` исторические и
+**не действуют**. История событий не удаляется и не переписывается. Так ведут
+себя все потребители: `asset.get` (`pipeline.stock_readiness`, `state`),
+`asset.list`, `review.queue`.
 
 Следующие шаги (§6): фильтр `asset.list ready_for=<platform>`, счётчики в
 `review.queue.summary`, вызов из worker после gate и после `metadata.approve`.
