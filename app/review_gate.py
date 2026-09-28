@@ -18,7 +18,9 @@ from app.textnorm import normalize_text
 # gate-v1.1 (26.09.2026): неясное присутствие людей больше не отправляет в review.
 # gate-v1.2 (26.09.2026, аудит): дети — всегда review; документы с персональными
 # данными — причина PERSONAL_DOCUMENT.
-POLICY_VERSION = "gate-v1.2"
+# gate-v1.3 (28.09.2026): надпись — brand / legal не только по полю brands ответа Vision:
+# собственное имя из нескольких слов (Title Case) и слово со смешанным регистром — тоже (паспорт §35ZZE).
+POLICY_VERSION = "gate-v1.3"
 METADATA_VERSION = "2"
 
 AUTO_APPROVED = "auto_approved"
@@ -61,6 +63,30 @@ _EMAIL = re.compile(r"\S+@\S+\.\S+")
 _PHONE = re.compile(r"\+?\d[\d\s()\-]{8,}\d")
 _CODE = re.compile(r"(?<!\w)[A-ZА-ЯЁ]{1,4}-[A-ZА-ЯЁ0-9]{1,4}(?!\w)")
 
+# gate-v1.3: признаки имени собственного в надписи — не зависят от того, заполнила ли модель brands.
+_WORD = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")          # слово из букв (допускается дефис)
+_TITLE_WORD = re.compile(r"^[A-ZА-ЯЁ][a-zа-яё]+(?:-[A-ZА-ЯЁ]?[a-zа-яё]+)*$")
+
+# Знаки соответствия и сертификации — техническая маркировка, не бренд (явно, а не по случайности).
+CONFORMITY_MARKS = frozenset({"ce", "eac", "ul", "rohs", "fcc", "ccc", "ukca", "tüv", "tuv", "vde", "гост", "ст"})
+
+
+def _proper_name(normalized: str, folded: str) -> str | None:
+    """
+    Имя собственное без цифр: из 2+ слов, каждое с заглавной и строчными («Вектор Технологий»),
+    или слово от 5 букв со смешанным регистром («STMicroelectronics», «iPhone»). Надписи-предупреждения не считаются.
+    Однословные ЗАГЛАВНЫЕ надписи (АТРИОН / ENTER / ON) без словаря не различимы — не трогаются.
+    """
+    if any(char.isdigit() for char in normalized) or any(_contains(folded, word) for word in WARNING_WORDS):
+        return None
+    words = _WORD.findall(normalized)
+    if len(words) >= 2 and all(_TITLE_WORD.match(word) for word in words):
+        return "PROPER_NAME"
+    # Смешанный регистр внутри слова (iPhone, STMicroelectronics); ЗАГЛАВНЫЕ и Title Case — не смешанный.
+    if any(len(word) >= 5 and any(c.islower() for c in word) and any(c.isupper() for c in word[1:]) for word in words):
+        return "MIXED_CASE_NAME"
+    return None
+
 
 def _brand_terms(vision: AIAnalysis) -> list[str]:
     terms = (normalize_text(name).casefold() for name in [*vision.brands, *vision.logos])
@@ -89,6 +115,11 @@ def classify_text_item(text: str, vision: AIAnalysis) -> dict:
     phone = _PHONE.search(normalized)
     if phone and sum(char.isdigit() for char in phone.group()) >= 10:
         return result("brand_or_legal", "CONTACT")
+    if (name_rule := _proper_name(normalized, folded)):
+        return result("brand_or_legal", name_rule)
+
+    if tokens and all(token.strip(".") in CONFORMITY_MARKS for token in tokens):
+        return result("technical", "CONFORMITY_MARK")
 
     if any(char.isdigit() for char in normalized):
         return result("technical", "DIGITS")

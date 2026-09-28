@@ -273,6 +273,14 @@ def _execute(name: str, asset_id: int, view, analyzer, metadata_analyzer, creati
     if name == "vision":
         return worker.run_ai(asset_id, view, analyzer or LocalAnalyzer())
     if name == "metadata":
+        # Самая дешёвая операция, которая снимает причину: смена политики gate — только gate;
+        # смена правил builder — пересборка правилами; иначе (новый Vision, нет metadata) — Metadata AI.
+        stage = asset_state.get(asset_id)["stages"]["metadata"]
+        reason = stage.get("own_reason") or stage.get("reason")
+        if stage["status"] == asset_state.S_STALE and reason == "GATE_POLICY_CHANGED":
+            return metadata_service.gate(asset_id)["outcome"]
+        if stage["status"] == asset_state.S_STALE and reason == "BUILDER_CHANGED":
+            return metadata_service.rebuild(asset_id)["outcome"]
         return metadata_service.build(asset_id, force=True, analyzer=metadata_analyzer)["outcome"]
     if name == "readiness":
         return stock_readiness.evaluate_asset(asset_id)["outcome"]

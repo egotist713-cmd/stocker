@@ -224,8 +224,10 @@ def _metadata(asset: dict, events: list[dict], metadata: dict | None) -> dict:
     if state in rg.GATEABLE_STATES:  # решения человека сменой правил не отменяются
         builder = (metadata.get("sources") or {}).get("builder_version")
         policy = (metadata.get("review_gate") or {}).get("policy_version")
-        if builder != mb.BUILDER_VERSION or (state != mb.DRAFT and policy != rg.POLICY_VERSION):
-            return _stage(S_STALE, "RULES_CHANGED", **extra)
+        if builder != mb.BUILDER_VERSION:
+            return _stage(S_STALE, "BUILDER_CHANGED", **extra)  # пересборка правилами (без AI)
+        if state != mb.DRAFT and policy != rg.POLICY_VERSION:
+            return _stage(S_STALE, "GATE_POLICY_CHANGED", **extra)  # только повторный gate (без AI)
     return _stage(CURRENT, **extra)
 
 

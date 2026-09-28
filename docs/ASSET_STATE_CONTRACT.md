@@ -143,9 +143,11 @@ Creative Review (если политика gate его требует — реш
   `stale` (`UPSTREAM_STALE:<стадия>`), даже если его собственный отпечаток
   совпадает.
 - Metadata: другой `sources.vision.event_id`, чем последнее `AI/PASSED`, →
-  `VISION_CHANGED`; другой `builder_version` / `policy_version` для
-  **не-человеческих** состояний (`draft`, `auto_approved`, `human_review`) →
-  `RULES_CHANGED`. Решение человека (`approved`) сменой правил не отменяется, но
+  `VISION_CHANGED`; другой `builder_version` → `BUILDER_CHANGED` (пересборка
+  правилами, без AI); другой `policy_version` gate → `GATE_POLICY_CHANGED`
+  (только повторный gate, без AI) — оба для **не-человеческих** состояний
+  (`draft`, `auto_approved`, `human_review`). `asset.reprocess` на стадии metadata
+  выбирает самую дешёвую операцию, снимающую причину: gate / rebuild / build. Решение человека (`approved`) сменой правил не отменяется, но
   смена Vision делает его `stale` — нужно повторное подтверждение.
 - Creative Review: отпечаток входов (view, Vision) не совпал → `FINGERPRINT_CHANGED`;
   шаблон / профиль не текущий (`prompt_version_for(profile)`) → `PROMPT_CHANGED`;
