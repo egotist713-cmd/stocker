@@ -4518,6 +4518,75 @@ n8n-оркестрацию и GGUF-хеширование не трогать.
 
 ---
 
+# 35ZZD. 2026-09-28 — Проверка production-path Readiness; Creative Review: зависимости
+
+### Решения пользователя
+
+1. Этап Readiness принят; GGUF не хешировать. Перед Creative Review —
+   проверить production-path `asset.process_file` (auto_approved → Metadata →
+   Readiness; human_review → без Readiness, старый — история; rejection / stop →
+   без Readiness), контролируемо, без изменения n8n.
+2. Creative Review по тому же принципу: metadata current + approved →
+   Readiness current → Creative; определить отпечаток, влияние metadata /
+   Readiness / human_review / blocked, dry-run / no-op, запрет записи при stale
+   upstream; Creative — советник. Контракт + тесты, затем небольшой batch на
+   `platform_ready`. Массовый пересчёт, Publication, n8n — нет.
+
+### 1. Production-path (изолированный корень Stocker, пустая БД, настоящий LM Studio, копии фото #13 и #8; рабочая БД — 2753 → 2753)
+
+- Фото #13 через `asset.process_file` (actor n8n): INGEST → NORMALIZE ×2 → QC →
+  ENHANCEMENT → AI → METADATA_AI → DRAFTED → GATED (`auto_approved`) →
+  **READINESS/EVALUATED** → `platform_ready`.
+- Эскалация → `human_review`: `readiness.get` — `stale`, `result: null`,
+  `last_result.current: false`.
+- Отклонение человеком → `rejected`; `asset.process` → `AI_ALREADY_DONE` без
+  Readiness; `asset.reprocess` → `REFUSED REJECTED`; добавилось только
+  `METADATA/REJECTED`.
+- Правка человека + устаревший Vision → план `vision run, metadata stop
+  (HUMAN_EDITS)`, Readiness в план не попадает; dry-run — 0 событий.
+- **Находка (Metadata gate, не исправлялась):** фото #8 в этом прогоне прошло
+  как `auto_approved`: Vision оставил `brands` пустым, хотя `text_visible`
+  снова содержит «Вектор Технологий» и «MODEL P220». Gate относит видимый текст
+  к brand / legal только по совпадению с `brands` — при недетерминированном
+  ответе модели один и тот же кадр получает разное решение о риске. В рабочей
+  БД #8 — `human_review` (там `brands` заполнен). Сценарий «gate → human_review
+  в production-path» реальным Vision в этот раз не воспроизвёлся; покрыт #8
+  рабочей БД, эскалацией и тестами.
+
+### 2. Creative Review (контракт `ASSET_STATE_CONTRACT.md` §2.1b)
+
+- Отпечаток (данные) — без изменений: SHA256 source, view (overview),
+  `ai_result`, шаблон + профиль; metadata и Readiness — **не** данные оценки.
+- Применимость: metadata одобрена и актуальна, Readiness актуален и готов →
+  иначе `not_applicable` (METADATA_NOT_APPROVED / READINESS_NOT_EVALUATED /
+  READINESS_BLOCKED), прежняя оценка — история. Устаревание Readiness
+  наследуется (`UPSTREAM_STALE:readiness`); после пересчёта Readiness (всё ещё
+  готов) Creative снова `current` **без вызова модели**.
+- `creative.review` и reprocess: запись только при актуальном upstream, иначе
+  `CREATIVE_NOT_APPLICABLE` / `UPSTREAM_NOT_CURRENT` без события; проверка и
+  непосредственно перед записью. `creative.get` — `result` только актуальный,
+  иначе `last_result` с `current: false`; `pipeline.creative_review.current`.
+- `asset.reprocess reprocess_from=creative_review` — **только по запросу**
+  (в цепочки по умолчанию и worker не входит); профиль — как у прежней оценки.
+- Тесты: `tests/test_creative_dependencies.py` (11); creative-тесты переведены
+  на объекты `platform_ready`. Мутация «без защиты записи» ловится (4
+  падения).
+
+### Batch на рабочей БД (9 platform_ready; копия до — в scratchpad)
+
+- dry-run: у всех `creative_review run (FINGERPRINT_CHANGED)` — оценки до
+  AnalysisView; профиль `auto`; 0 событий.
+- Пересчёт: 9 × `REVIEWED` (18 событий), профиль `industrial_stock`; score:
+  #3 100→100, #4 100→100, #6 100→90, #7 90→90, #10 44→48, #11 78→78, **#12
+  31→63** (Vision пересчитан по новому view), #13 78→78, #14 63→63. Повтор —
+  0 событий.
+- Creative по каталогу: current 9, stale по наследованию от Vision 99,
+  not_applicable (metadata не одобрена / нет) 21. `check_consistency` OK.
+
+`pytest`: 682 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
