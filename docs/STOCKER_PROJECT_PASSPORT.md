@@ -4332,6 +4332,61 @@ n8n — нет; Readiness / Creative / Publication не менять.
 
 ---
 
+# 35ZZ. 2026-09-28 — Диагностика этапа C: normalize / metadata / through; диагностический batch
+
+### Решение пользователя
+
+Этап C принят; массовый пересчёт 120 и Readiness → Creative → Publication — не
+сейчас. Проверить `from=normalize` (та же цепочка pipeline, без особой логики),
+`from=metadata` (Vision current → metadata; Vision stale → отказ без записи;
+проверка и перед записью), `through` по порядку pipeline, правило
+`REPROCESS/DONE`; диагностический batch 5–10 объектов с разными причинами stale;
+зафиксировать Vision nondeterminism и design requirement execution identity.
+
+### Сделано
+
+- Единый `PIPELINE_ORDER` (normalize → view → qc → enhancement → vision →
+  metadata); цепочка от стадии — его хвост. `view` — производный шаг
+  (`DERIVED`, без записи): строится заново, если Normalize в этом проходе
+  выполнился. `through` — по этому порядку; выше `from` → `INVALID_THROUGH`.
+- Контракт §6 / §6a: правило `from=metadata`; двойная проверка upstream (план и
+  непосредственно перед каждой стадией); `REPROCESS/DONE` — только если стадия
+  реально пересчитана; Vision nondeterminism; design requirement execution
+  identity (provider, model, revision / hash весов, prompt, schema, params,
+  encoding, view) — не реализовано.
+- Тесты +13 (`tests/test_reprocess.py`, 30): цепочка normalize (с view) и полный
+  пересчёт после смены normalizer; `from=metadata` при актуальном и устаревшем
+  Vision; **upstream устарел между планом и записью → STOPPED без записи
+  metadata и без REPROCESS/DONE**; `through` (4 цепочки, 3 отказа); повтор с
+  любого `from` — ноль событий.
+
+### Диагностический batch на рабочей БД (7 объектов; копия до — в scratchpad)
+
+| # | Вид | Вызов | Выполнено | Пропущено | +события | После |
+|---|---|---|---|---|---|---|
+| 6 | P3, auto_approved | по умолчанию (qc) | qc, vision, metadata | enhancement | QC, AI, METADATA_AI, DRAFTED, GATED, REPROCESS | stale только Readiness |
+| 7 | P3, auto_approved | по умолчанию | те же | enhancement | те же 6 | stale только Readiness |
+| 12 | sRGB, auto_approved, был Readiness | по умолчанию | те же | enhancement | те же 6 | stale только Readiness |
+| 13 | sRGB | `from=normalize` | qc, vision, metadata | normalize, view, enhancement | те же 6 | stale только Readiness |
+| 14 | sRGB | `from=qc through=vision` | qc, vision | enhancement | QC, AI, REPROCESS | **stale metadata `VISION_CHANGED`** |
+| 14 | — | затем `from=metadata` | metadata | — | METADATA_AI, DRAFTED, GATED, REPROCESS | stale только Readiness |
+| 38 | sRGB, human_review | по умолчанию | qc, vision, metadata | enhancement | те же 6 | `human_review` (PEOPLE_RECOGNIZABLE) |
+| 8 | P3, auto_approved, был Readiness | по умолчанию | qc, vision, metadata | enhancement | те же 6 | **`human_review`**: TRADEMARK «Вектор Технологий, P220», TEXT_BRAND_OR_LEGAL ×2 |
+
+- Повтор `from=qc` у всех 7 — `NOTHING_TO_DO`, 0 событий. Событий всего 2692 →
+  2735 (43 = 7 × 6 + 1 лишний REPROCESS/DONE у #14 за второй вызов).
+- **Находка:** #8 был `auto_approved` и готов для площадок; Vision по
+  правильно интерпретированному P3-view прочитал бренд и маркировку на
+  оборудовании — gate отправил metadata человеку, старый Readiness стал
+  неприменим. Прежние результаты Vision действительно были неполными.
+- Распределение: stale 122 (qc 113, Readiness 9), human_review 4 (#5, #37,
+  #38, #8), source_invalid 3. `reprocess_from`: qc 113, readiness 9.
+  `check_consistency`: OK.
+
+`pytest`: 662 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
