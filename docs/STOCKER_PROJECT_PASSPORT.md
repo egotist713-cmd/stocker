@@ -4779,6 +4779,33 @@ before / after по каждому объекту, агрегат, инвари�
 
 ---
 
+# 35ZZI. 2026-09-28 — Core batch 2 (#18–#30)
+
+### Решение пользователя
+
+Batch 1 принят (исправление human_review → no-op тоже). Оставшиеся 100 stale —
+партиями по 10–15 тем же способом, отчёт по каждой, repeat → 0 событий,
+периодически `check_consistency` и инвариант; Creative не запускать; gate-v1.3 не
+менять и словарь брендов не вводить без причины из результатов; n8n к
+reprocess не подключать. Пользователь выполнил `git push` (origin/main = a72f9fc).
+
+### Партия 2 (13 объектов, следующие по id stale с QC; копия БД — в scratchpad)
+
+- Все 13: QC → Enhancement (актуален, пропуск) → Vision → Metadata (gate-v1.3,
+  `auto_approved` → `auto_approved`) → Readiness `EVALUATED` (adobe,
+  shutterstock) → Publication `EVALUATED` — **publication_approved**, обе
+  площадки `approved`, notes `NO_CURRENT_ADVICE`; Creative `stale` (не
+  запускался). По 9 событий, всего 117.
+- human_review / blocked / остановок — 0; изменений решения gate — 0.
+- Сюжеты — фактуры, кровли, городские виды; `text_visible` и `brands` пусты у
+  всех 13 (ограничение однословных брендов здесь не проявилось).
+- Повтор: `from=qc` и `from=publication` — `NOTHING_TO_DO` ×13, 0 событий.
+  Инвариант — 0 нарушений; `check_consistency` OK.
+- Каталог: publication_approved 31, human_review 8, stale 87,
+  source_invalid 3.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
