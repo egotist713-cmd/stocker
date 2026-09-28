@@ -9,7 +9,7 @@ from app import enhancement_decision
 from app import metadata as metadata_service
 from app import normalization
 from app import review_gate
-from app.ai.analyzer import AIAnalyzer, AIResponseError
+from app.ai.analyzer import AIAnalyzer, AIResponseError, input_fingerprint, vision_inputs
 from app.ai.enhancement_advisor import advisor_enabled
 from app.ai.metadata_analyzer import MetadataAnalyzer
 from app.ai.local_analyzer import LocalAnalyzer
@@ -68,7 +68,14 @@ def verify_source(asset: dict) -> dict | None:
 
 
 def run_ai(asset_id: int, view: analysis_view.AnalysisView, analyzer: AIAnalyzer) -> str:
-    provenance = {**_provenance(analyzer), "view": view.identity()}
+    identity = analyzer.identity()
+    provenance = {
+        **_provenance(analyzer),
+        "view": view.identity(),
+        # Отпечаток входов (ASSET_STATE §2.1a): результат актуален, пока совпадает.
+        "inputs": vision_inputs(view.fingerprint, identity),
+        "input_fingerprint": input_fingerprint(view.fingerprint, identity),
+    }
     started = time.perf_counter()
 
     try:

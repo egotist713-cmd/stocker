@@ -4221,6 +4221,55 @@ workflow `stocker-digest` в n8n читает `summary.ready` — перезап
 
 ---
 
+# 35ZX. 2026-09-28 — Этап B: явные отпечатки входов QC и Vision
+
+### Решение пользователя
+
+Сначала зафиксировать фактический состав отпечатков, затем реализовать для QC и
+Vision; старые результаты без отпечатка остаются STALE; regression tests и
+небольшой контролируемый тест на реальных объектах; `asset.reprocess` и массовый
+пересчёт — не сейчас.
+
+### Сделано
+
+- **QC** (`app/qc.py`): литералы порогов — именованные константы
+  (`EXTREME_RATIO`, `DARK_LEVEL`, `BRIGHT_LEVEL`, `EXTREME_PREVIEW`);
+  `QC_RULES_VERSION = qc-rules-v2`; `rules()` — версия + значения всех порогов;
+  `qc_result.inputs = {view, rules}`, `qc_result.input_fingerprint`.
+- **Vision** (`app/ai/local_analyzer.py`, `app/ai/analyzer.py`, worker):
+  промпт вынесен в `PROMPT` (текст **байт в байт прежний** — проверено);
+  `IMAGE` (preview, JPEG q=90) и `REQUEST_PARAMS` (temperature / max_tokens —
+  умолчание сервера) — единый источник и для запроса, и для отпечатка;
+  `identity()` / `current_identity()` = provider, model, prompt_version,
+  prompt_sha256, schema_sha256 (строгая схема AIAnalysis), image, params;
+  `AI/PASSED` и `AI/FAILED` — `inputs` и `input_fingerprint`.
+- **Read-model** (`app/asset_state.py`): QC и Vision — по `input_fingerprint`;
+  без него — `NO_FINGERPRINT`; расхождение — `FINGERPRINT_CHANGED` с `changed`
+  (какие входы); `VISION_IDENTITIES` вместо реестра версий промпта.
+- Тесты: `tests/test_fingerprints.py` (18) — запись отпечатка QC и Vision (через
+  настоящий `LocalAnalyzer`, подменён только HTTP), отпечаток описывает то, что
+  реально ушло в модель; каждый вход Vision (model, prompt_sha256,
+  prompt_version, schema, image, params, view) и QC (пороги, версия, view)
+  по отдельности даёт STALE с точным `changed`; правила QC не влияют на Vision;
+  детерминированность; наследие не переписывается. Мутации «порог вне
+  отпечатка» и «Vision без отпечатка» ловятся (2 и 23 падения).
+
+### Контролируемый тест на реальных объектах
+
+На **копии** рабочей БД, настоящие исходники (только чтение) и LM Studio:
+#10 (sRGB) и #3 (Display P3), `process_asset(force=True)`:
+
+- до: `stale` с QC (`NO_FINGERPRINT`); после: QC и Vision `current` с полным
+  отпечатком; #3 ушёл в модель конвертированным в sRGB;
+- итог — `stale` с `metadata` (`VISION_CHANGED`): metadata построена на прежнем
+  Vision — ровно то, что будет делать `asset.reprocess` (этап C);
+- повторное чтение состояния детерминировано; исходники не изменились;
+  рабочая БД: событий 2655 → 2655.
+
+`pytest`: 632 passed, 5 skipped.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

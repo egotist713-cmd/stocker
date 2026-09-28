@@ -57,6 +57,10 @@ class FakeAnalyzer(AIAnalyzer):
     model = "fake-model"
     prompt_version = "test-v1"
 
+    @classmethod
+    def current_identity(cls) -> dict:
+        return {"provider": cls.provider, "model": cls.model, "prompt_version": cls.prompt_version}
+
     def __init__(self, error: Exception | None = None):
         self.error = error
         self.calls = 0
@@ -138,7 +142,7 @@ def known_test_vision_provider(monkeypatch):
     """Тестовый провайдер Vision известен Unified Asset State (неизвестный — STALE по контракту)."""
     from app import asset_state
 
-    monkeypatch.setitem(asset_state.VISION_PROMPT_VERSIONS, FakeAnalyzer.provider, FakeAnalyzer.prompt_version)
+    monkeypatch.setitem(asset_state.VISION_IDENTITIES, FakeAnalyzer.provider, FakeAnalyzer.current_identity)
 
 
 @pytest.fixture(autouse=True)

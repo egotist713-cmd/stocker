@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 from app.ai.schema import AIAnalysis
 
 
@@ -26,3 +29,19 @@ class AIAnalyzer:
         raise NotImplementedError(
             "AI provider is not configured yet."
         )
+
+    def identity(self) -> dict:
+        """Входы, от которых зависит ответ, кроме изображения. Провайдеры уточняют."""
+        return {"provider": getattr(self, "provider", type(self).__name__),
+                "model": getattr(self, "model", None),
+                "prompt_version": getattr(self, "prompt_version", None)}
+
+
+def vision_inputs(view_fingerprint: str, identity: dict) -> dict:
+    return {"view": view_fingerprint, **identity}
+
+
+def input_fingerprint(view_fingerprint: str, identity: dict) -> str:
+    """Отпечаток входов Vision: AnalysisView + провайдер, модель, промпт, схема, кодирование, параметры."""
+    payload = json.dumps(vision_inputs(view_fingerprint, identity), sort_keys=True, ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()

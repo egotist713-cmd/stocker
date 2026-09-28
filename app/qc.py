@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import json
 import sqlite3
 
@@ -20,6 +21,42 @@ MIN_MEGAPIXELS = 4.0
 RECOMMENDED_MEGAPIXELS = 12.0
 MIN_FILE_SIZE = 100 * 1024
 MAX_FILE_SIZE = 45 * 1024 * 1024
+
+# Доли почти чёрных / почти белых пикселей (только warnings) и размер превью для них.
+EXTREME_RATIO = 0.20
+DARK_LEVEL = 5
+BRIGHT_LEVEL = 250
+EXTREME_PREVIEW = 1600
+
+# Версия формул QC (резкость, доли тёмного / светлого, проверки). Значения порогов
+# входят в отпечаток сами (rules()), поэтому их смена тоже делает результат STALE.
+# v2 (28.09.2026): пиксели — из AnalysisView.
+QC_RULES_VERSION = "qc-rules-v2"
+
+
+def rules() -> dict:
+    """Всё, от чего зависит QC, кроме view (контракт ASSET_STATE §2.1a)."""
+    return {
+        "version": QC_RULES_VERSION,
+        "min_megapixels": MIN_MEGAPIXELS,
+        "recommended_megapixels": RECOMMENDED_MEGAPIXELS,
+        "min_file_size": MIN_FILE_SIZE,
+        "max_file_size": MAX_FILE_SIZE,
+        "extreme_ratio": EXTREME_RATIO,
+        "dark_level": DARK_LEVEL,
+        "bright_level": BRIGHT_LEVEL,
+        "extreme_preview": EXTREME_PREVIEW,
+    }
+
+
+def inputs(view_fingerprint: str) -> dict:
+    return {"view": view_fingerprint, "rules": rules()}
+
+
+def fingerprint(view_fingerprint: str) -> str:
+    """Отпечаток входов QC: view (source / normalization / views) + правила и пороги."""
+    payload = json.dumps(inputs(view_fingerprint), sort_keys=True)
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def get_connection():
@@ -47,12 +84,12 @@ def calculate_extreme_pixels(image: Image.Image):
     Работаем с уменьшенной копией, чтобы не расходовать лишнюю память.
     """
     preview = image.copy()
-    preview.thumbnail((1600, 1600))
+    preview.thumbnail((EXTREME_PREVIEW, EXTREME_PREVIEW))
 
     rgb = np.asarray(preview.convert("RGB"), dtype=np.uint8)
 
-    dark = np.all(rgb <= 5, axis=2)
-    bright = np.all(rgb >= 250, axis=2)
+    dark = np.all(rgb <= DARK_LEVEL, axis=2)
+    bright = np.all(rgb >= BRIGHT_LEVEL, axis=2)
 
     total = rgb.shape[0] * rgb.shape[1]
 
@@ -109,6 +146,9 @@ def check_asset(asset, view=None):
     result["metrics"]["height"] = height
     result["metrics"]["format"] = view.source_format
     result["metrics"]["view"] = view.identity()
+    # Отпечаток входов: результат актуален, пока совпадает (контракт ASSET_STATE §2.1a).
+    result["inputs"] = inputs(view.fingerprint)
+    result["input_fingerprint"] = fingerprint(view.fingerprint)
 
     megapixels = width * height / 1_000_000
     if megapixels < MIN_MEGAPIXELS:
@@ -126,10 +166,10 @@ def check_asset(asset, view=None):
 
     # Пока это только предупреждения.
     # Не отклоняем фотографию автоматически по этим двум метрикам.
-    if dark_ratio > 0.20:
+    if dark_ratio > EXTREME_RATIO:
         result["warnings"].append("HIGH_DARK_PIXEL_RATIO")
 
-    if bright_ratio > 0.20:
+    if bright_ratio > EXTREME_RATIO:
         result["warnings"].append("HIGH_BRIGHT_PIXEL_RATIO")
 
     return result

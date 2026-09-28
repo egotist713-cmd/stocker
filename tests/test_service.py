@@ -5,6 +5,8 @@ import pytest
 
 from app import metadata as metadata_service
 from app import normalization, normalizer, qc
+from app.ai.analyzer import input_fingerprint, vision_inputs
+from app.ai.local_analyzer import LocalAnalyzer
 from app.database.db import add_event, get_asset, save_ai_result
 from app.ingest import ingest_file
 from app.service import dispatch
@@ -27,10 +29,15 @@ def _vision_asset(stocker_root, name="photo.jpg", seed=0, vision=VISION, icc_pro
     normalization.run_asset(asset_id)  # факты и representation: пиксели стадии берут из AnalysisView
     qc.save_qc_result(asset_id, qc.check_asset(get_asset(asset_id)))  # QC по view, как в worker
     save_ai_result(asset_id, vision.model_dump_json())
-    # Vision «как после AnalysisView»: отпечаток view текущего source (иначе результат — наследие, STALE).
-    file_hash = get_asset(asset_id)["file_hash"]
-    add_event(asset_id, "AI", "PASSED", json.dumps({"provider": "lmstudio", "model": "v", "prompt_version": "local-v2",
-                                                    "view": {"fingerprint": normalizer.view_fingerprint(file_hash)}}))
+    # Vision «как сейчас»: отпечаток входов текущего view и текущей конфигурации LM Studio
+    # (иначе результат — наследие без отпечатка, STALE).
+    view_fp = normalizer.view_fingerprint(get_asset(asset_id)["file_hash"])
+    identity = LocalAnalyzer.current_identity()
+    add_event(asset_id, "AI", "PASSED", json.dumps({
+        "provider": identity["provider"], "model": identity["model"], "prompt_version": identity["prompt_version"],
+        "view": {"fingerprint": view_fp},
+        "inputs": vision_inputs(view_fp, identity), "input_fingerprint": input_fingerprint(view_fp, identity),
+    }))
     return asset_id
 
 

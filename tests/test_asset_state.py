@@ -216,22 +216,33 @@ def test_legacy_vision_without_view_is_stale(stocker_root):
     assert result["state"] == asset_state.STALE and result["reprocess_from"] == "vision"
 
 
-def test_legacy_qc_without_view_is_stale(stocker_root):
+@pytest.mark.parametrize("legacy_keys", [("input_fingerprint", "inputs"), ("input_fingerprint", "inputs", "view")])
+def test_legacy_qc_without_fingerprint_is_stale(stocker_root, legacy_keys):
+    # Как 129 QC до этапа B: без input_fingerprint (с view в метриках или без) — STALE.
     asset_id = processed(stocker_root)
     with _db(stocker_root) as connection:
         qc = json.loads(connection.execute("SELECT qc_result FROM assets WHERE id = ?", (asset_id,)).fetchone()[0])
-        del qc["metrics"]["view"]
+        for key in legacy_keys:
+            (qc["metrics"] if key == "view" else qc).pop(key)
         connection.execute("UPDATE assets SET qc_result = ? WHERE id = ?", (json.dumps(qc), asset_id))
     result = state(asset_id)
     assert result["reprocess_from"] == "qc" and result["stages"]["qc"]["reason"] == "NO_FINGERPRINT"
     assert "STALE:qc:NO_FINGERPRINT" in result["problems"]
 
 
-@pytest.mark.parametrize("registry, reason", [({"fake": "test-v2"}, "PROMPT_CHANGED"), ({}, "UNKNOWN_PROVIDER")])
-def test_vision_prompt_or_provider_change_is_stale(stocker_root, monkeypatch, registry, reason):
+@pytest.mark.parametrize("change", ["model", "prompt_version"])
+def test_vision_identity_change_is_stale_and_explained(stocker_root, monkeypatch, change):
     asset_id = processed(stocker_root)
-    monkeypatch.setattr(asset_state, "VISION_PROMPT_VERSIONS", registry)
-    assert state(asset_id)["stages"]["vision"]["reason"] == reason
+    current = FakeAnalyzer.current_identity()
+    monkeypatch.setitem(asset_state.VISION_IDENTITIES, "fake", lambda: {**current, change: "other"})
+    vision = state(asset_id)["stages"]["vision"]
+    assert vision["reason"] == "FINGERPRINT_CHANGED" and vision["changed"] == [change]
+
+
+def test_unknown_vision_provider_is_stale(stocker_root, monkeypatch):
+    asset_id = processed(stocker_root)
+    monkeypatch.setattr(asset_state, "VISION_IDENTITIES", {})
+    assert state(asset_id)["stages"]["vision"]["reason"] == "UNKNOWN_PROVIDER"
 
 
 def test_metadata_on_older_vision_is_stale(stocker_root):

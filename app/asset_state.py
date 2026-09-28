@@ -12,6 +12,8 @@ import json
 from app import creative_review, enhancement_decision, ingest, normalization, normalizer, stock_readiness
 from app import metadata_builder as mb
 from app import review_gate as rg
+from app import qc as qc_rules
+from app.ai.analyzer import input_fingerprint, vision_inputs
 from app.ai.creative_advisor import prompt_version_for
 from app.ai.local_analyzer import LocalAnalyzer
 from app.creative_profiles import UnknownProfileError, get_profile
@@ -59,8 +61,9 @@ DEPENDS_ON = {
     "creative_review": ("view", "vision"),
 }
 
-# Текущая версия промпта Vision по провайдеру. Неизвестный провайдер — не «актуально молча».
-VISION_PROMPT_VERSIONS = {LocalAnalyzer.provider: LocalAnalyzer.prompt_version}
+# Текущая идентичность Vision по провайдеру (модель, промпт, схема, кодирование, параметры).
+# Неизвестный провайдер — не «актуально молча», а STALE.
+VISION_IDENTITIES = {LocalAnalyzer.provider: LocalAnalyzer.current_identity}
 
 # Отказ стадии → blocked (детерминированный) или error (техническая ошибка, повтор).
 _FAILURE_KIND = {"normalize": BLOCKED, "view": BLOCKED, "qc": BLOCKED, "vision": ERROR, "readiness": ERROR}
@@ -88,6 +91,12 @@ def _newer(a: dict | None, b: dict | None) -> bool:
 
 def _stage(status: str, reason: str | None = None, **extra) -> dict:
     return {"status": status, "reason": reason, **extra}
+
+
+def _changed(stored: dict | None, current: dict) -> list[str]:
+    """Какие входы изменились (верхний уровень состава отпечатка) — для объяснения STALE."""
+    stored = stored or {}
+    return sorted(key for key in set(stored) | set(current) if stored.get(key) != current.get(key))
 
 
 # --- Source integrity (§3.5) ------------------------------------------------------------
@@ -159,21 +168,25 @@ def _view(asset: dict, events: list[dict]) -> dict:
 
 
 def _qc(asset: dict, events: list[dict]) -> dict:
+    """Отпечаток QC = view + правила и пороги (qc.fingerprint); без отпечатка — наследие, STALE."""
     result = _json(asset["qc_result"])
     if not result:
         return _stage(MISSING, "NOT_CHECKED")
-    current = normalizer.view_fingerprint(asset["file_hash"])
-    stored = ((result.get("metrics") or {}).get("view") or {}).get("fingerprint")
+    view_fp = normalizer.view_fingerprint(asset["file_hash"])
+    current = qc_rules.fingerprint(view_fp)
+    stored = result.get("input_fingerprint")
     if stored is None:
         return _stage(S_STALE, "NO_FINGERPRINT", current_fp=current)
     if stored != current:
-        return _stage(S_STALE, "FINGERPRINT_CHANGED", stored_fp=stored, current_fp=current)
+        return _stage(S_STALE, "FINGERPRINT_CHANGED", stored_fp=stored, current_fp=current,
+                      changed=_changed(result.get("inputs"), qc_rules.inputs(view_fp)))
     if not result.get("passed"):
         return _stage(FAILED, "QC_FAILED", errors=result.get("errors", []))
     return _stage(CURRENT, stored_fp=stored, current_fp=current)
 
 
 def _vision(asset: dict, events: list[dict]) -> dict:
+    """Отпечаток Vision = view + provider / model / промпт / схема / кодирование / параметры."""
     passed = _last(events, "AI", "PASSED")
     if not asset["ai_result"]:
         last = _last(events, "AI")
@@ -181,19 +194,19 @@ def _vision(asset: dict, events: list[dict]) -> dict:
             return _stage(FAILED, "VISION_FAILED")
         return _stage(MISSING, "NOT_ANALYZED")
     message = (_json(passed["message"]) if passed else None) or {}
-    current = normalizer.view_fingerprint(asset["file_hash"])
-    stored = (message.get("view") or {}).get("fingerprint")
-    provider, prompt = message.get("provider"), message.get("prompt_version")
-    base = {"stored_fp": stored, "current_fp": current, "event_id": passed["id"] if passed else None}
+    stored = message.get("input_fingerprint")
+    base = {"stored_fp": stored, "event_id": passed["id"] if passed else None}
     if stored is None:
         return _stage(S_STALE, "NO_FINGERPRINT", **base)
-    if stored != current:
-        return _stage(S_STALE, "FINGERPRINT_CHANGED", **base)
-    if provider not in VISION_PROMPT_VERSIONS:
+    identity_of = VISION_IDENTITIES.get(message.get("provider"))
+    if identity_of is None:
         return _stage(S_STALE, "UNKNOWN_PROVIDER", **base)
-    if prompt != VISION_PROMPT_VERSIONS[provider]:
-        return _stage(S_STALE, "PROMPT_CHANGED", **base)
-    return _stage(CURRENT, **base)
+    view_fp, identity = normalizer.view_fingerprint(asset["file_hash"]), identity_of()
+    current = input_fingerprint(view_fp, identity)
+    if stored != current:
+        return _stage(S_STALE, "FINGERPRINT_CHANGED", current_fp=current,
+                      changed=_changed(message.get("inputs"), vision_inputs(view_fp, identity)), **base)
+    return _stage(CURRENT, current_fp=current, **base)
 
 
 def _metadata(asset: dict, events: list[dict], metadata: dict | None) -> dict:

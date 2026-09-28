@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import json
 import os
 from typing import Optional
 
@@ -24,6 +26,53 @@ def response_schema() -> dict:
     return strict_json_schema(AIAnalysis)
 
 
+# Текст промпта Vision. Его SHA256 входит в отпечаток входов (правка без смены
+# prompt_version тоже делает результаты STALE).
+PROMPT = """Analyze this stock photograph.
+
+Return ONLY valid JSON matching this structure:
+
+{
+  "analysis_version": "1.0",
+  "description": "",
+  "title": "",
+  "keywords": [],
+  "categories": [],
+  "subject": "",
+  "commercial_context": "",
+  "technical_subjects": [],
+  "people": {
+    "present": false,
+    "count": 0
+  },
+  "brands": [],
+  "logos": [],
+  "text_visible": [],
+  "editorial_risk": [],
+  "ai_generated": false,
+  "confidence": 0.0
+}
+
+Important:
+- Describe only what is actually visible.
+- Do not invent brands, equipment specifications, locations, or facts.
+- Keywords must describe visible or directly inferable stock concepts.
+- Do not assume that the image was AI-generated.
+- confidence must be between 0 and 1."""
+
+# Какие байты получает модель: вариант AnalysisView и кодирование (ASSET_STATE §2.1a).
+IMAGE = {"variant": "preview", "format": "jpeg", "quality": 90}
+
+# Параметры запроса, влияющие на ответ. Сейчас не задаются — умолчание сервера (фиксируется
+# явно: если параметр появится, отпечаток изменится).
+REQUEST_PARAMS = {"temperature": None, "max_tokens": None}
+
+
+def _sha256(value) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 class LocalAnalyzer(AIAnalyzer):
     """
     Локальный провайдер для анализа изображений через LM Studio.
@@ -36,6 +85,27 @@ class LocalAnalyzer(AIAnalyzer):
     # local-v1: промпт + свободный текстовый ответ.
     # local-v2: тот же промпт + strict json_schema response_format.
     prompt_version = "local-v2"
+
+    @classmethod
+    def _identity(cls, model: str) -> dict:
+        """Всё, от чего зависит ответ, кроме view (контракт ASSET_STATE §2.1a)."""
+        return {
+            "provider": cls.provider,
+            "model": model,
+            "prompt_version": cls.prompt_version,
+            "prompt_sha256": _sha256(PROMPT),
+            "schema_sha256": _sha256(response_schema()),
+            "image": dict(IMAGE),
+            "params": dict(REQUEST_PARAMS),
+        }
+
+    def identity(self) -> dict:
+        return self._identity(self.model)
+
+    @classmethod
+    def current_identity(cls) -> dict:
+        """Идентичность Vision, которую pipeline использовал бы сейчас (конфигурация окружения)."""
+        return cls._identity(os.getenv("LMSTUDIO_MODEL") or DEFAULT_MODEL)
 
     def __init__(
         self,
@@ -70,37 +140,7 @@ class LocalAnalyzer(AIAnalyzer):
                     "content": [
                         {
                             "type": "text",
-                            "text": """Analyze this stock photograph.
-
-Return ONLY valid JSON matching this structure:
-
-{
-  "analysis_version": "1.0",
-  "description": "",
-  "title": "",
-  "keywords": [],
-  "categories": [],
-  "subject": "",
-  "commercial_context": "",
-  "technical_subjects": [],
-  "people": {
-    "present": false,
-    "count": 0
-  },
-  "brands": [],
-  "logos": [],
-  "text_visible": [],
-  "editorial_risk": [],
-  "ai_generated": false,
-  "confidence": 0.0
-}
-
-Important:
-- Describe only what is actually visible.
-- Do not invent brands, equipment specifications, locations, or facts.
-- Keywords must describe visible or directly inferable stock concepts.
-- Do not assume that the image was AI-generated.
-- confidence must be between 0 and 1.""",
+                            "text": PROMPT,
                         },
                         {
                             "type": "image_url",
@@ -130,4 +170,4 @@ Important:
         Вариант view "preview" (длинная сторона 2048, ориентирован, 8 бит, sRGB или
         undeclared без конвертации) в JPEG. Ориентацию и цвет решает AnalysisView.
         """
-        return view.jpeg("preview", quality=90), "image/jpeg"
+        return view.jpeg(IMAGE["variant"], quality=IMAGE["quality"]), "image/jpeg"
