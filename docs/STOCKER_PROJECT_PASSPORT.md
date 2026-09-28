@@ -4195,6 +4195,32 @@ workflow `stocker-digest` в n8n читает `summary.ready` — перезап
 
 ---
 
+# 35ZW. 2026-09-28 — Этап A: runtime-синхронизация, этап закрыт
+
+- Живой n8n `stocker-digest` обновлён из репозитория
+  (`deploy_n8n_workflows.ps1 -Only stocker-digest`; копия прежней версии — в
+  scratchpad сессии). Импорт снял публикацию — опубликован снова
+  (`publish:workflow` + перезапуск n8n); активные workflow те же: digest,
+  ingest, notify. В живом коде нет `summary.ready`.
+- Сервер Stocker перезапущен; skill OpenClaw скопирован в WSL (идентичен).
+- Проверка после перезапуска через HTTP API (`workflow:n8n`): `asset.get` #3 —
+  `stale`, #67 — `source_invalid` без действий, `pipeline.ready` нет;
+  `review.queue` — stale 126, source_invalid 3, `metadata_approved` 109,
+  `platform_ready` 0, очередь человека 0; `asset.list` по `state` /
+  `metadata_approved` — 126 / 3 / 109 / 0; старый фильтр `ready` →
+  `INVALID_PARAMS`.
+- Живой код digest выполнен (node) на живом ответе `review.queue` — без
+  запуска workflow в n8n, чтобы не писать `NOTIFY/SENT`: состояния, metadata
+  одобрена ≠ готово для площадки, проблемы по кодам, первыми #2 / #67 / #68, 10
+  объектов, `undefined` нет. Первый настоящий запуск — по расписанию (09:00).
+- `summary.ready` / `pipeline.ready` / `{"ready": true}` больше нигде не
+  ожидаются (код, workflows, skill в репозитории и в WSL, контракты).
+- Событий до / после: 2655 / 2655.
+
+🟢 Этап A закрыт.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
