@@ -3992,6 +3992,55 @@ Export Preparation — отдельным этапом по решению по�
 
 ---
 
+# 35ZS. 2026-09-28 — Этап Normalization / AnalysisView закрыт
+
+### Решение пользователя
+
+Шаг 3 принят; этап **закрыт**. Текущая цепочка:
+
+```
+SOURCE → SOURCE FACTS → NORMALIZATION → INTERNAL DERIVATIVE → ANALYSIS VIEW
+       → QC / ENHANCEMENT / VISION → READINESS
+```
+
+Принято в реализации (коммиты a051560, bd4acaf, 337de6f):
+
+- единый AnalysisView для всех стадий, читающих пиксели;
+- ICC источника, цвет representation и цвет view разделены;
+- P3 / ProPhoto корректно преобразуются в sRGB view;
+- `undeclared` и Uncalibrated не считаются sRGB;
+- Readiness работает от фактов источника и правил площадки, изображение не декодирует;
+- AVIF принимается ingest и проходит полный pipeline через internal derivative;
+- derivative и прямой view дают одинаковое представление;
+- граница декодирования изображения защищена тестом;
+- идемпотентность NORMALIZE и ENHANCEMENT исправлена;
+- `check_consistency` проходит; 585 passed, 5 skipped;
+- новые 100 файлов в рабочей БД не зарегистрированы; исходные файлы не изменены;
+- Export Preparation не реализовывался.
+
+Исправления, найденные в ходе этапа:
+
+- CMYK / Gray с ICC больше не трактуются как RGB;
+- повторные `ENHANCEMENT/FAILED` (и `NORMALIZE/FAILED`) с той же причиной не создают новых событий;
+- 7 прежних решений Enhancement обновились из-за перехода **rules-v1 → rules-v2**
+  (оценки 26.09 не были пересчитаны), а **не** из-за AnalysisView: сравнение
+  «source напрямую против view» на обоих наборах — 0 изменений решений.
+
+Ограничения, зафиксированные пользователем:
+
+- дальнейшую отладку AVIF / HEIC не продолжать; `pillow-heif` не добавлять;
+- новые экзотические форматы — только с реальным validation set;
+- Export Preparation не реализовывать; `export_metadata_contamination_case` —
+  regression fixture до отдельного этапа Export.
+
+### Дальше
+
+Интеграция рабочего pipeline после Vision: Metadata → Readiness → Creative
+Review → Gate / human review → состояние объекта → n8n orchestration. Перед
+реализацией — read-only аудит текущего pipeline и контрактов (§35ZT).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -4169,7 +4218,7 @@ CALIBRATION ON USER-SELECTED PHOTOS (incoming)
     🟢 DONE — 108 отобранных; docs/CALIBRATION_2026-09-27.md (§35ZK)
 
 FORMAT LAYER (source → normalize → … → export derivative; HEIC/AVIF/TIFF/PNG)
-    🟢 DONE (Internal Normalization) — факты v4; engine normalize-v1; AnalysisView — единый вход пикселей QC / Enhancement / Vision; Readiness по фактам; AVIF в ingest. Export — не начат (§35ZO–§35ZR)
+    🟢 CLOSED (Internal Normalization / AnalysisView) — факты v4; engine normalize-v1; AnalysisView — единый вход пикселей QC / Enhancement / Vision; Readiness по фактам; AVIF в ingest. Export — не начат (§35ZO–§35ZS)
 
 ENHANCEMENT RECALIBRATION (меньше ложных Topaz-рекомендаций)
     🟢 DONE v2 — 28 → 4 рекомендации на 108 отобранных (§35ZM)
