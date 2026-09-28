@@ -4932,6 +4932,30 @@ Metadata для них не пересчитывать. В следующих п
 
 ---
 
+# 35ZZN. 2026-09-28 — Core batch 6 (#81–#85, #87–#94)
+
+- 10 объектов (#81, 82, 84, 87, 88, 90, 91, 92, 93, 94): QC → Enhancement
+  (пропуск) → Vision → Metadata (`auto_approved`) → Readiness → Publication —
+  **publication_approved**, adobe и shutterstock `approved`; Creative — не
+  запускался / `NO_CURRENT_ADVICE`; по 9 событий.
+- 3 объекта **human_review** (decision не изменился; Readiness / Publication /
+  Creative — `not_applicable`; по 6 событий): #83 — `TRADEMARK: Monarch`,
+  `TEXT_BRAND_OR_LEGAL: Monarch` (reason тот же); #85 — к тем же добавился
+  `LEGAL_CLAIM` для keyword `certified` (reason изменился от повторной
+  генерации Metadata); #89 — `TRADEMARK: P.I.T.`, `TEXT_BRAND_OR_LEGAL: P.I.T.`
+  (тот же).
+- Агрегат: publication_approved 10, human_review 3, blocked / stale /
+  source_invalid 0; approved Adobe 10, Shutterstock 10; `ADVISOR_ATTENTION` 0;
+  событий 108 (10×9 + 3×6); изменений decision gate — 0. Повтор `from=qc` и
+  `from=publication` — `NOTHING_TO_DO` ×13, 0 событий. Инвариант — 0 нарушений;
+  `check_consistency` OK.
+- Brand watch: 0 новых случаев (у publication_approved текст — только
+  технические маркировки или пуст; бренды Monarch / P.I.T. Vision вынес в
+  `brands`).
+- Каталог: publication_approved 71, human_review 20, stale 35, source_invalid 3.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
