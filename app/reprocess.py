@@ -26,8 +26,10 @@ STAGES = ("normalize", "qc", "enhancement", "vision", "metadata")
 
 # Что пересчитывается от стадии: порядок pipeline (QC пропускает к Vision), а не только
 # зависимость по данным. Enhancement — советующая, от неё никто не зависит.
+# view — производный шаг (AnalysisView в памяти из representation): ничего не пишет.
+PIPELINE_ORDER = ("normalize", "view", "qc", "enhancement", "vision", "metadata")
 DOWNSTREAM = {
-    "normalize": ("normalize", "qc", "enhancement", "vision", "metadata"),
+    "normalize": ("normalize", "view", "qc", "enhancement", "vision", "metadata"),
     "qc": ("qc", "enhancement", "vision", "metadata"),
     "enhancement": ("enhancement",),
     "vision": ("vision", "metadata"),
@@ -37,6 +39,7 @@ DOWNSTREAM = {
 # Что должно быть актуально, чтобы стадию можно было запускать.
 UPSTREAM = {
     "normalize": (),
+    "view": ("normalize",),
     "qc": ("normalize", "view"),
     "enhancement": ("normalize", "view"),
     "vision": ("normalize", "view", "qc"),
@@ -48,6 +51,7 @@ NOT_CONNECTED = ("readiness", "creative_review", "publication")
 
 WRITES = {
     "normalize": ["NORMALIZE/EVALUATED", "NORMALIZE/PASSED"],
+    "view": [],  # в памяти
     "qc": ["assets.qc_result", "QC/PASSED|FAILED"],
     "enhancement": ["ENHANCEMENT/ASSESSED", "ENHANCEMENT/ADVISED (только disputed)"],
     "vision": ["assets.ai_result", "AI/PASSED|FAILED"],
@@ -60,6 +64,8 @@ REPROCESSED = "REPROCESSED"
 NOTHING_TO_DO = "NOTHING_TO_DO"
 REFUSED = "REFUSED"
 STOPPED = "STOPPED"
+
+DERIVED = "DERIVED"  # view построен заново в памяти (ничего не записано)
 
 
 class ReprocessError(Exception):
@@ -142,7 +148,9 @@ def plan(asset_id: int, reprocess_from: str | None = None, through: str | None =
             why = stage.get("reason") if stage["status"] != asset_state.CURRENT else f"UPSTREAM_RERUN:{upstream_rerun[0]}"
             if name == "metadata" and (policy := _metadata_policy(asset)):
                 action, why = "stop", policy
-        if action == "run":
+            elif name == "view":
+                action = "derive"  # заново в памяти из representation, без записи
+        if action in ("run", "derive"):
             will_run.add(name)
         result["steps"].append({"stage": name, "action": action, "why": why, "status": stage["status"],
                                 "writes": WRITES[name] if action == "run" else []})
@@ -172,7 +180,10 @@ def run(
     for step in planned["steps"]:
         name = step["stage"]
         current = asset_state.get(asset_id)["stages"]
-        if current[name]["status"] == asset_state.CURRENT:
+        normalized_now = any(e["stage"] == "normalize" and e["outcome"] != "SKIPPED_CURRENT" for e in executed)
+        if name == "view" and normalized_now:
+            pass  # representation только что пересоздана — view строится заново (ниже)
+        elif current[name]["status"] == asset_state.CURRENT:
             executed.append({"stage": name, "outcome": "SKIPPED_CURRENT"})
             continue
         # Защита: стадия не запускается на неактуальном upstream (например, QC не прошёл).
@@ -184,6 +195,15 @@ def run(
         if name == "metadata" and (policy := _metadata_policy(get_asset(asset_id))):
             stopped = {"stage": name, "code": policy}
             break
+
+        if name == "view":
+            try:
+                view = analysis_view.open_asset_view(asset_id)
+            except analysis_view.ViewUnavailable as exc:
+                stopped = {"stage": name, "code": f"VIEW_FAILED:{exc.code}"}
+                break
+            executed.append({"stage": name, "outcome": DERIVED})
+            continue
 
         if name in ("qc", "enhancement", "vision") and view is None:
             try:
@@ -199,7 +219,9 @@ def run(
             break
 
     after = asset_state.get(asset_id)
-    ran = [e for e in executed if e["outcome"] != "SKIPPED_CURRENT"]
+    # REPROCESS/DONE — только если хотя бы одна стадия реально пересчитана (контракт §6):
+    # пропуски актуальных и производный view событием не считаются.
+    ran = [e for e in executed if e["outcome"] not in ("SKIPPED_CURRENT", DERIVED)]
     outcome = STOPPED if stopped else (REPROCESSED if ran else NOTHING_TO_DO)
     if ran:  # no-op пересчёт событий не пишет
         _write_summary(asset_id, {

@@ -258,3 +258,114 @@ def test_service_operation_and_rights(stocker_root):
     assert dispatch("asset.reprocess", {"asset_id": asset_id}, actor="workflow:n8n")["error"]["code"] == "FORBIDDEN"
     view = dispatch("asset.get", {"asset_id": asset_id})["data"]
     assert view["allowed_actions"][0] == {"operation": "asset.reprocess", "access": "pipeline", "params": {"reprocess_from": "qc"}}
+
+
+# --- Диагностика этапа C: normalize, metadata, through, no-op ----------------------------------
+
+
+def test_from_normalize_uses_the_same_pipeline_chain(stocker_root):
+    asset_id = processed(stocker_root)
+    make_legacy(stocker_root, asset_id)
+    planned = reprocess.run(asset_id, reprocess_from="normalize")
+    assert [s["stage"] for s in planned["steps"]] == ["normalize", "view", "qc", "enhancement", "vision", "metadata"]
+    assert stages(planned) == [("normalize", "skip"), ("view", "skip"), ("qc", "run"), ("enhancement", "skip"),
+                               ("vision", "run"), ("metadata", "run")]
+    result = run(asset_id, reprocess_from="normalize", dry_run=False)
+    assert executed(result) == [("normalize", "SKIPPED_CURRENT"), ("view", "SKIPPED_CURRENT"), ("qc", "QC_PASSED"),
+                                ("enhancement", "SKIPPED_CURRENT"), ("vision", "AI_PASSED"), ("metadata", "DRAFTED")]
+
+
+def test_from_normalize_after_normalizer_change_reruns_every_pixel_stage(stocker_root, monkeypatch):
+    asset_id = processed(stocker_root)
+    monkeypatch.setattr(normalizer_module(), "PARAMS_HASH", "sha256:new-params")
+    planned = reprocess.run(asset_id)
+    assert planned["reprocess_from"] == "normalize"
+    assert stages(planned) == [("normalize", "run"), ("view", "derive"), ("qc", "run"), ("enhancement", "run"),
+                               ("vision", "run"), ("metadata", "run")]
+    result = run(asset_id, dry_run=False)
+    assert executed(result) == [("normalize", "NORMALIZED"), ("view", "DERIVED"), ("qc", "QC_PASSED"),
+                                ("enhancement", "ASSESSED"), ("vision", "AI_PASSED"), ("metadata", "DRAFTED")]
+    state = asset_state.get(asset_id)
+    assert all(state["stages"][s]["status"] == "current" for s in reprocess.PIPELINE_ORDER)
+
+
+def normalizer_module():
+    from app import normalizer
+
+    return normalizer
+
+
+def test_from_metadata_with_current_vision(stocker_root):
+    asset_id = processed(stocker_root)
+    passed = [json.loads(m) for s, st, m in events(stocker_root, asset_id) if (s, st) == ("AI", "PASSED")][-1]
+    from app.database.db import add_event
+
+    add_event(asset_id, "AI", "PASSED", json.dumps(passed))  # новый актуальный Vision event, metadata — на старом
+    assert asset_state.get(asset_id)["reprocess_from"] == "metadata"
+    result = run(asset_id, reprocess_from="metadata", dry_run=False)
+    assert executed(result) == [("metadata", "DRAFTED")]
+    assert asset_state.get(asset_id)["stages"]["metadata"]["status"] == "current"
+
+
+def test_from_metadata_with_stale_vision_is_refused_without_writing(stocker_root):
+    asset_id = processed(stocker_root)
+    make_legacy(stocker_root, asset_id, qc_legacy=False)
+    before = events(stocker_root, asset_id)
+    result = run(asset_id, reprocess_from="metadata", dry_run=False)
+    assert result["refused"]["code"] == "UPSTREAM_NOT_CURRENT" and result["refused"]["stage"] == "vision"
+    assert events(stocker_root, asset_id) == before
+
+
+def test_upstream_is_rechecked_right_before_the_stage_writes(stocker_root, monkeypatch):
+    # План построен, когда Vision был актуален; перед записью metadata Vision устарел —
+    # проверка при выполнении, а не только в плане, останавливает запись.
+    asset_id = processed(stocker_root)
+    passed = [json.loads(m) for s, st, m in events(stocker_root, asset_id) if (s, st) == ("AI", "PASSED")][-1]
+    from app.database.db import add_event
+
+    add_event(asset_id, "AI", "PASSED", json.dumps(passed))
+    original_plan = reprocess.plan
+
+    def plan_then_vision_goes_stale(*args, **kwargs):
+        result = original_plan(*args, **kwargs)
+        make_legacy(stocker_root, asset_id, qc_legacy=False)
+        return result
+
+    monkeypatch.setattr(reprocess, "plan", plan_then_vision_goes_stale)
+    metadata_before = [e for e in events(stocker_root, asset_id) if e[0].startswith("METADATA")]
+    result = run(asset_id, reprocess_from="metadata", dry_run=False)
+    assert result["outcome"] == reprocess.STOPPED
+    assert result["stopped"] == {"stage": "metadata", "code": "UPSTREAM_NOT_CURRENT", "upstream": "vision",
+                                 "status": "stale", "reason": "NO_FINGERPRINT"}
+    assert [e for e in events(stocker_root, asset_id) if e[0].startswith("METADATA")] == metadata_before
+    assert not [e for e in events(stocker_root, asset_id) if e[0] == "REPROCESS"]
+
+
+@pytest.mark.parametrize("start, through, chain", [
+    ("qc", "qc", ["qc"]),
+    ("qc", "vision", ["qc", "enhancement", "vision"]),
+    ("vision", "metadata", ["vision", "metadata"]),
+    ("normalize", "view", ["normalize", "view"]),
+])
+def test_through_follows_pipeline_order(stocker_root, start, through, chain):
+    asset_id = processed(stocker_root)
+    make_legacy(stocker_root, asset_id, qc_legacy=start != "vision")
+    planned = reprocess.run(asset_id, reprocess_from=start, through=through)
+    assert [s["stage"] for s in planned["steps"]] == chain
+
+
+@pytest.mark.parametrize("start, through", [("vision", "qc"), ("metadata", "vision"), ("enhancement", "vision")])
+def test_through_upstream_of_start_is_refused_without_writing(stocker_root, start, through):
+    asset_id = processed(stocker_root)
+    before = events(stocker_root, asset_id)
+    result = run(asset_id, reprocess_from=start, through=through, dry_run=False)
+    assert result["outcome"] == reprocess.REFUSED and result["refused"]["code"] == "INVALID_THROUGH"
+    assert events(stocker_root, asset_id) == before
+
+
+def test_noop_on_current_object_writes_no_event_from_any_start(stocker_root):
+    asset_id = processed(stocker_root)
+    before = events(stocker_root, asset_id)
+    for start in ("normalize", "qc", "enhancement", "vision", "metadata"):
+        assert run(asset_id, reprocess_from=start, dry_run=False)["outcome"] == reprocess.NOTHING_TO_DO
+    assert events(stocker_root, asset_id) == before

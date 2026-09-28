@@ -311,14 +311,18 @@ ingest → processing → (stale ↔ пересчёт) → human_review ──ap
 
 | `reprocess_from` | Цепочка (порядок pipeline) |
 |---|---|
-| `normalize` | normalize → qc → enhancement → vision → metadata |
+| `normalize` | normalize → **view** → qc → enhancement → vision → metadata |
 | `qc` | qc → enhancement → vision → metadata |
 | `vision` | vision → metadata |
 | `metadata` | metadata |
 | `enhancement` | enhancement (советующая, от неё никто не зависит) |
 
-- Порядок — порядок pipeline (QC пропускает к Vision), а не только зависимость по
-  данным. Readiness, Creative Review, Publication **не запускаются** (не подключены к
+- Порядок — **один** порядок pipeline для всех цепочек (`PIPELINE_ORDER`:
+  normalize → view → qc → enhancement → vision → metadata); цепочка от стадии —
+  хвост этого порядка, особой логики у `normalize` нет. `view` — производный шаг
+  (AnalysisView в памяти из representation): ничего не пишет; строится заново,
+  если Normalize в этом проходе реально выполнился, иначе — `SKIPPED_CURRENT`.
+  Порядок pipeline, а не только зависимость по данным (QC пропускает к Vision). Readiness, Creative Review, Publication **не запускаются** (не подключены к
   pipeline): их устаревание остаётся видно в `state`.
 - Запускается только стадия, которая сейчас **не актуальна**; актуальная —
   `SKIPPED_CURRENT`. Повтор при неизменных входах — `NOTHING_TO_DO`, **ни одного
@@ -332,8 +336,22 @@ ingest → processing → (stale ↔ пересчёт) → human_review ──ap
   без решений и правок человека; `approved` / `rejected` / `edited_fields` →
   остановка (`HUMAN_DECISION` / `HUMAN_EDITS`), metadata остаётся честно `stale`.
 - Один AnalysisView на все пиксельные стадии пересчёта.
-- `dry_run=true` по умолчанию: план (состояние, причина, стадии run / skip / stop,
-  что будет записано), без записи. `through` ограничивает цепочку.
+- `dry_run=true` по умолчанию: план (состояние, причина, стадии run / skip / derive /
+  stop, что будет записано), без записи.
+- **`through`** ограничивает цепочку **по порядку pipeline** и должен лежать в ней:
+  `from=qc, through=qc` → QC; `from=qc, through=vision` → QC → Enhancement →
+  Vision; `from=vision, through=metadata` → Vision → Metadata; `through` выше
+  `from` (`from=vision, through=qc`) → отказ `INVALID_THROUGH` без записи.
+- **`from=metadata`**: Vision актуален, metadata устарела → пересобирается
+  только metadata; Vision не актуален → отказ `UPSTREAM_NOT_CURRENT` без записи.
+- **Upstream проверяется дважды:** при построении плана и **непосредственно
+  перед выполнением каждой стадии** (состояние вычисляется заново). Если между
+  планом и записью upstream устарел — `STOPPED` `UPSTREAM_NOT_CURRENT`, запись
+  стадии и `REPROCESS/DONE` не выполняются.
+- **`REPROCESS/DONE`** пишется, **только если хотя бы одна стадия реально
+  пересчитана**. Пропуски актуальных (`SKIPPED_CURRENT`) и производный view
+  (`DERIVED`) не в счёт: повтор полностью актуального объекта с любым
+  `reprocess_from` — ноль новых событий.
 - Доступ: `pipeline` (человек, агент); **n8n — нет** (массовый пересчёт не
   подключён). Одна операция — один объект.
 
@@ -350,10 +368,14 @@ ingest → processing → (stale ↔ пересчёт) → human_review ──ap
 
 - Модель в отпечатке Vision — по идентификатору: замена весов под тем же именем
   отпечатком не видна.
-- Vision запрашивается с умолчанием сервера по `temperature`: при **том же**
-  отпечатке ответ может немного отличаться (#10: «Concrete Surface Detail…» и
-  «Concrete Structure Detail…» в двух прогонах). Отпечаток гарантирует
-  одинаковые **входы**, а не одинаковый ответ модели.
+- **Vision nondeterminism.** Vision запрашивается с умолчанием сервера по
+  `temperature`: при **том же** отпечатке ответ может отличаться (#10: «Concrete
+  Surface Detail…» и «Concrete Structure Detail…» в двух прогонах). Отпечаток
+  доказывает идентичность **входов**, а не идентичность результата модели.
+- **Design requirement (следующий этап, не реализовано):** execution identity
+  Vision — как минимум provider; model name; **model revision или hash весов,
+  если сервер их отдаёт**; prompt version / hash; schema hash; request params;
+  image encoding; view fingerprint. Массовый пересчёт из-за этого не нужен.
 
 ## 7. Совместимость и миграция для существующих 129 объектов
 
