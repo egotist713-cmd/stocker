@@ -93,13 +93,19 @@ def _stage(status: str, reason: str | None = None, **extra) -> dict:
 # --- Source integrity (§3.5) ------------------------------------------------------------
 
 def source_status(asset: dict, events: list[dict], verify: bool = False) -> dict:
+    """
+    Уровни проверки (контракт §3.5a): fast (exists + size + свидетельства) может только
+    опровергнуть source; идентичность доказывает только sha256 (verify=True).
+    """
+    level = "sha256" if verify else "fast"
     path = ingest.source_file(asset)
     if not path.exists():
-        return _stage(MISSING, "SOURCE_MISSING")
+        return _stage(MISSING, "SOURCE_MISSING", verification=level)
     if asset.get("file_size") and path.stat().st_size != asset["file_size"]:
-        return _stage("changed", "SOURCE_CHANGED")
+        return _stage("changed", "SOURCE_CHANGED", verification=level)
     if verify:
-        return _stage("ok") if ingest.sha256_file(path) == asset["file_hash"] else _stage("changed", "SOURCE_CHANGED")
+        same = ingest.sha256_file(path) == asset["file_hash"]
+        return _stage("ok", verification=level) if same else _stage("changed", "SOURCE_CHANGED", verification=level)
 
     negatives = [e for e in events if (e["stage"], e["status"]) == ("SOURCE", "INVALID")
                  or ((e["stage"], e["status"]) == ("NORMALIZE", "FAILED")
@@ -109,8 +115,9 @@ def source_status(asset: dict, events: list[dict], verify: bool = False) -> dict
     negative, positive = (negatives or [None])[-1], (positives or [None])[-1]
     if _newer(negative, positive):
         # Файл на месте, но последнее свидетельство — отрицательное: без проверки не «ok».
-        return _stage("changed", "SOURCE_CHANGED")
-    return _stage("ok")
+        return _stage("changed", "SOURCE_CHANGED", verification=level)
+    # «ok» при fast — признаков изменения нет, а не «идентичен».
+    return _stage("ok", verification=level)
 
 
 # --- Собственные статусы стадий -----------------------------------------------------------

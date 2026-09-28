@@ -32,7 +32,11 @@ class ListParams(Params):
     qc: Literal["pending", "passed", "failed"] | None = None
     vision: Literal["pending", "done", "failed"] | None = None
     metadata_state: Literal["none", "draft", "auto_approved", "human_review", "approved", "rejected"] | None = None
-    ready: bool | None = None
+    state: Literal[
+        "rejected", "source_invalid", "blocked", "error", "stale", "processing",
+        "human_review", "metadata_approved", "platform_ready",
+    ] | None = None
+    metadata_approved: bool | None = None
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0)
 
@@ -130,17 +134,24 @@ class Operation:
 # Описания видит агент (tool_search / tool_describe в OpenClaw) и выбирает по ним
 # инструмент и аргументы. Поэтому в каждом — точные аргументы с примером.
 DESCRIPTIONS = {
-    "asset.get": 'Full state of one asset: pipeline stages, QC, Vision, metadata, allowed actions. Args: {"asset_id": 5}',
+    "asset.get": (
+        "Full state of one asset: state (overall: stale / source_invalid / blocked / error / processing / "
+        "human_review / metadata_approved / platform_ready / rejected, with reasons, problems and per-stage "
+        'status), pipeline stage summaries, QC, Vision, metadata, allowed actions. Args: {"asset_id": 5}'
+    ),
     "asset.list": (
         'List assets. Optional filters are separate top-level args (no "filter" object): '
-        "ready (true/false), metadata_state (none|draft|auto_approved|human_review|approved|rejected), "
+        "state (rejected|source_invalid|blocked|error|stale|processing|human_review|metadata_approved|platform_ready), "
+        "metadata_approved (true/false: metadata approved — NOT ready for stock), "
+        "metadata_state (none|draft|auto_approved|human_review|approved|rejected), "
         "qc (pending|passed|failed), vision (pending|done|failed), limit, offset. "
-        'Example: {"ready": true}. Use {} for all assets. For what waits for a human, use review_queue.'
+        'Example: {"state": "platform_ready"}. Use {} for all assets. For what waits for a human, use review_queue.'
     ),
     "asset.history": 'Processing events of an asset (JSON messages parsed). Args: {"asset_id": 5}, optional "stage": "METADATA"',
     "review.queue": (
-        "Overview in one call: summary (total_assets, ready, counts by metadata state, problem_assets with reasons) "
-        "and items waiting for a human decision (human_review) with reasons. "
+        "Overview in one call: summary (total_assets, by_state, metadata_approved, platform_ready — ready for at "
+        "least one stock platform, by_metadata_state, problem_counts, problem_assets) and items waiting for a human "
+        "decision (state human_review) with reasons. "
         "Use for 'what is going on', 'how many are ready', 'what needs my review / attention'. Args: {}"
     ),
     "metadata.get": 'Metadata of an asset: title, description, keywords, validation, review gate. Args: {"asset_id": 5}',

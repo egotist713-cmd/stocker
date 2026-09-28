@@ -32,20 +32,15 @@ class StockVision(FakeAnalyzer):
         return VISION
 
 
-@pytest.fixture(autouse=True)
-def known_test_provider(monkeypatch):
-    # Тестовый провайдер Vision известен read-model'у (неизвестный — STALE по контракту).
-    monkeypatch.setitem(asset_state.VISION_PROMPT_VERSIONS, FakeAnalyzer.provider, FakeAnalyzer.prompt_version)
-
-
 @pytest.fixture
 def small_images_allowed(monkeypatch):
     profiles = {name: dataclasses.replace(p, min_mp=0.001) for name, p in rd.PROFILES.items()}
     monkeypatch.setattr(rd, "PROFILES", profiles)
 
 
-def processed(root, *, icc_profile=SRGB_ICC, analyzer=None, name="photo.jpg") -> int:
-    return worker.process_file(make_image(root, name=name, icc_profile=icc_profile), analyzer=analyzer or StockVision())
+def processed(root, *, icc_profile=SRGB_ICC, analyzer=None, name="photo.jpg", seed=0) -> int:
+    path = make_image(root, name=name, seed=seed, icc_profile=icc_profile)
+    return worker.process_file(path, analyzer=analyzer or StockVision())
 
 
 def state(asset_id: int) -> dict:
@@ -338,3 +333,37 @@ def test_partial_metadata_is_processing(stocker_root):
     assert result["metadata_state"] == "draft"
     assert result["state"] == asset_state.PROCESSING and result["reasons"] == ["METADATA_PARTIAL"]
     assert "metadata.build" in ops(result)
+
+
+# --- Этап A: asset.get и review.queue показывают derived state -----------------------------------
+
+
+def test_asset_get_shows_state_and_no_approve_without_source(stocker_root):
+    asset_id = processed(stocker_root)
+    dispatch("metadata.escalate", {"asset_id": asset_id, "reason": "check"})
+    (stocker_root / "data" / "incoming" / "photo.jpg").unlink()
+
+    view = dispatch("asset.get", {"asset_id": asset_id})["data"]
+    assert view["state"]["state"] == "source_invalid" and view["state"]["problems"] == ["SOURCE_MISSING"]
+    assert view["pipeline"]["source"] == "missing"  # раньше — «ok» (#67 / #68)
+    assert view["pipeline"]["metadata"] == "human_review"  # результат стадии не скрыт
+    assert view["allowed_actions"] == []
+    assert "ready" not in view["pipeline"] and view["pipeline"]["metadata_approved"] is False
+
+
+def test_review_queue_reports_stale_and_source_invalid(stocker_root, monkeypatch):
+    stale_id = processed(stocker_root, name="a.jpg")
+    missing_id = processed(stocker_root, name="b.jpg", seed=1)
+    (stocker_root / "data" / "incoming" / "b.jpg").unlink()
+    monkeypatch.setattr(normalizer, "VIEW_VERSION", "analysis-view-v2")  # всё по пикселям устарело
+
+    summary = dispatch("review.queue", {})["data"]["summary"]
+    assert summary["by_state"]["stale"] == 1 and summary["by_state"]["source_invalid"] == 1
+    assert summary["metadata_approved"] == 2 and summary["platform_ready"] == 0
+    problems = {item["id"]: item for item in summary["problem_assets"]}
+    assert problems[missing_id]["problems"] == ["SOURCE_MISSING"]
+    assert problems[stale_id]["state"] == "stale" and "STALE:qc:FINGERPRINT_CHANGED" in problems[stale_id]["problems"]
+    assert summary["problem_counts"]["SOURCE_MISSING"] == 1 and summary["problem_counts"]["STALE:qc"] == 1
+
+    stale_view = dispatch("asset.get", {"asset_id": stale_id})["data"]
+    assert {"operation": "metadata.approve", "access": "review"} not in stale_view["allowed_actions"]

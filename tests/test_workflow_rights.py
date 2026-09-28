@@ -44,7 +44,7 @@ def test_workflow_allowed_operations(stocker_root, fake_vision):
 
     assert dispatch("incoming.list", {}, actor=N8N)["ok"]
     assert dispatch("review.queue", {}, actor=N8N)["ok"]
-    assert dispatch("asset.list", {"ready": True}, actor=N8N)["ok"]
+    assert dispatch("asset.list", {"metadata_approved": True}, actor=N8N)["ok"]
     assert dispatch("metadata.build", {"asset_id": asset_id}, actor=N8N)["ok"]
     assert dispatch("metadata.gate", {"asset_id": asset_id}, actor=N8N)["ok"]
     assert dispatch("asset.get", {"asset_id": asset_id}, actor=N8N)["ok"]

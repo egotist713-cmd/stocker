@@ -4136,6 +4136,65 @@ Publication gate и n8n.
 
 ---
 
+# 35ZV. 2026-09-28 — Контракт состояния принят; уточнения; этап A (derived state в asset.get / review.queue)
+
+### Решения пользователя
+
+1. Контракт Unified Asset State + Staleness **согласован**. 126 `stale` и 3
+   `source_invalid` — корректное состояние; вручную не исправлять, массовый
+   Vision / reprocess не запускать.
+2. Уточнения: `platform_ready` — только «актуальный Readiness прошёл хотя бы для
+   одной площадки» (не все площадки, не экспорт, не `ready_for_export`);
+   `stale` / `blocked` / `error` / `source_invalid` / `rejected` не смешивать;
+   уровни проверки source (fast ≠ идентичность, где нужен SHA256); состав
+   отпечатков QC и Vision — до записи, без полей «для наличия».
+3. Порядок: A — derived state в `asset.get` / `review.queue`; B — отпечатки;
+   C — `asset.reprocess`; затем Readiness → Creative Review → Publication gate →
+   n8n. Сейчас — только A.
+
+### Сделано
+
+- Контракт: §3.4 (пять состояний и `platform_ready`), §3.5a (fast vs sha256:
+  все отпечатки — от `assets.file_hash`; SHA256 обязателен перед созданием
+  результата; read-model fast может только опровергнуть source), §2.1a (состав
+  отпечатков QC: view fp + `QC_RULES_VERSION`; Vision: view fp, вариант и
+  кодирование, provider / model, prompt_version, хеш схемы ответа, параметры
+  запроса). `stages.source.verification` = `fast` / `sha256`.
+- **Этап A:** `asset.get` — поле `state` (итог, причины, `reprocess_from`,
+  problems, статусы стадий); `allowed_actions` — из него; `pipeline.ready` →
+  `pipeline.metadata_approved`; `pipeline.source` — из контракта (раньше #67 /
+  #68 были `ok`). `asset.list`: фильтр `ready` удалён → `state`,
+  `metadata_approved`; в кратком виде — `state` и `problems`. `review.queue`:
+  `summary.ready` удалён → `by_state`, `metadata_approved`, `platform_ready`,
+  `problem_counts`; `problem_assets` — по приоритету состояния; очередь
+  человека — итоговое `human_review`. Результаты стадий не удалялись.
+- Потребители: workflow `stocker-digest` (в репозитории) — сводка по новым
+  полям, до 10 объектов, `NOTIFY/SENT` только для показанных; skill OpenClaw;
+  описания операций; SERVICE_CONTRACT, N8N_CONTRACT.
+- Тесты: `tests/test_asset_state.py` +2 (asset.get без source — нет approve,
+  `pipeline.source = missing`; review.queue — stale и source_invalid с кодами);
+  тестовый провайдер Vision зарегистрирован в conftest; помощник
+  `_vision_asset` — с QC по view и отпечатком view в `AI/PASSED`; тесты
+  старой семантики `ready` обновлены.
+
+### Проверка (рабочая БД, через операции сервиса, только чтение)
+
+| | Результат |
+|---|---|
+| Итоговые состояния | `stale` 126 (`reprocess_from = qc`), `source_invalid` 3 (#2, #67, #68) |
+| `metadata.approve` предлагается | 0 объектам |
+| allowed_actions | stale → `asset.process` (force, пересчёт); source_invalid → нет действий |
+| `pipeline.source` | ok 126, missing 2, changed 1 |
+| review.queue | `metadata_approved` 109, `platform_ready` 0, `by_metadata_state.human_review` 19, очередь человека 0 (все устарели), проблемы: SOURCE_* 3, STALE:qc 126, STALE:creative_review 126 |
+| Советующие стадии | Creative Review устарел у 126, Enhancement актуален — итог определяют обязательные стадии |
+| Событий записано | 0 |
+
+`pytest`: 612 passed, 5 skipped. Сервер Stocker **не перезапущен**: живой
+workflow `stocker-digest` в n8n читает `summary.ready` — перезапуск только
+вместе с обновлением workflow в n8n (решение пользователя).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

@@ -133,7 +133,7 @@ Allowlist — константа в коде; изменение — измен�
 |---|---|---|
 | `stocker-ingest` | каждые 5 минут | `incoming.list` → для каждого нового файла без `duplicate_of` → `asset.process_file` **последовательно** |
 | `stocker-retry` | каждые 30 минут (**выключен** до накопления статистики, §6.1) | `asset.list {"vision":"failed"}` → `asset.process`; partial-черновики → `metadata.build`. Ограничители — §6.1 |
-| `stocker-digest` | ежедневно + после ingest при изменениях | `review.queue` → сводка (`summary`) → `stocker-notify` |
+| `stocker-digest` | ежедневно + после ingest при изменениях | `review.queue` → сводка (`summary`: итоговые состояния, metadata одобрена ≠ готово для площадки, проблемы по кодам, до 10 объектов по приоритету) → `stocker-notify`; `NOTIFY/SENT` — только для показанных объектов (с 28.09.2026) |
 | `stocker-notify` | вызывается другими | слой уведомлений: `{severity, title, text, data, kind, items}` → канал → `notification.record` (если есть `items`) |
 
 ### 6.1. Ограничители `stocker-retry` (26.09.2026)

@@ -4,8 +4,8 @@ import sqlite3
 import pytest
 
 from app import metadata as metadata_service
-from app import normalization
-from app.database.db import add_event, save_ai_result
+from app import normalization, normalizer, qc
+from app.database.db import add_event, get_asset, save_ai_result
 from app.ingest import ingest_file
 from app.service import dispatch
 
@@ -25,8 +25,12 @@ def fake_vision(monkeypatch):
 def _vision_asset(stocker_root, name="photo.jpg", seed=0, vision=VISION, icc_profile=None) -> int:
     asset_id = ingest_file(make_image(stocker_root, name=name, seed=seed, icc_profile=icc_profile))
     normalization.run_asset(asset_id)  # факты и representation: пиксели стадии берут из AnalysisView
+    qc.save_qc_result(asset_id, qc.check_asset(get_asset(asset_id)))  # QC по view, как в worker
     save_ai_result(asset_id, vision.model_dump_json())
-    add_event(asset_id, "AI", "PASSED", json.dumps({"provider": "lmstudio", "model": "v", "prompt_version": "local-v2"}))
+    # Vision «как после AnalysisView»: отпечаток view текущего source (иначе результат — наследие, STALE).
+    file_hash = get_asset(asset_id)["file_hash"]
+    add_event(asset_id, "AI", "PASSED", json.dumps({"provider": "lmstudio", "model": "v", "prompt_version": "local-v2",
+                                                    "view": {"fingerprint": normalizer.view_fingerprint(file_hash)}}))
     return asset_id
 
 
@@ -192,7 +196,7 @@ def test_process_file_runs_full_pipeline(stocker_root, fake_vision):
         "vision": "done",
         "metadata": "auto_approved",
         "metadata_completeness": "full",
-        "ready": True,
+        "metadata_approved": True,
         "review_reasons": [],
         "normalize": {
             "evaluated": True,
@@ -296,8 +300,9 @@ def test_allowed_actions_for_human_review(stocker_root):
 
     assert view["pipeline"]["metadata"] == "human_review"
     assert view["pipeline"]["review_reasons"] == ["TEXT_BRAND_OR_LEGAL"]
+    assert view["state"]["state"] == "human_review" and view["state"]["reasons"] == ["TEXT_BRAND_OR_LEGAL"]
     assert {a["operation"] for a in view["allowed_actions"]} == {
-        "metadata.edit", "metadata.rebuild", "metadata.gate", "metadata.escalate", "metadata.approve", "metadata.reject",
+        "metadata.edit", "metadata.rebuild", "metadata.escalate", "metadata.approve", "metadata.reject",
     }
 
 
@@ -311,7 +316,9 @@ def test_list_filters_and_review_queue(stocker_root):
     def ids(params):
         return [item["id"] for item in dispatch("asset.list", params)["data"]["items"]]
 
-    assert ids({"ready": True}) == [ready_id]
+    assert ids({"metadata_approved": True}) == [ready_id]
+    assert ids({"state": "metadata_approved"}) == [ready_id]
+    assert ids({"state": "human_review"}) == [review_id]
     assert ids({"metadata_state": "human_review"}) == [review_id]
     assert ids({"metadata_state": "none"}) == [no_metadata_id]
     assert ids({"limit": 1, "offset": 1}) == [review_id]
@@ -366,7 +373,7 @@ def test_invalid_params_error_lists_allowed_params(stocker_root):
     wrong_filter = dispatch("asset.list", {"filter": '{"state": "ready"}'}, actor=AGENT)["error"]["message"]
 
     assert "Allowed params: asset_id (required)" in wrong_key
-    assert "Allowed params: qc, vision, metadata_state, ready, limit, offset" in wrong_filter
+    assert "Allowed params: qc, vision, metadata_state, state, metadata_approved, limit, offset" in wrong_filter
 
 
 def test_descriptions_carry_argument_examples():
@@ -393,14 +400,18 @@ def test_review_queue_summary_covers_whole_catalog(stocker_root, monkeypatch):
 
     summary = data["summary"]
     assert summary["total_assets"] == 4
-    assert summary["ready"] == 1
+    assert "ready" not in summary  # одно слово для разных смыслов больше не используется
+    assert summary["metadata_approved"] == 1 and summary["platform_ready"] == 0
+    assert summary["by_state"]["metadata_approved"] == 1 and summary["by_state"]["human_review"] == 1
+    assert summary["by_state"]["processing"] == 2
     assert summary["by_metadata_state"] == {
         "none": 1, "draft": 1, "auto_approved": 1, "human_review": 1, "approved": 0, "rejected": 0,
     }
     problems = {item["id"]: item["problems"] for item in summary["problem_assets"]}
-    assert problems == {review_id: ["TRADEMARK"], partial_id: ["METADATA_PARTIAL"]}
+    assert problems == {partial_id: ["METADATA_PARTIAL"]}  # human_review — в очереди, а не в проблемах
+    assert summary["problem_counts"] == {"METADATA_PARTIAL": 1}
     assert no_metadata_id not in problems  # просто ещё не обработан — не проблема
-    assert [item["id"] for item in data["items"]] == [review_id]  # очередь как раньше
+    assert [item["id"] for item in data["items"]] == [review_id]
 
 
 @pytest.mark.parametrize("decision", ["approve", "reject"])

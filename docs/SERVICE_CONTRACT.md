@@ -109,8 +109,8 @@ OpenClaw (MCP)   n8n (Execute Command → позже HTTP)   человек (CLI
 | Операция | Параметры | Возвращает |
 |---|---|---|
 | `asset.get` | `asset_id` | asset view (§4.1) |
-| `asset.list` | `qc?`, `vision?`, `metadata_state?` (`none`/`draft`/`auto_approved`/`human_review`/`approved`/`rejected`), `ready?`, `limit=50`, `offset=0` | список кратких asset view |
-| `review.queue` | `limit=50`, `offset=0` | `summary` по всему каталогу (`total_assets`, `ready`, `by_metadata_state`, `problem_assets` с причинами) + `items` — assets в `human_review` с причинами gate (очередь человека). Один вызов отвечает «что происходит» |
+| `asset.list` | `qc?`, `vision?`, `metadata_state?` (`none`/`draft`/`auto_approved`/`human_review`/`approved`/`rejected`), `state?` (итоговое состояние, `ASSET_STATE_CONTRACT.md` §3.1), `metadata_approved?`, `limit=50`, `offset=0` | список кратких asset view (с `state` и `problems`) |
+| `review.queue` | `limit=50`, `offset=0` | `summary` по всему каталогу (`total_assets`, `by_state` — итоговые состояния, `metadata_approved`, `platform_ready` — готово хотя бы для одной площадки, `by_metadata_state`, `problem_counts`, `problem_assets` — по приоритету состояния) + `items` — объекты в итоговом состоянии `human_review` (очередь человека; устаревшие туда не попадают). `ready` удалён (28.09.2026): одно слово для разных смыслов |
 | `asset.history` | `asset_id`, `stage?` | события, `message` распарсен из JSON (старые текстовые — как строка) |
 | `metadata.get` | `asset_id` | `metadata_json` |
 | `operations.list` | — | манифест операций с JSON Schema параметров |
@@ -172,13 +172,21 @@ title, key, actor}`. Идемпотентность: если у asset уже е
   "status": "PASSED",
   "created_at": "...", "updated_at": "...",
 
+  "state": {
+    "state_version": "asset-state-v1",
+    "state": "metadata_approved",
+    "reasons": [], "reprocess_from": null, "terminal": false,
+    "metadata_approved": true, "ready_for": [], "problems": [],
+    "stages": {"source": {"status": "ok", "verification": "fast"}, "qc": {"status": "current"}, "...": {}}
+  },
+
   "pipeline": {
     "source": "ok",
     "qc": "passed",
     "vision": "done",
     "metadata": "auto_approved",
     "metadata_completeness": "full",
-    "ready": true,
+    "metadata_approved": true,
     "review_reasons": []
   },
 
@@ -193,18 +201,22 @@ title, key, actor}`. Идемпотентность: если у asset уже е
 }
 ```
 
-**`pipeline`** — производное представление из `assets` и событий.
-`assets.status` не меняется и отдаётся как есть. Это прообраз будущей явной
-модели статусов, но без миграции:
+**`state`** — Unified Asset State (`docs/ASSET_STATE_CONTRACT.md`,
+`app/asset_state.py`, с 28.09.2026): итоговое производное состояние, причины,
+`reprocess_from`, `problems`, статусы и отпечатки каждой стадии. `allowed_actions`
+вычисляются из него.
+
+**`pipeline`** — сводки результатов стадий из `assets` и событий (итоговым
+состоянием не являются). `assets.status` — наследие, отдаётся как есть:
 
 | Ключ | Значения | Источник |
 |---|---|---|
-| `source` | `ok` \| `changed` \| `missing` \| `unknown` | последнее `SOURCE/INVALID` новее последнего `QC/*` → `changed`/`missing`; иначе `ok`, если есть QC, или `unknown` |
+| `source` | `ok` \| `changed` \| `missing` | `state.stages.source` (fast-проверка: существование, размер, свидетельства; `ASSET_STATE_CONTRACT.md` §3.5a). `ok` — признаков изменения нет, а не «идентичен» |
 | `qc` | `pending` \| `passed` \| `failed` | `qc_result` |
 | `vision` | `pending` \| `done` \| `failed` | `ai_result`; последнее `AI/FAILED` без последующего `AI/PASSED` → `failed` |
 | `metadata` | `none` \| `draft` \| `auto_approved` \| `human_review` \| `approved` \| `rejected` | `metadata_json.state` |
 | `metadata_completeness` | `full` \| `partial` \| null | `metadata_json.completeness` |
-| `ready` | bool | `metadata ∈ {auto_approved, approved}`: объект может двигаться дальше (экспорт) без человека |
+| `metadata_approved` | bool | `metadata ∈ {auto_approved, approved}` — **только** одобрение metadata; не готовность к площадкам (`state.ready_for`) и не `ready_for_export` (было `ready` до 28.09.2026) |
 | `review_reasons` | list[code] | `review_gate.reasons` для `human_review`, иначе `[]` |
 | `normalize` | obj | `{evaluated, stale, failed, container, color_profile, hdr, motion_video, event_id}` — последнее `NORMALIZE/EVALUATED` (с 27.09.2026) |
 | `enhancement` | obj | `{assessed, stale, decision (enhancement_not_needed\|enhancement_recommended\|enhancement_risky\|disputed), decided_by (rules\|advisor\|null), reasons, confidence, event_id}` — последнее `ENHANCEMENT/ASSESSED` и рекомендация к нему (с 26.09.2026) |

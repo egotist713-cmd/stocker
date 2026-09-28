@@ -134,6 +134,14 @@ class OfflineCreativeAdvisor(CreativeAdvisor):
 
 
 @pytest.fixture(autouse=True)
+def known_test_vision_provider(monkeypatch):
+    """Тестовый провайдер Vision известен Unified Asset State (неизвестный — STALE по контракту)."""
+    from app import asset_state
+
+    monkeypatch.setitem(asset_state.VISION_PROMPT_VERSIONS, FakeAnalyzer.provider, FakeAnalyzer.prompt_version)
+
+
+@pytest.fixture(autouse=True)
 def no_real_metadata_ai(monkeypatch):
     """Ни один unit-тест не должен обращаться к настоящему LM Studio через metadata-слой и advisor."""
     monkeypatch.setattr(metadata_service, "LMStudioMetadataAnalyzer", OfflineMetadataAnalyzer)

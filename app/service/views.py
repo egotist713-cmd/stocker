@@ -1,12 +1,14 @@
 """
 Read-модели service layer (docs/SERVICE_CONTRACT.md §4).
 
-Только чтение. pipeline — производное представление из assets и событий;
-assets.status не меняется и отдаётся как есть.
+Только чтение. pipeline — сводки результатов стадий; state — Unified Asset State
+(docs/ASSET_STATE_CONTRACT.md, app/asset_state.py): итоговое производное состояние,
+problems и allowed_actions. assets.status — наследие, отдаётся как есть.
 """
 
 import json
 
+from app import asset_state
 from app import metadata_builder as mb
 from app import creative_review
 from app import enhancement_decision
@@ -15,7 +17,13 @@ from app import review_gate as rg
 from app import stock_readiness
 from app.database.db import get_asset, get_connection
 
-READY_STATES = (mb.AUTO_APPROVED, mb.APPROVED)
+METADATA_APPROVED_STATES = (mb.AUTO_APPROVED, mb.APPROVED)
+
+# Итоговые состояния объекта в порядке контракта (§3.1) — для сводок.
+ASSET_STATES = (
+    asset_state.REJECTED, asset_state.SOURCE_INVALID, asset_state.BLOCKED, asset_state.ERROR, asset_state.STALE,
+    asset_state.PROCESSING, asset_state.HUMAN_REVIEW, asset_state.METADATA_APPROVED, asset_state.PLATFORM_READY,
+)
 
 
 def _parse_json(value):
@@ -45,18 +53,8 @@ def _last(events: list[dict], stage: str, status: str | None = None) -> dict | N
     return None
 
 
-def pipeline_state(asset: dict, events: list[dict], metadata: dict | None) -> dict:
-    last_qc = _last(events, "QC")
-    last_source_invalid = _last(events, "SOURCE", "INVALID")
-
-    if last_source_invalid and (last_qc is None or last_source_invalid["id"] > last_qc["id"]):
-        reason = (_parse_json(last_source_invalid["message"]) or {}).get("reason")
-        source = "missing" if reason == "SOURCE_MISSING" else "changed"
-    elif last_qc:
-        source = "ok"
-    else:
-        source = "unknown"
-
+def pipeline_state(asset: dict, events: list[dict], metadata: dict | None, derived: dict) -> dict:
+    """Сводки стадий. Итоговое состояние — не здесь, а в derived (asset_state)."""
     qc_result = _parse_json(asset["qc_result"])
     qc = "pending" if not qc_result else ("passed" if qc_result.get("passed") else "failed")
 
@@ -70,57 +68,22 @@ def pipeline_state(asset: dict, events: list[dict], metadata: dict | None) -> di
     gate = (metadata or {}).get("review_gate") or {}
 
     return {
-        "source": source,
+        # ok / missing / changed — по контракту §3.5 (fast); раньше выводилось только из SOURCE/INVALID.
+        "source": derived["stages"]["source"]["status"],
         "qc": qc,
         "vision": vision,
         "metadata": state,
         "metadata_completeness": metadata["completeness"] if metadata else None,
-        "ready": state in READY_STATES,
+        # Одобрение metadata — не готовность к площадкам и не ready_for_export (контракт §3.3).
+        "metadata_approved": state in METADATA_APPROVED_STATES,
         "review_reasons": [r["code"] for r in gate.get("reasons", [])] if state == mb.HUMAN_REVIEW else [],
     }
 
 
-def allowed_actions(pipeline: dict, metadata: dict | None) -> list[dict]:
-    """Подсказка для агента: что имеет смысл сделать сейчас. Проверка — в самой операции."""
-    actions = []
-
-    def allow(operation: str, access: str):
-        actions.append({"operation": operation, "access": access})
-
-    if pipeline["source"] in ("changed", "missing"):
-        return actions
-
-    if pipeline["vision"] != "done":
-        allow("asset.process", "pipeline")
-        return actions
-
-    if metadata is None:
-        allow("metadata.build", "pipeline")
-        return actions
-
-    state = metadata["state"]
-
-    if metadata["completeness"] == mb.PARTIAL and not metadata["edited_fields"]:
-        allow("metadata.build", "pipeline")
-
-    allow("metadata.edit", "pipeline")
-    allow("metadata.rebuild", "pipeline")
-
-    if state in rg.GATEABLE_STATES:
-        allow("metadata.gate", "pipeline")
-        allow("metadata.escalate", "pipeline")
-
-    if state in mb.APPROVABLE_STATES and not metadata["validation"]["errors"]:
-        allow("metadata.approve", "review")
-
-    if state in mb.REJECTABLE_STATES:
-        allow("metadata.reject", "review")
-
-    readiness = pipeline.get("stock_readiness") or {}
-    if pipeline["ready"] and (not readiness.get("evaluated") or readiness.get("stale")):
-        allow("readiness.evaluate", "pipeline")
-
-    return actions
+def _state_view(derived: dict) -> dict:
+    keys = ("state_version", "state", "reasons", "reprocess_from", "terminal", "metadata_approved",
+            "ready_for", "problems", "stages")
+    return {key: derived[key] for key in keys}
 
 
 def _vision_view(asset: dict, events: list[dict]) -> dict | None:
@@ -147,7 +110,8 @@ def asset_view(asset_id: int) -> dict | None:
 
     events = _events(asset_id)
     metadata = _parse_json(asset["metadata_json"])
-    pipeline = pipeline_state(asset, events, metadata)
+    derived = asset_state.derive(asset, events)
+    pipeline = pipeline_state(asset, events, metadata, derived)
     pipeline["normalize"] = normalization.summary_from_events(asset, events)
     pipeline["enhancement"] = enhancement_decision.summary_from_events(asset, events)
     pipeline["stock_readiness"] = stock_readiness.summary(asset, events, metadata)
@@ -164,11 +128,12 @@ def asset_view(asset_id: int) -> dict | None:
         "status": asset["status"],
         "created_at": asset["created_at"],
         "updated_at": asset["updated_at"],
+        "state": _state_view(derived),
         "pipeline": pipeline,
         "qc": _parse_json(asset["qc_result"]),
         "vision": _vision_view(asset, events),
         "metadata": metadata,
-        "allowed_actions": allowed_actions(pipeline, metadata),
+        "allowed_actions": derived["allowed_actions"],
     }
 
 
@@ -178,6 +143,8 @@ def asset_summary(view: dict) -> dict:
         "id": view["id"],
         "filename": view["filename"],
         "status": view["status"],
+        "state": view["state"]["state"],
+        "problems": view["state"]["problems"],
         "pipeline": view["pipeline"],
         "title": (metadata.get("fields") or {}).get("title"),
     }
@@ -196,7 +163,8 @@ def list_assets(
     qc: str | None = None,
     vision: str | None = None,
     metadata_state: str | None = None,
-    ready: bool | None = None,
+    state: str | None = None,
+    metadata_approved: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict:
@@ -211,7 +179,9 @@ def list_assets(
             continue
         if metadata_state is not None and pipeline["metadata"] != metadata_state:
             continue
-        if ready is not None and pipeline["ready"] != ready:
+        if state is not None and view["state"]["state"] != state:
+            continue
+        if metadata_approved is not None and pipeline["metadata_approved"] != metadata_approved:
             continue
         summaries.append(asset_summary(view))
 
@@ -221,56 +191,54 @@ def list_assets(
 METADATA_STATES = ("none", mb.DRAFT, mb.AUTO_APPROVED, mb.HUMAN_REVIEW, mb.APPROVED, mb.REJECTED)
 
 
-def _problems(pipeline: dict, metadata: dict | None) -> list[str]:
-    """Причины, по которым объект не движется дальше сам (для сводки review_queue)."""
-    problems = []
-    if pipeline["source"] == "changed":
-        problems.append("SOURCE_CHANGED")
-    elif pipeline["source"] == "missing":
-        problems.append("SOURCE_MISSING")
-    if pipeline["qc"] == "failed":
-        problems.append("QC_FAILED")
-    if pipeline["vision"] == "failed":
-        problems.append("VISION_FAILED")
-    if pipeline["metadata"] == mb.HUMAN_REVIEW:
-        problems.extend(pipeline["review_reasons"] or ["HUMAN_REVIEW"])
-    if pipeline["metadata"] == mb.DRAFT:
-        problems.append("METADATA_PARTIAL" if metadata and metadata["completeness"] == mb.PARTIAL else "METADATA_NOT_GATED")
-    return problems
+def _problem_key(code: str) -> str:
+    """STALE:qc:NO_FINGERPRINT → STALE:qc; NORMALIZE_FAILED:MISSING_CODEC → NORMALIZE_FAILED."""
+    parts = code.split(":")
+    return ":".join(parts[:2]) if parts[0] == "STALE" else parts[0]
 
 
 def review_queue(limit: int = 50, offset: int = 0) -> dict:
     """
-    Очередь человека (items — объекты в human_review, как раньше) и сводка по
-    всему каталогу: один вызов отвечает «сколько всего / готово / ждёт проверки
-    и что проблемно».
+    Очередь человека (items — объекты в итоговом состоянии human_review: metadata ждёт
+    человека и всё выше актуально) и сводка по каталогу: итоговые состояния, одобрение
+    metadata и готовность к площадкам — отдельно (контракт §3.3), проблемы.
     """
-    by_state = {state: 0 for state in METADATA_STATES}
-    ready = 0
+    by_state = {state: 0 for state in ASSET_STATES}
+    by_metadata_state = {state: 0 for state in METADATA_STATES}
+    metadata_approved = platform_ready = 0
+    problem_counts = {}
     problems = []
     review_items = []
 
     for asset_id in all_asset_ids():
         view = asset_view(asset_id)
-        pipeline, metadata = view["pipeline"], view["metadata"]
-        by_state[pipeline["metadata"]] = by_state.get(pipeline["metadata"], 0) + 1
-        ready += pipeline["ready"]
+        pipeline, state = view["pipeline"], view["state"]
+        by_state[state["state"]] = by_state.get(state["state"], 0) + 1
+        by_metadata_state[pipeline["metadata"]] = by_metadata_state.get(pipeline["metadata"], 0) + 1
+        metadata_approved += state["metadata_approved"]
+        platform_ready += state["state"] == asset_state.PLATFORM_READY
 
-        codes = _problems(pipeline, metadata)
-        if codes:
-            problems.append({"id": view["id"], "filename": view["filename"], "problems": codes})
+        if state["problems"]:
+            problems.append({"id": view["id"], "filename": view["filename"], "state": state["state"],
+                             "problems": state["problems"]})
+            for key in {_problem_key(code) for code in state["problems"]}:
+                problem_counts[key] = problem_counts.get(key, 0) + 1
 
-        if pipeline["metadata"] == mb.HUMAN_REVIEW:
+        if state["state"] == asset_state.HUMAN_REVIEW:
             item = asset_summary(view)
-            item["review_reasons"] = ((metadata or {}).get("review_gate") or {}).get("reasons", [])
+            item["review_reasons"] = ((view["metadata"] or {}).get("review_gate") or {}).get("reasons", [])
             review_items.append(item)
 
     return {
         "summary": {
             "total_assets": sum(by_state.values()),
-            "ready": ready,
-            "by_metadata_state": by_state,
-            "problem_assets": problems,
+            "by_state": by_state,
+            "metadata_approved": metadata_approved,
+            "platform_ready": platform_ready,
+            "by_metadata_state": by_metadata_state,
+            "problem_counts": dict(sorted(problem_counts.items())),
+            # Сначала самое важное: порядок состояний контракта (source_invalid, blocked, error, stale…).
+            "problem_assets": sorted(problems, key=lambda item: (ASSET_STATES.index(item["state"]), item["id"])),
         },
         "total": len(review_items),
         "limit": limit,

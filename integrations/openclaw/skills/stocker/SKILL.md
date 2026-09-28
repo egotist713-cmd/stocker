@@ -25,8 +25,8 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 
 | id | use for | args |
 |---|---|---|
-| `stocker__review_queue` | overview in one call: `summary` (total_assets, ready, by_metadata_state, problem_assets) + `items` waiting for a human | `{}` |
-| `stocker__asset_list` | list assets; filters | `{}` or `{"ready": true}` or `{"metadata_state": "human_review"}` |
+| `stocker__review_queue` | overview in one call: `summary` (total_assets, `by_state`, `metadata_approved`, `platform_ready`, by_metadata_state, `problem_counts`, problem_assets) + `items` waiting for a human | `{}` |
+| `stocker__asset_list` | list assets; filters | `{}` or `{"state": "platform_ready"}` or `{"metadata_approved": true}` or `{"metadata_state": "human_review"}` |
 | `stocker__asset_get` | full state of one asset (pipeline, QC, Vision, metadata, allowed_actions) | `{"asset_id": N}` |
 | `stocker__asset_history` | processing events of an asset | `{"asset_id": N}` |
 | `stocker__metadata_get` | metadata of an asset | `{"asset_id": N}` |
@@ -51,7 +51,7 @@ Stocker tools are NOT direct tools. Always call them through `tool_call`:
 Typical requests:
 - "what is going on" / "how many are ready" / "what needs checking" -> `stocker__review_queue` (use `data.summary` and `data.items`)
 - "show asset N" / "what is the state of N" -> `stocker__asset_get`
-- "list the ready ones" -> `stocker__asset_list` with `{"ready": true}`
+- "list the ready ones" -> say which "ready" you report: metadata approved (`{"metadata_approved": true}`) is NOT ready for stock; ready for at least one stock platform is `{"state": "platform_ready"}` (see `ready_for`). `stale` means results must be recomputed, not that the photo is bad
 - "can N go to Adobe / Shutterstock" / "is N ready for stock" -> `stocker__readiness_get` (if `evaluated` is false or `stale` is true, ask before running `stocker__readiness_evaluate`). Nothing is uploaded: export does not exist yet
 
 ## Rules
