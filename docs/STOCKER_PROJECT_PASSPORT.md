@@ -5072,6 +5072,54 @@ ASSET_STATE_CONTRACT (§3.1 таблица состояний, §2.2a), SERVICE_
 
 ---
 
+# 35ZZS. 2026-09-29 — Этап D: восстановление source #67 / #68; #2 — нет штатной операции снятия
+
+### Решение пользователя
+
+#67 / #68 — вернуть исходные файлы на зарегистрированные пути (SHA256 точных
+копий совпадает), проверить source / состояние / check_consistency, затем
+пересчитать только их с необходимой стадии. #2 — снять из production catalog
+существующей штатной операцией, `source_path` не менять, архивные копии не
+удалять. По 23 human_review — только рабочий список, решения принимает человек.
+
+### #2 — не выполнено (нужно решение пользователя)
+
+Единственный штатный терминальный переход — `metadata.reject` (state
+`rejected`). Для #2 он недоступен: `metadata.reject` → `_require_metadata`,
+а у #2 нет Vision (`VISION_MISSING`) и нет metadata (`METADATA_MISSING`).
+Операции снятия объекта на уровне asset в сервисе нет (30 операций, проверено по
+registry). #2 не изменён: `source_invalid` / `SOURCE_CHANGED`, копии
+`F:\stock\120926\` и `data/samples/2026-09-26/120926/` на месте.
+
+### #67 / #68 — выполнено
+
+- Копия БД до — `stocker-before-stage-d-restore.db` (scratchpad).
+- Файлы скопированы из `F:\stock\PXL_20260804_001201147.jpg` /
+  `…001252834.jpg` (источники оставлены) на зарегистрированные пути в
+  `data/samples/2026-09-26/stock_root/`; SHA256 = `file_hash`.
+- Проверка fast после восстановления — ещё `SOURCE_CHANGED`: быстрая проверка
+  не читает файл и опирается на последнее свидетельство (отрицательное, без
+  последующего положительного). Полная (`verify_source`, SHA256) — `ok`;
+  состояние `stale`, `reprocess_from=normalize` (`SOURCE_RECHECK`; view не было —
+  Vision до AnalysisView). check_consistency до пересчёта — OK (8/8), событий 0.
+- `asset.reprocess` (с normalize, только #67, #68): normalize → view → QC →
+  Enhancement → Vision → Metadata → Readiness `SKIPPED_NOT_APPLICABLE`; +9
+  событий на объект (NORMALIZE/EVALUATED — положительное свидетельство source).
+  Итог — **human_review** (gate-v1.3): #67 `PERSONAL_DOCUMENT` (паспорт) +
+  `LEGAL_CLAIM: official`; #68 `PERSONAL_DOCUMENT` (прописка) + `LEGAL_CLAIM:
+  official / compliance`. После — fast-проверка `ok`.
+- Повтор `from=qc` / `from=publication` — `NOTHING_TO_DO` ×2, 0 событий.
+  Инвариант — 0 нарушений; check_consistency OK.
+- Каталог: publication_approved 103, human_review **25** (23 + #67, #68),
+  source_invalid 1 (#2). Событий 3813 (+18).
+
+### Рабочий список human_review
+
+Подготовлен для пользователя (23 объекта в порядке аудита + #67 / #68 отдельно);
+approve / reject / edit не выполнялись.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
