@@ -4900,6 +4900,38 @@ Creative в отчётах — «не запускался / NO_CURRENT_ADVICE»
 
 ---
 
+# 35ZZM. 2026-09-28 — Ручная эскалация #46, #48, #74, #80 (однословные бренды)
+
+### Решение пользователя
+
+Результат #80 — отдельное основание для действия: при повторной генерации
+Metadata исчез `certified`, но надпись «АТРИОН» осталась, а Vision оба раза не
+заполнил `brands` — недетерминированная Metadata вместе с ограничением gate
+изменила конечное решение до автоматического Publication approval. Вариант 2:
+существующей операцией `metadata.escalate` перевести в `human_review` #46, #48,
+#74, #80; причина — известное ограничение распознавания однословных / ALL-CAPS
+брендов. Gate-v1.3 не менять, словарь и эвристики не вводить, QC / Vision /
+Metadata для них не пересчитывать. В следующих партиях новые такие случаи
+только отмечать в отчёте (статистика), не эскалировать автоматически.
+
+### Сделано (копия БД до — в scratchpad)
+
+- `metadata.escalate` (actor `human`), reason: «Known limitation: single-word /
+  all-caps brand in visible text is not recognized automatically (gate-v1.3);
+  human check required».
+- По каждому: до — `publication_approved` (metadata `auto_approved`, Readiness
+  и Publication current, adobe + shutterstock); после — **human_review**
+  (MANUAL_ESCALATION), Readiness / Publication / Creative `not_applicable`,
+  `approved_for: []`; `publication.get` — `result: null`,
+  `last_result.current: false`. События: только `METADATA/ESCALATED` +
+  `METADATA/GATED` (всего 8); upstream (QC, Vision, Metadata AI, Readiness) не
+  пересчитывался. `check_consistency` OK.
+- Отчёт партий дополнен «brand watch» (только статистика): publication_approved +
+  пустой `brands` + однословная надпись ЗАГЛАВНЫМИ, классифицированная
+  descriptive.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
