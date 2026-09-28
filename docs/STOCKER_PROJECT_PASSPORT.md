@@ -4848,8 +4848,11 @@ Creative в отчётах — «не запускался / NO_CURRENT_ADVICE»
   #54 — `TEXT_BRAND_OR_LEGAL: АО "ЩЛЗ"` (та же причина); #56 — было
   `VALIDATION_ERRORS: DESCRIPTION_TOO_LONG`, стало `LEGAL_CLAIM: keywords:
   compliance`; #61 — было `LEGAL_CLAIM: keywords: certification`, стало
-  `VALIDATION_ERRORS: DESCRIPTION_TOO_LONG`. Решения gate не изменились, причины
-  у #56 / #61 — от повторной генерации Metadata AI.
+  `VALIDATION_ERRORS: DESCRIPTION_TOO_LONG`. **Decision не изменился**
+  (human_review → human_review); у #56 / #61 изменился только текущий
+  **reason**: повторная генерация Metadata AI дала другой результат, и gate
+  заново оценил именно текущий Metadata result. Gate и Metadata AI не
+  меняются; #54 — существующее правило `TEXT_BRAND_OR_LEGAL` (юрформа).
 - Агрегат: publication_approved 10, human_review 3, blocked / stale /
   source_invalid 0; approved Adobe 10, Shutterstock 10; `ADVISOR_ATTENTION` 0;
   событий 108 (10×9 + 3×6). Повтор `from=qc` и `from=publication` —
@@ -4858,6 +4861,42 @@ Creative в отчётах — «не запускался / NO_CURRENT_ADVICE»
   `EAC` — CONFORMITY_MARK; остальное — технические маркировки и «ЗАМОК ДВЕРИ
   ШАХТЫ» (descriptive); одиночное `HR` (#62) — descriptive.
 - Каталог: publication_approved 53, human_review 12, stale 61, source_invalid 3.
+
+---
+
+# 35ZZL. 2026-09-28 — Core batch 5 (#66, #69–#80)
+
+Решения пользователя по партии 4: #54, #56, #61 оставить human_review; для
+#56 / #61 в паспорте различать decision (не изменился) и reason (изменился от
+повторной генерации Metadata) — §35ZZK уточнён. Gate-v1.3 не менять, словарь
+брендов не добавлять, Creative не запускать, n8n не подключать; коммиты
+локально, без push.
+
+- 11 объектов (#66, 69, 70, 71, 72, 74, 75, 76, 77, 78, 79): QC → Enhancement
+  (пропуск) → Vision → Metadata (`auto_approved`) → Readiness → Publication —
+  **publication_approved**, adobe и shutterstock `approved`; Creative — не
+  запускался / `NO_CURRENT_ADVICE`; по 9 событий.
+- **#73 human_review** (decision не изменился): `TRADEMARK: bloody`,
+  `TEXT_BRAND_OR_LEGAL: bloody`; reason `VALIDATION_ERRORS: BRAND_IN_TEXT` в
+  новой metadata пропал. Readiness / Publication / Creative — `not_applicable`;
+  6 событий.
+- **#80: decision изменился — human_review → auto_approved →
+  publication_approved** (9 событий). Прежний единственный reason —
+  `LEGAL_CLAIM: keywords: certified`; повторная генерация Metadata AI этого
+  keyword не дала. Vision оба раза: `brands` пуст, в `text_visible`
+  «АТРИОН» — однословный бренд ЗАГЛАВНЫМИ, `descriptive` (ограничение
+  gate-v1.3). Итог: объект с видимым брендом производителя, ранее бывший на
+  проверке по другой причине, теперь одобрен к публикации.
+- То же ограничение: #74 — «LKDS» на оборудовании, `descriptive`,
+  publication_approved.
+- Агрегат: publication_approved 12, human_review 1, blocked / stale /
+  source_invalid 0; approved Adobe 12, Shutterstock 12; `ADVISOR_ATTENTION` 0;
+  событий 114 (12×9 + 6). Изменение decision gate — только #80. Повтор
+  `from=qc` и `from=publication` — `NOTHING_TO_DO` ×13, 0 событий. Инвариант — 0
+  нарушений; `check_consistency` OK.
+- Правила не менялись. Вопрос о брендах (#80 «АТРИОН», #74 «LKDS»; ранее #46,
+  #48) — на решение пользователя.
+- Каталог: publication_approved 65, human_review 13, stale 48, source_invalid 3.
 
 ---
 
