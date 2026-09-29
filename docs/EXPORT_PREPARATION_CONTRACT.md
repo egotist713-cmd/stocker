@@ -1,8 +1,10 @@
 # STOCKER — КОНТРАКТ EXPORT PREPARATION (ФАЙЛ ПОД ПЛОЩАДКУ)
 
-> **Статус:** 🟡 ПРОЕКТ (27.09.2026, паспорт §35ZN). **Кода нет** — сначала
-> контракт. Автоматическая загрузка через API стоков — следующий этап после
-> стабильной работы Export preparation.
+> **Статус:** 🟢 РЕАЛИЗОВАНО v1 (30.09.2026, паспорт §35ZZW) — `export-v1`, профиль
+> `adobe-2026-09` (Adobe Stock); код `app/export_preparation.py`, тесты
+> `tests/test_export_preparation.py`, `tests/test_export_metadata_contamination.py`.
+> Профиль Shutterstock — не реализован (следующий шаг). Загрузка (FTP / API / CSV) —
+> следующий этап. Проект контракта — 27.09.2026 (§35ZN); уточнения реализации — §9.
 >
 > Связанные документы: `FORMAT_CONTRACT.md` (normalization, факты об
 > исходнике), `STOCK_READINESS_CONTRACT.md` (§3.4 `ready` / `ready_for_export`,
@@ -280,8 +282,36 @@ preparation. Решения человека (approve / reject) Export preparati
 
 ## 8. Открытые вопросы
 
-- Автор / авторские права в файле: значения и нужны ли площадкам.
-- Качество JPEG по умолчанию и нижняя граница `fit_file_size`.
-- Дата съёмки: нужна ли какой-либо площадке (по умолчанию — не записывается).
-- Ultra HDR JPEG на площадках — пока экспортируется обычный SDR JPEG.
-- Какие поля IPTC / XMP читают Adobe Stock и Shutterstock при загрузке.
+- Автор / авторские права в файле: значения и нужны ли площадкам — **открыт** (v1 не
+  пишет; значение задаёт пользователь).
+- ~~Качество JPEG по умолчанию и нижняя граница `fit_file_size`~~ — **закрыт** (v1): 95,
+  нижняя граница 90; Adobe значения качества не задаёт (страницы 30.09.2026).
+- Дата съёмки: нужна ли какой-либо площадке — **открыт** (по умолчанию не пишется).
+- ~~Ultra HDR JPEG на площадках~~ — **закрыт для v1**: экспортируется обычный SDR JPEG
+  (gain map / MPF не переносятся — пиксели основного кадра из AnalysisView).
+- Какие поля IPTC / XMP читают площадки — **частично**: Adobe сохраняет встроенные title
+  и keywords из Lightroom / Bridge / Photoshop (пишут XMP `dc:title` / `dc:subject`);
+  v1 пишет только XMP IPTC Core, без IIM (APP13 = Photoshop IRB, §4.3). Подтвердить
+  первой реальной загрузкой. Shutterstock — не проверялось.
+- Provenance (`digitalSourceType`) в файл — **открыт**: Adobe отмечает генеративный AI
+  при загрузке в портале, а не полем файла; v1 не пишет (§4.2).
+
+---
+
+## 9. Реализация v1 (30.09.2026, паспорт §35ZZW)
+
+| Решение | Почему |
+|---|---|
+| Пиксели — `AnalysisView.full` (source → ориентация → цвет в sRGB, 8 бит) | единственный вход пикселей; основной кадр без Motion Photo / gain map; undeclared → `COLOR_SPACE_UNDECLARED` |
+| Вход — актуальные Readiness `ready` **и** Publication `approved` площадки | `ASSET_STATE_CONTRACT.md` §2.2a: файл площадки — только из актуального approved; иначе `NOT_READY` |
+| Title / keywords — снимок `export_plan` последнего `READINESS/EVALUATED` | §2; не из `ai_result` и не из `metadata_json` |
+| ICC — фиксированный файл `app/profiles/srgb.icc` (sRGB, sha256 в коде) | профиль LittleCMS, сгенерированный заново, несёт дату — hash экспорта был бы разным |
+| Metadata — XMP (`dc:title`, `dc:subject`) + ICC; белый список `segment:APP2:ICC`, `segment:APP1:XMP`, `xmp:dc:title`, `xmp:dc:subject` | IIM потребовал бы Photoshop IRB (APP13) |
+| Имя — `<slug>_<asset_id>.jpg`, **не длиннее 30 символов с расширением** | CSV Adobe: Filename ≤ 30; пример «60 символов основы» из §3.1 заменён более строгим |
+| Title: > 200 — отказ `TITLE_TOO_LONG_FOR_PROFILE`; > 70 и запятая — предупреждения `TITLE_LONG` / `TITLE_HAS_COMMA` | 70 и запятые — рекомендация / правило CSV; 200 — лимит портала (вторичные источники) и Gate |
+| Keywords 7–49 → иначе `KEYWORDS_OUT_OF_RANGE` | 49 — Adobe (CSV допускает 50 — строже); 7 — как Gate |
+| Файл: временный → fsync → проверка шага 8 → `os.replace` | непроверенный файл не остаётся в `data/export` |
+| JPEG без `optimize` (4:4:4, baseline) | при `optimize` Pillow ограничивает буфер w×h байт — детальный кадр его превышает |
+| `export.prepare` / `export.get` — только человек (`AGENT_FORBIDDEN`, не в allowlist n8n) | инструменты OpenClaw и права n8n не расширяются |
+| Отказы — `EXPORT/FAILED` с кодом; дополнительно `RESOLUTION_TOO_LOW`, `FILE_TOO_LARGE`, `TITLE_EMPTY`, `VIEW_UNAVAILABLE`, `VERIFY_FAILED` | коды §3 + ограничения профиля |
+| `check_consistency`: последний `DERIVATIVE/CREATED` без файла / с другим файлом — FAIL; файл без события — INFO | как у internal derivative |

@@ -202,9 +202,15 @@ Export preparation — только из актуального `approved` дл�
 | 8 | `metadata_approved` | metadata одобрена (`auto_approved` / `approved`), Readiness ещё не оценён | нет — `readiness.evaluate` |
 | 9 | `platform_ready` | актуальный Readiness: `ready` хотя бы для одного профиля (`ready_for`) | нет — дальше Publication gate |
 | 10 | `publication_approved` | одобрено Publication Gate для публикации на платформе (`approved_for`); **не** «опубликовано» | нет — дальше Export preparation |
-| 11 | `ready_for_export` | (будущее) Export preparation создал и проверил файл площадки | нет — «terminal до изменения входов» |
+| 11 | `ready_for_export` | Export preparation создал и проверил файл площадки (`ready_for_export` — площадки с актуальным файлом) | нет — «terminal до изменения входов» |
 
-Состояние 10 — с 28.09.2026 (publication-v1, §2.2a); 11 недостижимо: Export не реализован.
+Состояние 10 — с 28.09.2026 (publication-v1, §2.2a); 11 — с 30.09.2026 (export-v1,
+`EXPORT_PREPARATION_CONTRACT.md` §9): Publication актуален и approved, и для площадки есть
+последний `DERIVATIVE/CREATED` с текущим `inputs_fingerprint` и файлом на месте (stat, без
+хеша; полная проверка — `export.prepare` / `check_consistency`). Стадия `stages.export`
+(`current` / `stale` / `missing` / `not_applicable`); устаревший файл — проблема
+`STALE:export:…` и действие `export.prepare`, состояние остаётся `publication_approved`
+(`asset.reprocess` экспорт не запускает).
 
 **Как применяется приоритет.** После `rejected` и `source_invalid` обязательные
 стадии проверяются **в порядке обработки** (normalize → view → qc → vision →

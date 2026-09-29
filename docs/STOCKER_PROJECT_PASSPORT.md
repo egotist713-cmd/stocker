@@ -5218,6 +5218,102 @@ Readiness / Publication не запускались — ждут отдельн�
 
 ---
 
+# 35ZZW. 2026-09-30 — Export preparation v1 (Adobe Stock) и production-каталог data/prod
+
+### Решения пользователя
+
+Каталог из 129 объектов — тестовый / калибровочный: не публикуется и не удаляется.
+Публикуются 10 новых отсмотренных фото (`data/samples/300926`). Реализовать
+`EXPORT_PREPARATION_CONTRACT.md` как есть; Gate, Readiness, Publication Gate, Creative,
+Enhancement, n8n, OpenClaw не менять; approve / reject — человек. Шаг 0 — отдельная
+production-БД: путь к БД через окружение не задавался (факт) → вариант
+`STOCKER_DATA_DIR` (production — `data/prod/`), без миграции схемы.
+
+### Шаг 0. STOCKER_DATA_DIR (00ba7dc)
+
+- `app/database/db.py`: `DATA_DIR` из `STOCKER_DATA_DIR` (внутри проекта; без
+  переменной — прежний `<проект>/data`); `db_path`, `incoming_dir`, `internal_dir`,
+  `export_dir`, `describe`. qc, ingest (2 места), normalization, views, check_consistency и
+  скрипты берут пути только из db. CLI / worker / check_consistency печатают
+  `DATA_DIR` и путь к БД. `STOCKER_ROOT` из `.env.example` удалён (кодом не читался).
+- `check_consistency`: корень проекта — `ingest.ROOT`, а не `parents[2]` от пути БД
+  (для `data/prod/db/stocker.db` это был бы `data`).
+- pytest: `conftest` убирает внешнюю переменную до импорта app; autouse-фикстура —
+  временный каталог данных для каждого теста. `tests/test_data_dir.py`: пути с
+  переменной и без; прогон тестов при `STOCKER_DATA_DIR` не создаёт каталог и не
+  меняет `data/db/stocker.db` (проверено хешем).
+- n8n: все workflow ходят в Stocker только по HTTP (`$env.STOCKER_URL` → MCP HTTP 8765);
+  MCP запускается `scripts/start_mcp_http.cmd` без переменной; на уровне User / Machine
+  переменная не задана; в `.env` её нет → n8n и MCP — тестовая БД. Workflow в
+  репозитории `active: false`.
+- `.gitignore`: `data/export/*`, `data/prod/`, `data/audit/`.
+- 10 фото скопированы в `data/prod/incoming/` (SHA256 копий = исходников; оригиналы
+  на месте); `.jpeg` поддерживается ingest.
+
+### Шаг 1. Профиль adobe-2026-09 (сверка с Adobe 30.09.2026)
+
+| Параметр | Контракт | Adobe (helpx, 30.09.2026) | Применено |
+|---|---|---|---|
+| Разрешение / размер / формат | 4–100 MP, ≤ 45 MB, JPEG sRGB | 4–100 MP, ≤ 45 MB, «JPEG with sRGB color profile» | как в контракте |
+| Keywords | ≤ 49 | «up to 49»; CSV — 50 | 7–49 (7 — как Gate) |
+| Title | — | «ideally under 70»; CSV — ≤ 70, без запятых; 200 — лимит портала (вторичные источники, на текущих страницах helpx не указан) | > 200 — отказ; > 70, запятая — предупреждения |
+| Имя файла | пример «60 символов основы» | CSV: Filename ≤ 30 символов с расширением | ≤ 30 с расширением (строже) — **расхождение с контрактом** |
+| Качество JPEG | 95 / 90 | не задаётся | 95, нижняя граница 90 |
+| Встроенные поля | IPTC / XMP title, keywords | «сохраняет» title / keywords из Lightroom / Bridge / Photoshop | XMP `dc:title` / `dc:subject`, без IIM |
+
+Профиль экспорта (`app/export_preparation.py`, `ExportProfile`) берёт версию, MP и размер
+из профиля Readiness (`rd.PROFILES["adobe"]`) — один профиль; Readiness не изменён.
+Источники и дата сверки — в `ADOBE.sources`. Автор / Copyright, дата съёмки, EXIF,
+`digitalSourceType` не пишутся.
+
+### Шаги 2–3. export.prepare / export.get (810877b, 0a4b68a)
+
+- Вход: SHA256 source; актуальные Readiness `ready` **и** Publication `approved`
+  площадки (ASSET_STATE §2.2a); title / keywords — снимок `export_plan`. Пиксели —
+  `AnalysisView.full` (ориентация, цвет → sRGB; undeclared → отказ); без upscale;
+  downscale только > 100 MP. JPEG q95 4:4:4 baseline, `fit_file_size` 95 → 90.
+- ICC — фиксированный `app/profiles/srgb.icc` (sha256 в коде): LittleCMS пишет дату
+  в заголовок — сгенерированный заново профиль менял бы hash экспорта (проверено).
+- Файл: временный → fsync → проверка шага 8 (`source_facts.read_facts` + инвентарь +
+  XMP против снимка) → `os.replace`; `DERIVATIVE/CREATED` (metadata_audit, operations,
+  inputs_fingerprint, tools, warnings) — отдельной транзакцией после файла. Повтор с теми
+  же входами — `UNCHANGED` без события; пропавший файл пересоздаётся тем же (тот же sha256).
+- Разбор файла перенесён в `source_facts` (`metadata_inventory`, `xmp_packets`):
+  архитектурный тест запрещает декодеры вне normalizer / source_facts / ingest.
+- `asset_state`: стадия `export`; состояние `ready_for_export` (§3.1 #11); устаревший
+  файл — проблема `STALE:export`, действие `export.prepare`.
+- Права: `export.prepare` / `export.get` — только человек (`AGENT_FORBIDDEN`; в
+  allowlist n8n нет) — инструменты OpenClaw не изменились.
+- Найдено при реализации: `optimize=True` в Pillow ограничивает буфер w×h байт —
+  «Suspension not allowed» на детальном кадре → кодирование без optimize.
+- Тесты: `test_export_preparation.py` (25 случаев), включён тест §4.5 в
+  `test_export_metadata_contamination.py`; модуль в `ATOMIC_MODULES`, прогон
+  атомарности доходит до Publication и Export (MAX_INJECTED 16). Мутационная проверка
+  (кодировщик дописывает COM / EXIF источника) — тесты белого списка падают,
+  `METADATA_NOT_CLEAN`; после восстановления — зелёные. `pytest`: 763 passed, 4 skipped.
+
+### Шаг 4. Реальные файлы
+
+**Тестовый каталог (проверка реализации, не публикация):** #4 (50,3 MP, Display P3,
+Ultra HDR), #9 (P3, Motion Photo + gain map), #10 (sRGB, GPS, Motion Photo, Software
+HDR+), #50 (8 MP) → `CREATED`, `ready_for_export`, повтор `UNCHANGED`; в файлах только
+ICC + XMP `dc:title` / `dc:subject`; P3 → sRGB; видео, gain map / MPF, GPS, Software
+удалены. У #10 / #50 в событии записана операция `to_srgb`, хотя пиксели не
+конвертировались (source sRGB) — исправлено для новых событий (`assign_icc:srgb`),
+история не переписывалась. Поворотов EXIF 3 / 6 / 8 нет ни в каталоге, ни в новых фото —
+поворот доказан тестом.
+
+**Production (`STOCKER_DATA_DIR=data/prod`), 10 фото штатным pipeline:**
+`publication_approved` → `export.prepare` → `ready_for_export`: #3, #4, #5, #7, #8, #9,
+#10 (33–37 MP, 8,5–10,4 MB, q95, keywords 30–33, предупреждений нет).
+`human_review` (решение человека): #1 `TRADEMARK: CTC`; #2 `PEOPLE_RECOGNIZABLE:
+subject:men`; #6 `PEOPLE_RECOGNIZABLE: subject:workers`.
+Факт источника у всех 10 (только для сведения): XMP `DigitalSourceType =
+compositeWithTrainedAlgorithmicMedia`, Software `Topaz Gigapixel 1.3.6 (Windows)`;
+в файл площадки не переносится (§4.2).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
@@ -5407,7 +5503,8 @@ ATOMICITY AUDIT (результат + событие = одна транзакц
     🟢 DONE — ingest исправлен; check_consistency.py 7/7 OK (§35ZN)
 
 EXPORT PREPARATION (файл площадки, metadata по белому списку, профили площадок)
-    🟡 CONTRACT — docs/EXPORT_PREPARATION_CONTRACT.md, без кода (§3A.13, §35ZN)
+    🟢 DONE v1 — export-v1, профиль adobe-2026-09; export.prepare / export.get (только человек); ready_for_export;
+       STOCKER_DATA_DIR (production — data/prod); Shutterstock-профиль — следующий шаг (§35ZZW)
 
 STOCK PLATFORM API (загрузка)
     ⚪ PLANNED — после стабильного Export preparation
