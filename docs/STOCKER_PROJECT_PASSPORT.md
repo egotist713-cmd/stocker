@@ -5155,6 +5155,39 @@ approve / reject / edit не выполнялись.
 
 ---
 
+# 35ZZU. 2026-09-29 — metadata.edit для #45 / #56 / #61 (решение пользователя)
+
+### Решение пользователя
+
+Результаты предпросмотра (§35ZZT) приняты. Отчёты — на русском, технические
+идентификаторы как есть. Выполнить `metadata.edit` только для #45, #56, #61;
+Readiness / Publication / Creative не запускать; approve не делать.
+**Не редактировать:** #80 (правка description не должна обходить
+`MANUAL_ESCALATION`), #85 и #109 (сначала решение человека по бренду Monarch),
+#112 (правка превратила бы его в `auto_approved` при «АТРИОН» в
+`text_visible` и пустом `brands` — тот же класс, что #80; остаётся
+`human_review` до отдельного решения). #2 — `source_invalid`; #67 / #68 — без
+действий.
+
+### Выполнено (копия БД до — `stocker-before-group2-edit.db`, scratchpad)
+
+`metadata.edit` (actor `human`, сервисный слой); gate переоценивается внутри
+операции штатно (`METADATA/GATED`, `trigger: edit`), отдельный `metadata.gate`
+не нужен.
+
+| # | Правка | События | Gate | Состояние объекта |
+|---|---|---|---|---|
+| 45 | keywords: −`safety compliance` (30 → 29) | EDITED, GATED | `auto_approved`, reasons [] | `stale` — Readiness `FINGERPRINT_CHANGED` (есть прежний результат Readiness) |
+| 56 | keywords: −`safety compliance` (30 → 29) | EDITED, GATED | `auto_approved` | `metadata_approved` — Readiness `NOT_EVALUATED` |
+| 61 | description: удалено последнее предложение (217 → 163) | EDITED, GATED | `auto_approved` | `metadata_approved` — Readiness `NOT_EVALUATED` |
+
+Событий 3813 → 3819 (+6). check_consistency OK (8/8); инвариант
+`publication_approved` — 0 нарушений. Каталог: publication_approved 103,
+human_review 22, metadata_approved 2, stale 1, source_invalid 1.
+Readiness / Publication не запускались — ждут отдельной команды.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
