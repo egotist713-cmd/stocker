@@ -5120,6 +5120,41 @@ approve / reject / edit не выполнялись.
 
 ---
 
+# 35ZZT. 2026-09-29 — Решение по #2; разбиение 25 human_review; предпросмотр правок metadata
+
+### Решения пользователя
+
+- **#2 — вариант (a):** остаётся `source_invalid`. Операцию withdrawal не
+  добавлять, `source_path` не менять и не перенаправлять на архивную копию,
+  архивные копии не удалять. Причина: #2 и #3 делят один `source_path`, файл по
+  нему — зарегистрированный источник #3; возвращать старую версию нельзя.
+- **#67 / #68** — обработка завершена (§35ZZS); без отдельного решения не
+  пересчитывать; human_review `PERSONAL_DOCUMENT` сохраняется.
+- 25 human_review: группа 1 — только решение человека approve / reject (18:
+  #5, 8, 37, 38, 43, 44, 46, 47, 48, 54, 73, 74, 83, 86, 89, 96, 67, 68);
+  группа 2 — сначала `metadata.edit`, затем повторная оценка gate (7: #45, 56,
+  61, 80, 85, 109, 112). Правки не выполнять до решения пользователя.
+
+### Предпросмотр правок (без записи: `mb.edit` + `rg.apply_gate` на копиях в памяти, событий 0)
+
+| # | Минимальная правка | Gate после правки |
+|---|---|---|
+| 45, 56 | keywords: убрать `safety compliance` | `auto_approved` |
+| 61 | description: убрать последнее предложение (217 → 163) | `auto_approved` |
+| 80 | description: убрать `labeled 'АТРИОН'` | `human_review` — `MANUAL_ESCALATION` остаётся (правка эскалацию не снимает; снимают approve / reject) |
+| 85 | keywords: убрать `ce certified` | `human_review` — `TRADEMARK` / `TEXT_BRAND_OR_LEGAL: Monarch` (из Vision) |
+| 109 | description: убрать `labeled 'Monarch'` | `human_review` — `TRADEMARK` / `TEXT_BRAND_OR_LEGAL: Monarch` |
+| 112 | keywords: убрать `eac certification`, `atronic brandless`; description: убрать `labeled 'АТРИОН'` | `auto_approved` — «АТРИОН» в `text_visible` при пустом `brands` gate-v1.3 не видит |
+
+Следствия, установленные по коду: после правки gate пересчитывает объект
+целиком (включая Vision `brands` / `text_visible`), поэтому правка metadata не
+снимает причину бренда; ручная эскалация сохраняется через правку; `approve`
+допустим и из `auto_approved` (`APPROVABLE_STATES`); `metadata.edit` не
+запускает Readiness / Publication — после перехода в `auto_approved` объект
+станет `stale` (Readiness), их пересчёт — отдельное решение.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
