@@ -5314,6 +5314,24 @@ compositeWithTrainedAlgorithmicMedia`, Software `Topaz Gigapixel 1.3.6 (Windows)
 
 ---
 
+# 35ZZX. 2026-09-30 — Production: решения человека по #1, #2, #6
+
+- Документы §35ZZW закоммичены (0ab5654). Копия production-БД до решений —
+  `prod-before-decisions.db` (scratchpad).
+- #1 — `metadata.reject` (human): «бренд CTC, отправлен на ретушь» → `rejected`.
+  Ретушированный файл пользователь положит в `data/prod/incoming/` под новым именем
+  (новый объект); исходный файл не перезаписывается.
+- #2, #6 — `metadata.approve` (human) → `readiness.evaluate`: `blocked` на обеих
+  площадках, `MODEL_RELEASE_REQUIRED` (узнаваемые люди: `subject:men` / `subject:workers`).
+  `publication.evaluate` — отказ `PUBLICATION_NOT_APPLICABLE: READINESS_BLOCKED` без
+  события; `export.prepare` не запускался (вход не готов). Данных о model release в
+  системе нет — вход отсутствует; решение за пользователем.
+- События production: 111 → 116 (METADATA/REJECTED, METADATA/APPROVED ×2,
+  READINESS/EVALUATED ×2). Состояния: `ready_for_export` 7, `blocked` 2, `rejected` 1.
+  check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
