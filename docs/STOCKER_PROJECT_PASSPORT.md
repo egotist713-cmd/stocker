@@ -5188,6 +5188,36 @@ Readiness / Publication не запускались — ждут отдельн�
 
 ---
 
+# 35ZZV. 2026-09-29 — Readiness → Publication для #45 / #56 / #61
+
+### Решение пользователя
+
+После `metadata.edit` (§35ZZU) продолжить штатно Readiness → Publication только
+для #45, #56, #61; Creative не запускать. Group 1, #80, #85, #109, #112 не
+трогать (#112 — не снимать `human_review` через `metadata.edit` до отдельного
+решения).
+
+### Выполнено (копия БД до — `stocker-before-group2-readiness.db`, scratchpad)
+
+`asset.reprocess from=readiness through=readiness`, затем `from=publication`.
+
+| # | Readiness | Publication | Состояние |
+|---|---|---|---|
+| 45 | `EVALUATED`, ready_for adobe, shutterstock; blockers [] | `EVALUATED`, approved_for adobe, shutterstock; notes `NO_CURRENT_ADVICE` | `publication_approved` |
+| 56 | то же | то же | `publication_approved` |
+| 61 | то же | то же | `publication_approved` |
+
+- События: 3819 → 3831 (+12: по объекту READINESS/EVALUATED,
+  PUBLICATION/EVALUATED, REPROCESS/DONE ×2).
+- Повтор `from=qc` / `from=publication` — `NOTHING_TO_DO` ×3, 0 событий.
+- Инвариант — 0 нарушений; check_consistency OK (8/8).
+- Каталог: publication_approved **106**, human_review **22**, source_invalid 1
+  (#2). #80, #85, #109, #112, #67, #68 — `human_review` без изменений.
+- Creative у трёх — `stale` (не запускался; Publication отмечает
+  `NO_CURRENT_ADVICE`, не блокирует).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
