@@ -394,6 +394,69 @@ def _c2pa(container: str | None, segments, png: dict, data: bytes) -> bool:
     return False
 
 
+_XMP_ELEMENT = re.compile(rb"<([A-Za-z][\w.-]*):([A-Za-z][\w.-]*)[\s/>]")
+_XMP_ATTRIBUTE = re.compile(rb"\s([A-Za-z][\w.-]*):([A-Za-z][\w.-]*)\s*=")
+_XMP_STRUCTURAL = {b"x", b"rdf", b"xml", b"xmlns"}
+
+
+def metadata_inventory(path: Path) -> set[str]:
+    """
+    Всё, что есть в JPEG помимо пикселей (EXPORT_PREPARATION_CONTRACT §4.4): сегменты APPn / COM,
+    теги EXIF (включая Exif и GPS IFD), наборы IPTC, свойства XMP (элементы и атрибуты),
+    миниатюра JFIF, данные после EOI. Только имена — без значений (GPS и т. п. не выводятся).
+    """
+    from PIL import ExifTags
+
+    data = Path(path).read_bytes()
+    items = set()
+    for marker, _, payload in _jpeg_segments(data):
+        if marker == 0xE0:
+            if not payload.startswith(b"JFIF\x00"):
+                items.add("segment:APP0")
+            elif len(payload) >= 14 and payload[12] * payload[13] > 0:
+                items.add("segment:APP0:JFIF-thumbnail")
+        elif marker == 0xE1 and payload.startswith(b"Exif"):
+            items.add("segment:APP1:Exif")
+        elif marker == 0xE1 and payload.startswith(b"http://ns.adobe.com/xap/1.0/"):
+            items.add("segment:APP1:XMP")
+            for pattern in (_XMP_ELEMENT, _XMP_ATTRIBUTE):
+                for prefix, name in pattern.findall(payload):
+                    if prefix not in _XMP_STRUCTURAL:
+                        items.add(f"xmp:{prefix.decode()}:{name.decode()}")
+        elif marker == 0xED:
+            items.add("segment:APP13:Photoshop")
+            for record, number in re.findall(rb"\x1c(.)(.)", payload, re.S):
+                items.add(f"iptc:{record[0]}:{number[0]}")
+        elif marker == 0xE2 and payload.startswith(b"ICC_PROFILE"):
+            items.add("segment:APP2:ICC")
+        elif marker == 0xE2 and payload.startswith(b"MPF"):
+            items.add("segment:APP2:MPF")
+        elif marker == 0xEB:
+            items.add("segment:APP11:JUMBF")
+        elif marker == 0xFE:
+            items.add("segment:COM")
+        elif 0xE1 <= marker <= 0xEF:
+            items.add(f"segment:APP{marker - 0xE0}")
+    if len(data) - (data.rfind(b"\xff\xd9") + 2) > 0:
+        items.add("trailing_data")
+    with Image.open(path) as image:
+        exif = image.getexif()
+        for tag in exif:
+            items.add(f"exif:{ExifTags.TAGS.get(tag, tag)}")
+        for ifd in (_IFD_EXIF, _IFD_GPS):
+            for tag in _safe_ifd(exif, ifd)[0]:
+                name = ExifTags.GPSTAGS.get(tag, tag) if ifd == _IFD_GPS else ExifTags.TAGS.get(tag, tag)
+                items.add(f"exif:{name}")
+    return items
+
+
+def xmp_packets(path: Path) -> list[bytes]:
+    """Содержимое сегментов XMP (APP1) JPEG — без декодирования изображения."""
+    prefix = b"http://ns.adobe.com/xap/1.0/\x00"
+    return [payload[len(prefix):] for marker, _, payload in _jpeg_segments(Path(path).read_bytes())
+            if marker == 0xE1 and payload.startswith(prefix)]
+
+
 def _metadata_presence(image: Image.Image, data: bytes) -> dict:
     exif = image.getexif()
     exif_ifd, broken_exif = _safe_ifd(exif, _IFD_EXIF) if exif else ({}, False)

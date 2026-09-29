@@ -72,6 +72,19 @@ def _derivative_problems(connection, root: Path) -> list[int]:
     return sorted(broken)
 
 
+def _export_problems(connection, root: Path) -> list[int]:
+    """Последний DERIVATIVE/CREATED площадки ссылается на файл экспорта, которого нет или который изменён."""
+    latest = {}
+    for asset_id, message in connection.execute(
+            "SELECT asset_id, message FROM processing_events WHERE stage = 'DERIVATIVE' AND status = 'CREATED' ORDER BY id"):
+        created = json.loads(message)
+        if created.get("purpose") == "export":
+            latest[(asset_id, created.get("platform"))] = created
+    broken = {asset_id for (asset_id, _), created in latest.items()
+              if not (root / created["path"]).exists() or _sha256(root / created["path"]) != created["sha256"]}
+    return sorted(broken)
+
+
 def find_problems(db_path: Path | None = None) -> dict[str, list[int]]:
     """{проверка: id объектов с нарушением} — только чтение. БД по умолчанию — из db (STOCKER_DATA_DIR)."""
     db_path = db_path or db.db_path()
@@ -80,6 +93,7 @@ def find_problems(db_path: Path | None = None) -> dict[str, list[int]]:
     try:
         problems = {name: [row[0] for row in connection.execute(query)] for name, query in CHECKS.items()}
         problems["NORMALIZE/PASSED derivative missing or changed"] = _derivative_problems(connection, root)
+        problems["DERIVATIVE/CREATED export file missing or changed"] = _export_problems(connection, root)
         return problems
     finally:
         connection.close()
@@ -108,6 +122,25 @@ def find_orphans(db_path: Path | None = None) -> list[str]:
     return sorted(path for path in files if path not in referenced)
 
 
+def find_export_orphans(db_path: Path | None = None) -> list[str]:
+    """Файлы в <DATA_DIR>/export без DERIVATIVE/CREATED (сбой между записью файла и событием). Не ошибка."""
+    db_path = db_path or db.db_path()
+    root = ingest.ROOT
+    export = db.export_dir_of(db.data_dir_of(db_path))
+    if not export.exists():
+        return []
+    connection = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+    try:
+        referenced = {
+            json.loads(message).get("path")
+            for (message,) in connection.execute("SELECT message FROM processing_events WHERE stage = 'DERIVATIVE' AND status = 'CREATED'")
+        }
+    finally:
+        connection.close()
+    files = (path.relative_to(root).as_posix() for path in export.rglob("*") if path.is_file())
+    return sorted(path for path in files if path not in referenced)
+
+
 def main() -> int:
     print(db.describe())
     problems = find_problems()
@@ -116,6 +149,10 @@ def main() -> int:
     orphans = find_orphans()
     print(f"INFO internal files without NORMALIZE/PASSED: {len(orphans)}")
     for path in orphans:
+        print(f"     {path}")
+    export_orphans = find_export_orphans()
+    print(f"INFO export files without DERIVATIVE/CREATED: {len(export_orphans)}")
+    for path in export_orphans:
         print(f"     {path}")
     return 1 if any(problems.values()) else 0
 

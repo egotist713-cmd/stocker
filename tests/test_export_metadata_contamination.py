@@ -35,11 +35,15 @@ def test_source_facts_record_provenance_but_not_personal_values(contaminated):
     assert "SN-123456" not in stored and "53.0" not in stored and "SourceCam" not in stored
 
 
-@pytest.mark.skip(reason="Export preparation не реализован: включить вместе с export.prepare (EXPORT_PREPARATION_CONTRACT §4.5)")
-def test_export_contains_only_platform_whitelist(contaminated):  # pragma: no cover
-    from app.export_preparation import PROFILES, prepare_file  # будущий модуль
+def test_export_contains_only_platform_whitelist(contaminated, tmp_path):
+    """Включён вместе с export.prepare (EXPORT_PREPARATION_CONTRACT §4.5, паспорт §35ZZW)."""
+    import dataclasses
 
-    for profile in PROFILES.values():
-        exported = prepare_file(contaminated, profile)
-        leftovers = inventory(exported) - profile.metadata_whitelist
-        assert leftovers == set(), f"{profile.name}: source metadata leaked into export: {sorted(leftovers)}"
+    from app import export_preparation
+
+    for profile in export_preparation.PROFILES.values():
+        profile = dataclasses.replace(profile, min_mp=0.01)  # фикстура 320×240
+        exported = export_preparation.prepare_file(contaminated, profile, tmp_path)
+        for scan in (inventory, export_preparation.inventory):  # и инвентарь фикстуры, и инвентарь шага 8
+            leftovers = scan(exported) - profile.metadata_whitelist
+            assert leftovers == set(), f"{profile.name}: source metadata leaked into export: {sorted(leftovers)}"

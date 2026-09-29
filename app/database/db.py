@@ -62,6 +62,10 @@ def export_dir() -> Path:
     return DATA_DIR / "export"
 
 
+def export_dir_of(data: Path) -> Path:
+    return data / "export"
+
+
 def describe() -> str:
     """Строка для начала вывода CLI / worker / check_consistency."""
     return f"DATA_DIR={DATA_DIR}  DB={DEFAULT_DB_PATH}"

@@ -9,7 +9,7 @@ Read-model: вычисляет из результатов стадий и их 
 
 import json
 
-from app import creative_review, enhancement_decision, ingest, normalization, normalizer, publication, stock_readiness
+from app import creative_review, enhancement_decision, export_preparation, ingest, normalization, normalizer, publication, stock_readiness
 from app import metadata_builder as mb
 from app import review_gate as rg
 from app import qc as qc_rules
@@ -338,6 +338,8 @@ def derive(asset: dict, events: list[dict], verify_source: bool = False) -> dict
     stages["creative_review"] = _creative_applicability(stages["creative_review"], stages["readiness"])
     stages["publication"] = publication.stage_status(asset, events, stages)
     stages = _effective(stages)
+    # Export (§3.1 #11): после актуального Publication approved; файл площадки — по БД и stat, без хеша.
+    stages["export"] = export_preparation.stage_status(asset, events, stages)
 
     state, reasons, reprocess_from = _state(stages, metadata)
     result = {
@@ -349,8 +351,9 @@ def derive(asset: dict, events: list[dict], verify_source: bool = False) -> dict
         "terminal": state in TERMINAL_STATES,
         "metadata_state": (metadata or {}).get("state"),
         "metadata_approved": (metadata or {}).get("state") in (mb.AUTO_APPROVED, mb.APPROVED),
-        "ready_for": stages["readiness"].get("ready_for", []) if state in (PLATFORM_READY, PUBLICATION_APPROVED) else [],
-        "approved_for": stages["publication"].get("approved_for", []) if state == PUBLICATION_APPROVED else [],
+        "ready_for": stages["readiness"].get("ready_for", []) if state in (PLATFORM_READY, PUBLICATION_APPROVED, READY_FOR_EXPORT) else [],
+        "approved_for": stages["publication"].get("approved_for", []) if state in (PUBLICATION_APPROVED, READY_FOR_EXPORT) else [],
+        "ready_for_export": stages["export"].get("ready_for_export", []) if state == READY_FOR_EXPORT else [],
         "stages": stages,
     }
     result["problems"] = problems(result)
@@ -392,6 +395,8 @@ def _state(stages: dict, metadata: dict | None) -> tuple[str, list[str], str | N
             if pub["status"] == S_STALE:
                 return STALE, [f"STALE:publication:{pub['reason']}"], "publication"
             if pub["status"] == CURRENT and pub.get("approved_for"):
+                if stages["export"]["status"] == CURRENT:
+                    return READY_FOR_EXPORT, [], None
                 return PUBLICATION_APPROVED, [], None
             return PLATFORM_READY, [], None
     return PROCESSING, ["NOT_PROCESSED:metadata"], None
@@ -410,6 +415,8 @@ def problems(result: dict) -> list[str]:
         for name in ADVISORY:
             if stages[name]["status"] == S_STALE:
                 codes.append(f"STALE:{name}:{stages[name]['reason']}")
+        if stages["export"]["status"] == S_STALE:  # файл площадки устарел — пересоздать export.prepare
+            codes.append(f"STALE:export:{stages['export']['reason']}")
     return codes
 
 
@@ -470,11 +477,13 @@ def allowed_actions(result: dict, metadata: dict | None) -> list[dict]:
         actions.append(_action("metadata.reject", "review"))
     elif state == METADATA_APPROVED:
         actions += [_action("readiness.evaluate", "pipeline"), _action("metadata.reject", "review")]
-    elif state in (PLATFORM_READY, PUBLICATION_APPROVED):
+    elif state in (PLATFORM_READY, PUBLICATION_APPROVED, READY_FOR_EXPORT):
         if stages["creative_review"]["status"] != CURRENT:
             actions.append(_action("creative.review", "pipeline"))
         if stages["publication"]["status"] == MISSING:
             actions.append(_action("publication.evaluate", "pipeline"))
+        if stages["export"]["status"] in (MISSING, S_STALE):
+            actions.append(_action("export.prepare", "pipeline"))
         actions.append(_action("metadata.reject", "review"))
 
     if state not in (STALE,) and stages["enhancement"]["status"] == S_STALE and stages["view"]["status"] == CURRENT:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app import creative_review as creative_review_service
 from app import enhancement_decision
+from app import export_preparation
 from app import ingest
 from app import metadata as metadata_service
 from app import normalization
@@ -123,6 +124,23 @@ def publication_evaluate(params) -> dict:
     except publication.PublicationError as exc:
         raise ServiceError(exc.code, str(exc)) from exc
     return _result(params.asset_id, result["outcome"], {"publication": result["publication"]})
+
+
+def export_prepare(params) -> dict:
+    try:
+        result = export_preparation.prepare(params.asset_id, params.platform)
+    except export_preparation.ExportError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    ok = result["outcome"] != export_preparation.FAILED
+    data = {"export": result["export"], **({"refused": result["refused"]} if not ok else {})}
+    return _result(params.asset_id, result["outcome"], data, ok=ok)
+
+
+def export_get(params) -> dict:
+    try:
+        return _result(params.asset_id, None, export_preparation.get(params.asset_id, params.platform))
+    except export_preparation.ExportError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
 
 
 def publication_get(params) -> dict:

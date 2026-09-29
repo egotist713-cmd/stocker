@@ -101,6 +101,10 @@ class CreativeParams(AssetParams):
     profile: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,40}$")
 
 
+class ExportParams(AssetParams):
+    platform: str = Field(default="adobe", description="Export profile platform (adobe)")
+
+
 class ApproveParams(AssetParams):
     allow_partial: bool = False
     confirm_claims: bool = False
@@ -183,6 +187,16 @@ DESCRIPTIONS = {
         "Publication Gate: may the asset be published to each stock platform. Deterministic, per platform: approved "
         "only where metadata is approved and current Stock Readiness is ready; Creative Review advice is recorded as "
         'information and never blocks. Source is verified (SHA256). Changes nothing else. Args: {"asset_id": 5}'
+    ),
+    "export.prepare": (
+        "Export preparation: build and verify the platform file (sRGB JPEG, embedded title and keywords only, "
+        "nothing copied from the source) from the current Readiness export plan; only where Readiness is ready and "
+        "Publication Gate approved the platform. Same inputs return UNCHANGED. Refusals are recorded as EXPORT/FAILED. "
+        'No upload. Human actors only. Args: {"asset_id": 5, "platform": "adobe"}'
+    ),
+    "export.get": (
+        "Export status of an asset for a platform: ready_for_export / stale / not_prepared, the file, its sha256 and "
+        'metadata_audit, and the last refusal. Read only. Args: {"asset_id": 5, "platform": "adobe"}'
     ),
     "publication.get": (
         "Current Publication Gate decision per platform (approved_for). If stale, result is null and last_result is an "
@@ -288,6 +302,8 @@ def build_registry() -> dict[str, Operation]:
         Operation("publication.evaluate", DESCRIPTIONS["publication.evaluate"], AssetParams, PIPELINE, ops.publication_evaluate),
         Operation("publication.get", DESCRIPTIONS["publication.get"], AssetParams, READ, ops.publication_get),
         Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),
+        Operation("export.prepare", DESCRIPTIONS["export.prepare"], ExportParams, PIPELINE, ops.export_prepare),
+        Operation("export.get", DESCRIPTIONS["export.get"], ExportParams, READ, ops.export_get),
         Operation("notification.record", DESCRIPTIONS["notification.record"], NotificationParams, PIPELINE, ops.notification_record),
     ]
     return {operation.name: operation for operation in operations}

@@ -10,24 +10,35 @@
 иначе test_every_state_writer_is_covered упадёт.
 """
 
+import dataclasses
 import re
 from pathlib import Path
 
 import pytest
 
-from app import creative_review, enhancement_decision, ingest, normalization, qc, reprocess, stock_readiness, worker
+from app import creative_review, enhancement_decision, export_preparation, ingest, normalization, qc, reprocess, stock_readiness, worker
 from app import metadata as metadata_service
+from app import readiness as rd
 from app.service import dispatch
 from scripts.check_consistency import find_problems
 
-from tests.conftest import FakeAnalyzer, make_image
+from tests.conftest import make_image
+from tests.test_publication import SRGB_ICC, StockVision
 
 ROOT = Path(__file__).resolve().parents[1]
 
 # Модули, которые пишут результат + событие; у каждого подменяется insert_event.
-ATOMIC_MODULES = (ingest, normalization, qc, reprocess, worker, metadata_service, enhancement_decision, creative_review, stock_readiness)
+ATOMIC_MODULES = (ingest, normalization, qc, reprocess, worker, metadata_service, enhancement_decision, creative_review,
+                  stock_readiness, export_preparation)
 
-MAX_INJECTED = 14
+MAX_INJECTED = 16
+
+
+@pytest.fixture(autouse=True)
+def small_images_reach_export(monkeypatch):
+    """Тестовое изображение 64×48 проходит Readiness и Publication — цепочка доходит до Export."""
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+    monkeypatch.setattr(export_preparation, "PROFILES", {"adobe": dataclasses.replace(export_preparation.ADOBE, min_mp=0.001)})
 
 
 class PowerLoss(RuntimeError):
@@ -50,13 +61,14 @@ def _patch_insert_event(monkeypatch, fail_at: int | None) -> dict:
 
 
 def _run_pipeline(root: Path) -> None:
-    """ingest → normalize → QC → enhancement → Vision → metadata → gate, затем readiness и creative review."""
+    """ingest → normalize → QC → enhancement → Vision → metadata → gate → readiness, затем creative review,
+    Publication и Export (файл площадки + DERIVATIVE/CREATED)."""
     try:
-        asset_id = worker.process_file(make_image(root), analyzer=FakeAnalyzer())
+        asset_id = worker.process_file(make_image(root, icc_profile=SRGB_ICC), analyzer=StockVision())
     except PowerLoss:
         return
     if asset_id:
-        for operation in ("readiness.evaluate", "creative.review"):
+        for operation in ("readiness.evaluate", "creative.review", "publication.evaluate", "export.prepare"):
             dispatch(operation, {"asset_id": asset_id})  # envelope не бросает исключений
 
 
@@ -64,6 +76,8 @@ def test_pipeline_writes_many_events(stocker_root, monkeypatch):
     counter = _patch_insert_event(monkeypatch, fail_at=None)
     _run_pipeline(stocker_root)
     assert counter["calls"] >= 6  # INGEST, NORMALIZE, QC, ENHANCEMENT, AI, METADATA…
+    derivative = [m for m in ATOMIC_MODULES if m is export_preparation]
+    assert derivative and export_preparation.get(1)["status"] == export_preparation.READY_FOR_EXPORT
     assert not any(find_problems(stocker_root / "data" / "db" / "stocker.db").values())
 
 
