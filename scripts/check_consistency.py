@@ -15,7 +15,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DB = ROOT / "data" / "db" / "stocker.db"
+sys.path.insert(0, str(ROOT))
+
+from app import ingest  # noqa: E402
+from app.database import db  # noqa: E402
 
 CHECKS = {
     "asset without INGEST/DONE": """
@@ -69,9 +72,10 @@ def _derivative_problems(connection, root: Path) -> list[int]:
     return sorted(broken)
 
 
-def find_problems(db_path: Path = DB) -> dict[str, list[int]]:
-    """{проверка: id объектов с нарушением} — только чтение."""
-    root = Path(db_path).resolve().parents[2]
+def find_problems(db_path: Path | None = None) -> dict[str, list[int]]:
+    """{проверка: id объектов с нарушением} — только чтение. БД по умолчанию — из db (STOCKER_DATA_DIR)."""
+    db_path = db_path or db.db_path()
+    root = ingest.ROOT  # пути производных — относительно корня проекта
     connection = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
     try:
         problems = {name: [row[0] for row in connection.execute(query)] for name, query in CHECKS.items()}
@@ -81,13 +85,14 @@ def find_problems(db_path: Path = DB) -> dict[str, list[int]]:
         connection.close()
 
 
-def find_orphans(db_path: Path = DB) -> list[str]:
+def find_orphans(db_path: Path | None = None) -> list[str]:
     """
-    Файлы в data/internal без события (сбой между записью файла и событием). Не ошибка
+    Файлы в <DATA_DIR>/internal без события (сбой между записью файла и событием). Не ошибка
     согласованности: результата без события нет, следующий прогон переиспользует файл.
     """
-    root = Path(db_path).resolve().parents[2]
-    internal = root / "data" / "internal"
+    db_path = db_path or db.db_path()
+    root = ingest.ROOT
+    internal = db.internal_dir(db.data_dir_of(db_path))
     if not internal.exists():
         return []
     connection = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
@@ -104,6 +109,7 @@ def find_orphans(db_path: Path = DB) -> list[str]:
 
 
 def main() -> int:
+    print(db.describe())
     problems = find_problems()
     for name, ids in problems.items():
         print(f"{'OK  ' if not ids else 'FAIL'} {name}: {ids if ids else '-'}")

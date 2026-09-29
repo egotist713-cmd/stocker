@@ -16,6 +16,10 @@ data/approved/*
 data/rejected/*
 data/samples/*
 data/internal/*
+data/export/*
+# Production-каталог (STOCKER_DATA_DIR=data/prod) и наборы визуального аудита
+data/prod/
+data/audit/
 logs/*
 *.db
 *.sqlite

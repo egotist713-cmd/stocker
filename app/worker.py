@@ -15,6 +15,7 @@ from app.ai.analyzer import AIAnalyzer, AIResponseError, input_fingerprint, visi
 from app.ai.enhancement_advisor import advisor_enabled
 from app.ai.metadata_analyzer import MetadataAnalyzer
 from app.ai.local_analyzer import LocalAnalyzer
+from app.database import db
 from app.database.db import add_event, get_asset, insert_event, transaction, update_ai_result
 from app.ingest import ingest_file, sha256_file, source_file
 from app.qc import check_asset, save_qc_result
@@ -286,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     target.add_argument("--asset-id", type=int, help="re-process an already registered asset")
     parser.add_argument("--force", action="store_true", help="re-run AI even if ai_result exists")
     args = parser.parse_args(argv)
+    print(db.describe())
 
     if args.asset_id is not None:
         outcome = process_asset(args.asset_id, force=args.force)

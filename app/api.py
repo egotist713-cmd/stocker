@@ -16,6 +16,7 @@ import contextlib
 import json
 import sys
 
+from app.database import db
 from app.service import HUMAN, dispatch
 
 
@@ -26,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--actor", default=HUMAN, help="human (default), agent:<name>, workflow:<name>")
     parser.add_argument("--pretty", action="store_true", help="indent JSON output")
     args = parser.parse_args(argv)
+    print(db.describe(), file=sys.stderr)  # stdout — только envelope
 
     if args.params is None:
         params = {}

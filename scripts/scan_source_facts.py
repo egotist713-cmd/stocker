@@ -31,7 +31,9 @@ def registered_sources() -> list[tuple[str, Path]]:
 
     from app.ingest import source_file
 
-    db = ROOT / "data" / "db" / "stocker.db"
+    from app.database import db as database
+
+    db = database.db_path()  # STOCKER_DATA_DIR
     connection = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     try:

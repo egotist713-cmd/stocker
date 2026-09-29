@@ -25,7 +25,9 @@ sys.path.insert(0, str(ROOT))
 from app.ingest import SUPPORTED_EXTENSIONS, sha256_file, to_source_path  # noqa: E402
 from app.service import dispatch  # noqa: E402
 
-DB = ROOT / "data" / "db" / "stocker.db"
+from app.database import db  # noqa: E402
+
+DB = db.db_path()  # STOCKER_DATA_DIR
 
 
 def _lookup(source_path: str, file_hash: str) -> tuple[int | None, int | None]:

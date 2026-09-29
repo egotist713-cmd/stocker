@@ -19,6 +19,7 @@ from app import review_gate as rg
 from app.ai.analyzer import AIResponseError
 from app.ai.metadata_analyzer import LMStudioMetadataAnalyzer, MetadataAnalyzer
 from app.ai.schema import AIAnalysis
+from app.database import db
 from app.database.db import get_asset, get_last_event, insert_event, transaction, update_metadata
 from app.textnorm import normalize_text
 
@@ -399,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     # JSON с не-ASCII символами не должен падать в консоли Windows (cp1251).
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    print(db.describe(), file=sys.stderr)  # stdout — только JSON
 
     parser = argparse.ArgumentParser(prog="python -m app.metadata", description="Stocker metadata review.")
     commands = parser.add_subparsers(dest="command", required=True)

@@ -23,7 +23,9 @@ sys.path.insert(0, str(ROOT))
 
 from app import creative_review, enhancement_decision, stock_readiness  # noqa: E402
 
-DB = ROOT / "data" / "db" / "stocker.db"
+from app.database import db  # noqa: E402
+
+DB = db.db_path()  # STOCKER_DATA_DIR
 
 
 def _json(value):

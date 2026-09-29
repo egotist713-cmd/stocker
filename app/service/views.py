@@ -16,6 +16,7 @@ from app import enhancement_decision
 from app import normalization
 from app import review_gate as rg
 from app import stock_readiness
+from app.database import db
 from app.database.db import get_asset, get_connection
 
 METADATA_APPROVED_STATES = (mb.AUTO_APPROVED, mb.APPROVED)
@@ -279,7 +280,7 @@ def incoming_files() -> dict:
     known_paths = {row["source_path"].replace("\\", "/") for row in rows}
     known_hashes = {row["file_hash"]: row["id"] for row in rows if row["file_hash"]}
 
-    incoming = ingest.ROOT / "data" / "incoming"
+    incoming = db.incoming_dir()
     items = []
     for path in sorted(incoming.iterdir()) if incoming.exists() else []:
         if not path.is_file() or path.suffix.lower() not in ingest.SUPPORTED_EXTENSIONS:

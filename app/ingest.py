@@ -5,11 +5,11 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from app.database import db
 from app.database.db import get_connection, init_database, insert_asset, insert_event, transaction
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INCOMING = ROOT / "data" / "incoming"
 
 # AVIF (28.09.2026): стадии читают пиксели только через AnalysisView — lossless internal
 # derivative. HEIC / HEIF не принимаются: кодека в runtime нет (MISSING_CODEC).
@@ -42,9 +42,7 @@ def source_file(asset) -> Path:
 
 
 def already_registered(file_hash: str) -> bool:
-    db_path = ROOT / "data" / "db" / "stocker.db"
-
-    with get_connection(db_path) as connection:
+    with get_connection(db.db_path()) as connection:
         row = connection.execute(
             "SELECT id, filename FROM assets WHERE file_hash = ?",
             (file_hash,),
@@ -89,11 +87,9 @@ def ingest_file(path: Path) -> int | None:
 
     file_size = path.stat().st_size
 
-    db_path = ROOT / "data" / "db" / "stocker.db"
-
     # Asset и событие регистрации — одной транзакцией (аудит атомарности 27.09.2026):
     # сбой между ними оставлял бы asset без INGEST/DONE.
-    with transaction(db_path) as connection:
+    with transaction(db.db_path()) as connection:
         asset_id = insert_asset(
             connection,
             filename=path.name,
@@ -117,11 +113,12 @@ def ingest_file(path: Path) -> int | None:
 
 
 def main() -> None:
+    print(db.describe())
     init_database()
 
     files = sorted(
         path
-        for path in INCOMING.iterdir()
+        for path in db.incoming_dir().iterdir()
         if path.is_file()
     )
 

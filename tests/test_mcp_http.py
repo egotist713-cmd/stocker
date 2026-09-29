@@ -96,8 +96,9 @@ LAUNCHER = textwrap.dedent(
     from app.database import db
     from tests.conftest import FakeAnalyzer, OfflineMetadataAnalyzer
 
-    ingest.ROOT = qc.ROOT = root
-    qc.DB_PATH = db.DEFAULT_DB_PATH = root / "data" / "db" / "stocker.db"
+    ingest.ROOT = root
+    db.DATA_DIR = root / "data"
+    db.DEFAULT_DB_PATH = db.DATA_DIR / "db" / "stocker.db"
     qc.MIN_MEGAPIXELS = 0.0
     qc.MIN_FILE_SIZE = 0
     worker.LocalAnalyzer = FakeAnalyzer

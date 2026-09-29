@@ -1,5 +1,10 @@
+import os
 import sqlite3
 from pathlib import Path
+
+# Внешняя STOCKER_DATA_DIR (например, data/prod) не должна влиять на тесты: убираем её
+# до импорта app — db вычисляет DATA_DIR при импорте; подпроцессы тестов наследуют окружение.
+os.environ.pop("STOCKER_DATA_DIR", None)
 
 import numpy as np
 import pytest
@@ -23,8 +28,7 @@ def stocker_root(tmp_path, monkeypatch) -> Path:
     (tmp_path / "data" / "incoming").mkdir(parents=True)
 
     monkeypatch.setattr(ingest, "ROOT", tmp_path)
-    monkeypatch.setattr(qc, "ROOT", tmp_path)
-    monkeypatch.setattr(qc, "DB_PATH", db_path)
+    monkeypatch.setattr(db, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(db, "DEFAULT_DB_PATH", db_path)
 
     # Маленькие тестовые изображения должны проходить QC.
@@ -135,6 +139,15 @@ class OfflineCreativeAdvisor(CreativeAdvisor):
         if self.error is not None:
             raise self.error
         return self.result
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path_factory, monkeypatch):
+    """Каждый тест — во временном каталоге данных, даже без stocker_root: ни тестовая, ни production-БД не затрагиваются."""
+    monkeypatch.delenv("STOCKER_DATA_DIR", raising=False)
+    data = tmp_path_factory.mktemp("isolated") / "data"
+    monkeypatch.setattr(db, "DATA_DIR", data)
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", data / "db" / "stocker.db")
 
 
 @pytest.fixture(autouse=True)

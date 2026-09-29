@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -8,8 +9,62 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "stocker.db"
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Каталог runtime-данных, привязанных к asset_id: БД, internal-производные, экспорт,
+# incoming. STOCKER_DATA_DIR (паспорт §35ZZW) отделяет production-каталог
+# (data/prod) от тестового; без переменной — прежний <проект>/data. Путь — внутри
+# проекта: source_path и пути производных хранятся относительно корня проекта.
+DATA_DIR_ENV = "STOCKER_DATA_DIR"
+
+
+def resolve_data_dir(value: str | None) -> Path:
+    if not value:
+        return PROJECT_ROOT / "data"
+    path = Path(value)
+    path = (path if path.is_absolute() else PROJECT_ROOT / path).resolve()
+    if not path.is_relative_to(PROJECT_ROOT):
+        raise ValueError(f"{DATA_DIR_ENV} must be inside the project ({PROJECT_ROOT}): {path}")
+    return path
+
+
+load_dotenv()  # переменная может быть задана и в .env — одинаково для всех процессов
+DATA_DIR = resolve_data_dir(os.getenv(DATA_DIR_ENV))
+DEFAULT_DB_PATH = DATA_DIR / "db" / "stocker.db"
+
+
+# Функции читают атрибуты модуля при вызове: тесты подменяют DATA_DIR / DEFAULT_DB_PATH.
+def data_dir() -> Path:
+    return DATA_DIR
+
+
+def db_path() -> Path:
+    return DEFAULT_DB_PATH
+
+
+def incoming_dir() -> Path:
+    return DATA_DIR / "incoming"
+
+
+def data_dir_of(database: Path | str) -> Path:
+    """Каталог данных конкретной БД: <DATA_DIR>/db/stocker.db → <DATA_DIR>."""
+    return Path(database).resolve().parents[1]
+
+
+def internal_dir(data: Path | None = None) -> Path:
+    return (data or DATA_DIR) / "internal"
+
+
+def export_dir() -> Path:
+    return DATA_DIR / "export"
+
+
+def describe() -> str:
+    """Строка для начала вывода CLI / worker / check_consistency."""
+    return f"DATA_DIR={DATA_DIR}  DB={DEFAULT_DB_PATH}"
 
 # Кто выполняет операцию (service layer: "human", "agent:openclaw", "workflow:n8n").
 # Если задан, добавляется ключом "actor" в JSON-сообщения событий. Без него

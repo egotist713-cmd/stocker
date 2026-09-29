@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app import ingest
 from app import normalizer
+from app.database import db
 from app.database.db import get_asset, get_connection, insert_event, transaction
 from app.source_facts import FACTS_VERSION, detect_container, read_facts
 
@@ -165,7 +166,7 @@ def run_asset(asset_id: int) -> dict:
 
     derivative = None
     if planned["representation"] == normalizer.DERIVATIVE:
-        target = ingest.ROOT / "data" / "internal" / str(asset_id) / normalizer.NORMALIZER_VERSION
+        target = db.internal_dir() / str(asset_id) / normalizer.NORMALIZER_VERSION
         try:
             built = normalizer.build_derivative(ingest.source_file(asset), target)
         except Exception as exc:  # noqa: BLE001 — не декодировано: отказ с причиной, без догадок

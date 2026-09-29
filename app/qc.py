@@ -7,12 +7,9 @@ import numpy as np
 from PIL import Image
 
 from app import analysis_view
+from app.database import db
 from app.database.db import insert_event
 from app.ingest import source_file
-
-
-ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "data" / "db" / "stocker.db"
 
 
 # Технический минимум — требования площадок (Adobe Stock и Shutterstock: 4 MP).
@@ -60,7 +57,7 @@ def fingerprint(view_fingerprint: str) -> str:
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db.db_path())  # путь — только из db (STOCKER_DATA_DIR)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -261,4 +258,5 @@ def run_qc():
 
 
 if __name__ == "__main__":
+    print(db.describe())
     run_qc()

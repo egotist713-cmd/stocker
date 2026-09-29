@@ -20,14 +20,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.ingest import INCOMING, SUPPORTED_EXTENSIONS, sha256_file  # noqa: E402
+from app.ingest import SUPPORTED_EXTENSIONS, sha256_file  # noqa: E402
 from app.service import dispatch  # noqa: E402
 
-DB = ROOT / "data" / "db" / "stocker.db"
+from app.database import db  # noqa: E402
+
+DB = db.db_path()  # STOCKER_DATA_DIR
 
 
 def user_set_ids() -> tuple[list[int], list[str]]:
-    hashes = {sha256_file(p): p.name for p in INCOMING.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS}
+    hashes = {sha256_file(p): p.name for p in db.incoming_dir().iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS}
     connection = sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True)
     try:
         rows = connection.execute("SELECT id, file_hash FROM assets").fetchall()
