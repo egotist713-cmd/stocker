@@ -309,14 +309,20 @@ def _encode(image: Image.Image, profile: ExportProfile, xmp: bytes) -> tuple[byt
     raise ExportRefused(FILE_TOO_LARGE, f"{len(data)} bytes at quality {profile.jpeg_quality_min} > {profile.max_file_size}")
 
 
-def render(image: Image.Image, profile: ExportProfile, title: str, keywords: list[str]) -> tuple[bytes, dict]:
-    """Пиксели view (RGB, sRGB, ориентированы) → байты файла площадки. Без ввода-вывода."""
+def render(image: Image.Image, profile: ExportProfile, title: str, keywords: list[str],
+           color_converted: bool = True) -> tuple[bytes, dict]:
+    """Пиксели view (RGB, sRGB, ориентированы) → байты файла площадки. Без ввода-вывода.
+
+    color_converted — были ли пиксели переведены в sRGB (view): иначе source уже sRGB и
+    ICC профиля только назначается (assign_icc), пиксели не меняются.
+    """
     if image.mode != "RGB":
         image = image.convert("RGB")
     image.info = {}  # никаких данных source: только пиксели
     sized, operations = _fit_resolution(image, profile)
     data, quality = _encode(sized, profile, build_xmp(title, keywords))
-    operations = ["to_srgb", *operations, f"encode_jpeg:q{quality}", "strip_embedded", "strip_metadata", "write_xmp"]
+    color = f"to_{profile.color_space}" if color_converted else f"assign_icc:{profile.color_space}"
+    operations = [color, *operations, f"encode_jpeg:q{quality}", "strip_embedded", "strip_metadata", "write_xmp"]
     return data, {"width": sized.size[0], "height": sized.size[1], "quality": quality, "operations": operations}
 
 
@@ -368,7 +374,7 @@ def prepare_file(source: Path, profile: ExportProfile, out_dir: Path | None = No
     view = analysis_view.view_of_file(source)
     if view.color_space != profile.color_space:
         raise ExportRefused(COLOR_SPACE_UNDECLARED, f"view color space is {view.color_space}")
-    data, info = render(view.full, profile, title, keywords)
+    data, info = render(view.full, profile, title, keywords, view.color_converted)
     target = Path(out_dir or Path(source).parent) / f"export_{profile.platform}_{Path(source).stem}.jpg"
     target.write_bytes(data)
     verify(target, profile, title, keywords, (info["width"], info["height"]))
@@ -588,7 +594,7 @@ def prepare(asset_id: int, platform: str = "adobe") -> dict:
         if view.color_space != profile.color_space:
             raise ExportRefused(COLOR_SPACE_UNDECLARED, f"source color is {view.color_space}; {profile.color_space} is not assumed")
 
-        data, info = render(view.full, profile, snapshot["title"], snapshot["keywords"])
+        data, info = render(view.full, profile, snapshot["title"], snapshot["keywords"], view.color_converted)
         name = export_filename(snapshot["title"], asset_id, profile)
         bad_name = filename_problems(name, asset_id, profile)
         if bad_name:

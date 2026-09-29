@@ -99,6 +99,28 @@ def test_inventory_sees_xmp_attributes_not_only_elements(tmp_path):
     assert "xmp:xmp:CreatorTool" in ep.inventory(path)
 
 
+def test_orientation_is_applied_to_pixels_and_not_written(tmp_path):
+    """EXIF Orientation 6 (поворот на 90°): файл площадки уже повёрнут, тега ориентации нет."""
+    from app.source_facts import read_facts
+
+    path = tmp_path / "rotated.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    Image.new("RGB", (64, 48), (10, 120, 200)).save(path, "JPEG", exif=exif, icc_profile=ep.SRGB_ICC)
+    exported = ep.prepare_file(path, ep.PROFILES["adobe"], tmp_path)
+    facts = read_facts(exported)
+    assert (facts["width"], facts["height"]) == (48, 64) and facts["orientation_raw"] is None
+    assert "exif:Orientation" not in ep.inventory(exported)
+
+
+def test_color_operation_records_what_happened_to_pixels():
+    """to_srgb — пиксели конвертированы view (Display P3 → sRGB); assign_icc — source уже sRGB."""
+    image = Image.new("RGB", (64, 48))
+    _, converted = ep.render(image, ep.PROFILES["adobe"], "T", ["a"] * 7, color_converted=True)
+    _, assigned = ep.render(image, ep.PROFILES["adobe"], "T", ["a"] * 7, color_converted=False)
+    assert converted["operations"][0] == "to_srgb" and assigned["operations"][0] == "assign_icc:srgb"
+
+
 def test_undeclared_color_is_refused(tmp_path):
     path = tmp_path / "undeclared.jpg"
     Image.new("RGB", (64, 48), (10, 20, 30)).save(path, "JPEG")
@@ -166,7 +188,7 @@ def test_prepare_creates_verified_file_and_ready_for_export(stocker_root):
     from app.database.db import get_asset
 
     assert created["source_sha256"] == get_asset(asset_id)["file_hash"] and created["source_derivative_id"] is None
-    assert created["operations"][0] == "to_srgb" and "encode_jpeg:q95" in created["operations"]
+    assert created["operations"][0] == "assign_icc:srgb" and "encode_jpeg:q95" in created["operations"]  # source уже sRGB
     assert created["metadata"]["keywords_count"] == len(created["metadata"]["keywords"])
     assert ep.read_xmp_fields(path) == {"title": created["metadata"]["title"], "keywords": created["metadata"]["keywords"]}
     assert [st for st, _ in stage_events(stocker_root, asset_id, "DERIVATIVE")] == ["CREATED"]
