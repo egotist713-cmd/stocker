@@ -56,7 +56,8 @@ NOT_READY = "NOT_READY"
 STALE = "STALE"
 COLOR_SPACE_UNDECLARED = "COLOR_SPACE_UNDECLARED"
 METADATA_NOT_CLEAN = "METADATA_NOT_CLEAN"
-TITLE_TOO_LONG_FOR_PROFILE = "TITLE_TOO_LONG_FOR_PROFILE"
+TITLE_TOO_LONG_FOR_PROFILE = "TITLE_TOO_LONG_FOR_PROFILE"              # <FIELD>_TOO_LONG_FOR_PROFILE
+DESCRIPTION_TOO_LONG_FOR_PROFILE = "DESCRIPTION_TOO_LONG_FOR_PROFILE"
 TITLE_EMPTY = "TITLE_EMPTY"
 KEYWORDS_OUT_OF_RANGE = "KEYWORDS_OUT_OF_RANGE"
 RESOLUTION_TOO_LOW = "RESOLUTION_TOO_LOW"
@@ -110,14 +111,19 @@ class ExportProfile:
     jpeg_quality: int
     jpeg_quality_min: int          # нижняя граница fit_file_size
     jpeg_subsampling: str
-    text_field: str                # поле площадки в файле: title (Adobe)
-    title_max: int                 # жёсткий лимит → TITLE_TOO_LONG_FOR_PROFILE
-    title_recommended: int         # рекомендация → предупреждение
+    text_field: str                # текстовое поле площадки в файле: title (Adobe) / description (Shutterstock)
+    title_max: int                 # жёсткий лимит текстового поля → <FIELD>_TOO_LONG_FOR_PROFILE
+    title_recommended: int | None  # рекомендация → предупреждение <FIELD>_LONG
     keywords_min: int
     keywords_max: int
     filename_max: int              # имя файла целиком, с расширением
     metadata_whitelist: frozenset
     sources: tuple = field(default=())
+    # Параметры второй площадки; по умолчанию — поведение Adobe. В spec() входят, только если
+    # отличаются от умолчания: отпечатки существующих экспортов Adobe не меняются.
+    xmp_text: str = "dc:title"                 # свойство XMP текстового поля
+    text_no_commas_warning: bool = True        # Adobe CSV: title без запятых
+    text_min_words: int | None = None          # меньше слов -> предупреждение <FIELD>_SHORT
 
     @property
     def name(self) -> str:
@@ -133,6 +139,11 @@ class ExportProfile:
             "keywords_min": self.keywords_min, "keywords_max": self.keywords_max,
             "filename_max": self.filename_max, "metadata_whitelist": sorted(self.metadata_whitelist),
             "icc_sha256": SRGB_ICC_SHA256,
+            **{key: value for key, value, default in (
+                ("xmp_text", self.xmp_text, "dc:title"),
+                ("text_no_commas_warning", self.text_no_commas_warning, True),
+                ("text_min_words", self.text_min_words, None),
+            ) if value != default},
         }
 
 
@@ -173,7 +184,48 @@ ADOBE = ExportProfile(
     ),
 )
 
-PROFILES = {profile.platform: profile for profile in (ADOBE,)}
+_READINESS_SHUTTERSTOCK = rd.PROFILES["shutterstock"]
+
+SHUTTERSTOCK = ExportProfile(
+    platform="shutterstock",
+    version=_READINESS_SHUTTERSTOCK.version,              # shutterstock-2026-09
+    min_mp=_READINESS_SHUTTERSTOCK.min_mp,                # 4 MP
+    max_mp=_READINESS_SHUTTERSTOCK.max_mp,                # None: для фото верхнего предела нет (только EPS ≤ 25 MP)
+    max_file_size=_READINESS_SHUTTERSTOCK.max_file_size,  # 50 MB (JPEG, веб и FTPS)
+    format="JPEG",                                        # TIFF допускается, но JPEG рекомендован
+    extension=".jpg",
+    color_space="srgb",
+    jpeg_quality=95,
+    jpeg_quality_min=90,
+    jpeg_subsampling="4:4:4",
+    text_field="description",                             # «Description» — единственное текстовое поле
+    title_max=150,                                        # «150 character limit»; Readiness / контракт — 2048 (строже — 150)
+    title_recommended=None,
+    keywords_min=7,                                       # «7-50 keywords»
+    keywords_max=50,
+    filename_max=30,                                      # лимит Shutterstock не найден — как у Adobe (одно имя на площадки)
+    metadata_whitelist=frozenset({"segment:APP2:ICC", "segment:APP1:XMP", "xmp:dc:description", "xmp:dc:subject"}),
+    xmp_text="dc:description",
+    text_no_commas_warning=False,                         # правило CSV Adobe, не Shutterstock
+    text_min_words=_READINESS_SHUTTERSTOCK.text_min_words,  # 5 — как Readiness (предупреждение)
+    sources=(
+        {"what": "JPEG (TIFF accepted), sRGB recommended, >= 4 MP, JPEG <= 50 MB (web / FTPS)",
+         "url": "https://submit.shutterstock.com/help/en/articles/10617390-what-are-the-technical-requirements-for-images",
+         "checked_at": "2026-09-30"},
+        {"what": "Description: 150 character limit; at least 7 keywords; 1 category required, 2nd optional",
+         "url": "https://submit.shutterstock.com/help/en/articles/10617414-portfolio-preparing-your-uploaded-content-for-submission",
+         "checked_at": "2026-09-30"},
+        {"what": "7-50 keywords; JPEG / TIFF >= 4 MP; files under 50 MB via web upload",
+         "url": "https://submit.shutterstock.com/help/en/articles/10594645-how-do-i-submit-photos-for-review",
+         "checked_at": "2026-09-30"},
+        {"what": "embedded titles and keywords (Adobe Bridge, Lightroom, Photo Mechanic) are supported; which XMP / "
+                 "IPTC fields are read is not stated — v1 writes XMP dc:description / dc:subject, confirm on first upload",
+         "url": "https://submit.shutterstock.com/help/en/articles/10594594-can-i-sell-my-work-on-sites-other-than-shutterstock",
+         "checked_at": "2026-09-30"},
+    ),
+)
+
+PROFILES = {profile.platform: profile for profile in (ADOBE, SHUTTERSTOCK)}
 
 
 # --- Инвентарь JPEG (§4.4): всё, кроме пикселей --------------------------------------------
@@ -184,15 +236,16 @@ inventory = source_facts.metadata_inventory
 
 # --- Metadata файла (§4.2): собираются заново, только белый список --------------------------
 
-def build_xmp(title: str, keywords: list[str]) -> bytes:
-    """XMP только с dc:title и dc:subject (IPTC Core). Детерминированно: без дат и идентификаторов."""
+def build_xmp(title: str, keywords: list[str], text_property: str = "dc:title") -> bytes:
+    """XMP только с текстовым полем профиля (dc:title / dc:description) и dc:subject (IPTC Core).
+    Детерминированно: без дат и идентификаторов."""
     items = "".join(f"<rdf:li>{escape(k)}</rdf:li>" for k in keywords)
     packet = (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>'
         '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
         '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
         '<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">'
-        f'<dc:title><rdf:Alt><rdf:li xml:lang="x-default">{escape(title)}</rdf:li></rdf:Alt></dc:title>'
+        f'<{text_property}><rdf:Alt><rdf:li xml:lang="x-default">{escape(title)}</rdf:li></rdf:Alt></{text_property}>'
         f"<dc:subject><rdf:Bag>{items}</rdf:Bag></dc:subject>"
         "</rdf:Description></rdf:RDF></x:xmpmeta>"
         '<?xpacket end="r"?>'
@@ -201,7 +254,7 @@ def build_xmp(title: str, keywords: list[str]) -> bytes:
 
 
 def read_xmp_fields(path: Path) -> dict:
-    """dc:title и dc:subject готового файла — для сверки со снимком (шаг 8)."""
+    """dc:title / dc:description (что есть) и dc:subject готового файла — для сверки со снимком (шаг 8)."""
     from xml.etree import ElementTree
 
     ns = {"rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#", "dc": "http://purl.org/dc/elements/1.1/"}
@@ -210,9 +263,14 @@ def read_xmp_fields(path: Path) -> dict:
         return {"title": None, "keywords": [], "packets": len(packets)}
     xml = re.sub(r"<\?xpacket[^>]*\?>", "", packets[0].decode("utf-8"))
     root = ElementTree.fromstring(xml)
-    title = root.find(".//dc:title/rdf:Alt/rdf:li", ns)
-    return {"title": title.text if title is not None else None,
-            "keywords": [li.text for li in root.findall(".//dc:subject/rdf:Bag/rdf:li", ns)]}
+    fields = {}
+    for name in ("title", "description"):
+        node = root.find(f".//dc:{name}/rdf:Alt/rdf:li", ns)
+        if node is not None:
+            fields[name] = node.text
+    if not fields:
+        fields["title"] = None
+    return {**fields, "keywords": [li.text for li in root.findall(".//dc:subject/rdf:Bag/rdf:li", ns)]}
 
 
 # --- Имя файла (§3.1) ---------------------------------------------------------------------
@@ -320,7 +378,7 @@ def render(image: Image.Image, profile: ExportProfile, title: str, keywords: lis
         image = image.convert("RGB")
     image.info = {}  # никаких данных source: только пиксели
     sized, operations = _fit_resolution(image, profile)
-    data, quality = _encode(sized, profile, build_xmp(title, keywords))
+    data, quality = _encode(sized, profile, build_xmp(title, keywords, profile.xmp_text))
     color = f"to_{profile.color_space}" if color_converted else f"assign_icc:{profile.color_space}"
     operations = [color, *operations, f"encode_jpeg:q{quality}", "strip_embedded", "strip_metadata", "write_xmp"]
     return data, {"width": sized.size[0], "height": sized.size[1], "quality": quality, "operations": operations}
@@ -338,8 +396,10 @@ def verify(path: Path, profile: ExportProfile, title: str, keywords: list[str], 
     if extra:
         raise ExportRefused(METADATA_NOT_CLEAN, f"fields outside the {profile.version} whitelist: {extra}", metadata_audit=audit)
     fields = read_xmp_fields(path)
-    if fields["title"] != title or fields["keywords"] != list(keywords):
-        raise ExportRefused(METADATA_NOT_CLEAN, "embedded title / keywords differ from the export plan snapshot", metadata_audit=audit)
+    field_name = profile.xmp_text.split(":", 1)[1]
+    if fields.get(field_name) != title or fields["keywords"] != list(keywords):
+        raise ExportRefused(METADATA_NOT_CLEAN, f"embedded {field_name} / keywords differ from the export plan snapshot",
+                            metadata_audit=audit)
     facts = source_facts.read_facts(Path(path))  # файл разбирается заново — теми же фактами, что и source
     icc = facts["color_profile"].get("icc") or {}
     problems = []
@@ -360,10 +420,10 @@ def verify(path: Path, profile: ExportProfile, title: str, keywords: list[str], 
     if size_bytes > profile.max_file_size:
         problems.append(f"{size_bytes} bytes > {profile.max_file_size}")
     if megapixels < profile.min_mp or (profile.max_mp and megapixels > profile.max_mp):
-        problems.append(f"{megapixels:.2f} MP outside {profile.min_mp:g}–{profile.max_mp:g}")
+        problems.append(f"{megapixels:.2f} MP outside {profile.min_mp:g}–{profile.max_mp or 'no limit'}")
     if problems or missing:
         raise ExportRefused(VERIFY_FAILED, "; ".join(problems + [f"missing {missing}"] * bool(missing)), metadata_audit=audit)
-    audit["xmp"] = {"dc:title": {"length": len(title)}, "dc:subject": {"count": len(keywords)}}
+    audit["xmp"] = {profile.xmp_text: {"length": len(title)}, "dc:subject": {"count": len(keywords)}}
     return audit
 
 
@@ -417,8 +477,9 @@ def _profile(platform: str) -> ExportProfile:
 
 
 def _snapshot(plan: dict, profile: ExportProfile) -> dict:
-    return {"title": plan.get(profile.text_field) or "", "keywords": list(plan.get("keywords") or []),
-            "category": plan.get("category")}
+    categories = plan["category"] if "category" in plan else plan.get("categories")
+    return {"text": plan.get(profile.text_field) or "", "keywords": list(plan.get("keywords") or []),
+            "category": categories}
 
 
 def inputs(asset: dict, readiness_fp: str | None, snapshot: dict, profile: ExportProfile) -> dict:
@@ -429,7 +490,7 @@ def inputs(asset: dict, readiness_fp: str | None, snapshot: dict, profile: Expor
         "readiness_fingerprint": readiness_fp,
         "view": normalizer.view_fingerprint(asset["file_hash"]),  # source SHA256 + нормализатор + views
         "normalizer_version": normalizer.NORMALIZER_VERSION,
-        "snapshot": {"title": snapshot["title"], "keywords": snapshot["keywords"]},
+        "snapshot": {profile.text_field: snapshot["text"], "keywords": snapshot["keywords"]},  # Adobe: «title»
     }
 
 
@@ -534,18 +595,25 @@ def _check_inputs(asset_id: int, profile: ExportProfile) -> tuple[dict, dict, st
 
 def _check_snapshot(snapshot: dict, profile: ExportProfile) -> list[dict]:
     """Title / keywords снимка против профиля. Жёсткое — отказ; рекомендации — предупреждения. Ничего не меняет."""
-    title, keywords = snapshot["title"], snapshot["keywords"]
-    if not title.strip():
-        raise ExportRefused(TITLE_EMPTY, f"{profile.text_field} is empty")
-    if len(title) > profile.title_max:
-        raise ExportRefused(TITLE_TOO_LONG_FOR_PROFILE, f"title is {len(title)} characters (max {profile.title_max})")
+    text, keywords = snapshot["text"], snapshot["keywords"]
+    field_code = profile.text_field.upper()  # TITLE (Adobe) / DESCRIPTION (Shutterstock)
+    if not text.strip():
+        raise ExportRefused(f"{field_code}_EMPTY", f"{profile.text_field} is empty")
+    if len(text) > profile.title_max:
+        raise ExportRefused(f"{field_code}_TOO_LONG_FOR_PROFILE",
+                            f"{profile.text_field} is {len(text)} characters (max {profile.title_max}); not truncated")
     if not profile.keywords_min <= len(keywords) <= profile.keywords_max:
         raise ExportRefused(KEYWORDS_OUT_OF_RANGE, f"{len(keywords)} keywords ({profile.keywords_min}–{profile.keywords_max})")
     warnings = []
-    if len(title) > profile.title_recommended:
-        warnings.append({"code": "TITLE_LONG", "message": f"title is {len(title)} characters (recommended <= {profile.title_recommended})"})
-    if "," in title:
-        warnings.append({"code": "TITLE_HAS_COMMA", "message": "title contains a comma (not allowed in Adobe CSV)"})
+    if profile.title_recommended and len(text) > profile.title_recommended:
+        warnings.append({"code": f"{field_code}_LONG",
+                         "message": f"{profile.text_field} is {len(text)} characters (recommended <= {profile.title_recommended})"})
+    if profile.text_no_commas_warning and "," in text:
+        warnings.append({"code": f"{field_code}_HAS_COMMA",
+                         "message": f"{profile.text_field} contains a comma (not allowed in Adobe CSV)"})
+    if profile.text_min_words and len(text.split()) < profile.text_min_words:
+        warnings.append({"code": f"{field_code}_SHORT",
+                         "message": f"{profile.text_field} has {len(text.split())} words (recommended >= {profile.text_min_words})"})
     return warnings
 
 
@@ -594,14 +662,14 @@ def prepare(asset_id: int, platform: str = "adobe") -> dict:
         if view.color_space != profile.color_space:
             raise ExportRefused(COLOR_SPACE_UNDECLARED, f"source color is {view.color_space}; {profile.color_space} is not assumed")
 
-        data, info = render(view.full, profile, snapshot["title"], snapshot["keywords"], view.color_converted)
-        name = export_filename(snapshot["title"], asset_id, profile)
+        data, info = render(view.full, profile, snapshot["text"], snapshot["keywords"], view.color_converted)
+        name = export_filename(snapshot["text"], asset_id, profile)
         bad_name = filename_problems(name, asset_id, profile)
         if bad_name:
             raise ExportRefused(METADATA_NOT_CLEAN, f"export filename {name!r}: {bad_name}")
         target = db.export_dir() / platform / str(asset_id) / name
         audit = _write_verified(target, data, lambda path: verify(
-            path, profile, snapshot["title"], snapshot["keywords"], (info["width"], info["height"])))
+            path, profile, snapshot["text"], snapshot["keywords"], (info["width"], info["height"])))
     except ExportRefused as exc:
         return _refuse(asset_id, platform, profile.version, exc)
 
@@ -625,8 +693,9 @@ def prepare(asset_id: int, platform: str = "adobe") -> dict:
         "operations": info["operations"],
         "inputs_fingerprint": current,
         "inputs": {k: v for k, v in inputs_.items() if k != "profile"} | {"profile": profile.version},
-        "metadata": {"title": snapshot["title"], "keywords": snapshot["keywords"], "category": snapshot["category"],
-                     "title_length": len(snapshot["title"]), "keywords_count": len(snapshot["keywords"])},
+        "metadata": {profile.text_field: snapshot["text"], "keywords": snapshot["keywords"], "category": snapshot["category"],
+                     f"{profile.text_field}_length": len(snapshot["text"]), "words": len(snapshot["text"].split()),
+                     "keywords_count": len(snapshot["keywords"])},
         "warnings": warnings,
         "tools": tools(),
         "metadata_audit": audit,

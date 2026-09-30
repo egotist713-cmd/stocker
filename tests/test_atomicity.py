@@ -31,14 +31,15 @@ ROOT = Path(__file__).resolve().parents[1]
 ATOMIC_MODULES = (ingest, normalization, qc, reprocess, worker, metadata_service, enhancement_decision, creative_review,
                   stock_readiness, export_preparation, attestation)
 
-MAX_INJECTED = 17
+MAX_INJECTED = 18
 
 
 @pytest.fixture(autouse=True)
 def small_images_reach_export(monkeypatch):
     """Тестовое изображение 64×48 проходит Readiness и Publication — цепочка доходит до Export."""
     monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
-    monkeypatch.setattr(export_preparation, "PROFILES", {"adobe": dataclasses.replace(export_preparation.ADOBE, min_mp=0.001)})
+    monkeypatch.setattr(export_preparation, "PROFILES",
+                        {n: dataclasses.replace(p, min_mp=0.001) for n, p in export_preparation.PROFILES.items()})
 
 
 class PowerLoss(RuntimeError):
@@ -71,6 +72,7 @@ def _run_pipeline(root: Path) -> None:
         dispatch("asset.attest_people", {"asset_id": asset_id, "kind": "not_identifiable"})  # HUMAN/PEOPLE_ATTESTED
         for operation in ("readiness.evaluate", "creative.review", "publication.evaluate", "export.prepare"):
             dispatch(operation, {"asset_id": asset_id})  # envelope не бросает исключений
+        dispatch("export.prepare", {"asset_id": asset_id, "platform": "shutterstock"})
 
 
 def test_pipeline_writes_many_events(stocker_root, monkeypatch):

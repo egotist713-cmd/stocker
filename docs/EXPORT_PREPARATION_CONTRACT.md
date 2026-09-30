@@ -3,7 +3,7 @@
 > **Статус:** 🟢 РЕАЛИЗОВАНО v1 (30.09.2026, паспорт §35ZZW) — `export-v1`, профиль
 > `adobe-2026-09` (Adobe Stock); код `app/export_preparation.py`, тесты
 > `tests/test_export_preparation.py`, `tests/test_export_metadata_contamination.py`.
-> Профиль Shutterstock — не реализован (следующий шаг). Загрузка (FTP / API / CSV) —
+> Профиль `shutterstock-2026-09` — реализован 30.09.2026 (§35ZZZG, §9a). Загрузка (FTP / API / CSV) —
 > следующий этап. Проект контракта — 27.09.2026 (§35ZN); уточнения реализации — §9.
 >
 > Связанные документы: `FORMAT_CONTRACT.md` (normalization, факты об
@@ -231,7 +231,7 @@ export preparation правил площадок не содержит.
 | Разрешение | 4–100 MP | ≥ 4 MP |
 | Размер файла | ≤ 45 MB | ≤ 50 MB |
 | Качество JPEG | по умолчанию 95; нижняя граница для `fit_file_size` — 90 (проверить при реализации) | то же |
-| Metadata в файле | title, keywords (≤ 49) | description, keywords (7–50) |
+| Metadata в файле | title, keywords (≤ 49) | description (≤ 150 символов — страницы 30.09.2026; было 2048), keywords (7–50) |
 | Категории | не в файле — при загрузке / API / CSV | не в файле — при загрузке / API / CSV |
 | Белый список metadata | ICC, IPTC / XMP title, keywords (+ автор / права — если задано) | ICC, IPTC / XMP description, keywords (+ автор / права — если задано) |
 | Правила очистки | §4.3 полностью | §4.3 полностью |
@@ -292,7 +292,9 @@ preparation. Решения человека (approve / reject) Export preparati
 - Какие поля IPTC / XMP читают площадки — **частично**: Adobe сохраняет встроенные title
   и keywords из Lightroom / Bridge / Photoshop (пишут XMP `dc:title` / `dc:subject`);
   v1 пишет только XMP IPTC Core, без IIM (APP13 = Photoshop IRB, §4.3). Подтвердить
-  первой реальной загрузкой. Shutterstock — не проверялось.
+  первой реальной загрузкой. Shutterstock: поддерживает встроенные titles / keywords (Bridge, Lightroom,
+  Photo Mechanic), какие поля читает — не указано; v1 пишет XMP `dc:description` / `dc:subject` —
+  подтвердить первой загрузкой.
 - Provenance (`digitalSourceType`) в файл — **открыт**: Adobe отмечает генеративный AI
   при загрузке в портале, а не полем файла; v1 не пишет (§4.2).
 
@@ -315,3 +317,19 @@ preparation. Решения человека (approve / reject) Export preparati
 | `export.prepare` / `export.get` — только человек (`AGENT_FORBIDDEN`, не в allowlist n8n) | инструменты OpenClaw и права n8n не расширяются |
 | Отказы — `EXPORT/FAILED` с кодом; дополнительно `RESOLUTION_TOO_LOW`, `FILE_TOO_LARGE`, `TITLE_EMPTY`, `VIEW_UNAVAILABLE`, `VERIFY_FAILED` | коды §3 + ограничения профиля |
 | `check_consistency`: последний `DERIVATIVE/CREATED` без файла / с другим файлом — FAIL; файл без события — INFO | как у internal derivative |
+
+### 9a. Профиль shutterstock-2026-09 (30.09.2026, паспорт §35ZZZG)
+
+| Параметр | Значение | Источник / решение |
+|---|---|---|
+| Формат, цвет | JPEG (TIFF допускается), sRGB | «What are the technical requirements for images?» (19.02.2026) |
+| Разрешение, размер | ≥ 4 MP, без верхнего предела для фото; ≤ 50 MB | там же; «How do I submit photos» |
+| Текстовое поле | `description` → XMP `dc:description`, ≤ 150 символов, без обрезки → `DESCRIPTION_TOO_LONG_FOR_PROFILE` | «Preparing Your Uploaded Content» (10.02.2026): 150; Readiness / контракт — 2048 → **строже 150** |
+| Короткое описание | < 5 слов → предупреждение `DESCRIPTION_SHORT` | как Readiness (`text_min_words`) |
+| Keywords | 7–50 | «7-50 keywords» |
+| Белый список | `segment:APP2:ICC`, `segment:APP1:XMP`, `xmp:dc:description`, `xmp:dc:subject` | dc:title не пишется |
+| Имя файла | `<slug description>_<asset_id>.jpg` ≤ 30 символов, `data/export/shutterstock/<id>/` | лимит Shutterstock не найден — как Adobe; slug — из описания (в плане Shutterstock нет title) |
+
+Ядро обобщено по текстовому полю профиля (`text_field`, `xmp_text`); новые параметры входят в
+`spec()` только если отличаются от умолчаний Adobe — отпечатки существующих экспортов Adobe не
+изменились (проверено: 10 production-объектов остались `ready_for_export`).

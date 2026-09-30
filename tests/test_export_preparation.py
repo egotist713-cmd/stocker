@@ -335,7 +335,7 @@ def test_keywords_count_outside_profile_is_refused(stocker_root, monkeypatch, bo
 
 def test_unknown_platform_and_rights(stocker_root):
     asset_id = approved_asset(stocker_root)
-    assert dispatch("export.prepare", {"asset_id": asset_id, "platform": "shutterstock"})["error"]["code"] == "UNKNOWN_PLATFORM"
+    assert dispatch("export.prepare", {"asset_id": asset_id, "platform": "istock"})["error"]["code"] == "UNKNOWN_PLATFORM"
     for actor in ("agent:openclaw", "workflow:n8n"):
         for operation in ("export.prepare", "export.get"):
             envelope = dispatch(operation, {"asset_id": asset_id}, actor=actor)
