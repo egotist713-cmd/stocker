@@ -5604,6 +5604,25 @@ check_consistency OK.
 
 ---
 
+# 35ZZZD. 2026-09-30 — Обрезанные копии prod #4 / #5 / #9 / #10; reject prod #7
+
+Копия production-БД до — `prod-before-crops.db`.
+
+- Исходники: `data/prod/incoming/{4,5,9,10}.jpeg`; полосы и рекомендуемая обрезка —
+  prod #4 низ 60 px (63), #5 верх 11 (14), #9 верх 11 (14), #10 верх 19 (22); старые
+  экспортные файлы — `data/prod/export/adobe/<id>/…` (`stale`).
+- Пользователь положил `{4,5,9,10}_cropped.jpeg`: срезано 73 / 26 / 19 / 24 px (не меньше
+  рекомендованного), по ширине без изменений; EDGE_BORDER пуст. Но все четыре — JPEG q90
+  **без ICC** (цвет `undeclared`, metadata нет): штатный ingest дал бы Readiness
+  `COLOR_SPACE_UNDECLARED`. Разрешения встроить sRGB для обрезок нет — ingest и reject
+  prod #4 / #5 / #9 / #10 (п. 2–3) остановлены до ответа пользователя.
+- prod #7 — `metadata.reject` (human): «заменён ретушью prod #12» → `rejected`; экспорт
+  `data/prod/export/adobe/7/industrial_workshop_7.jpg` — `stale`, на диске.
+- export.prepare для prod #11 / #12 не выполнялся: подтверждение визуального осмотра в
+  задании не заполнено.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
