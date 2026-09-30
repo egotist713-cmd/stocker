@@ -5702,6 +5702,58 @@ lr_10 обрезан на 18 px при полосе 19 px — остался к�
 
 ---
 
+# 35ZZZG. 2026-09-30 — Профиль экспорта shutterstock-2026-09
+
+### Сверка со страницами Shutterstock (30.09.2026)
+
+JPEG (TIFF допускается), sRGB, ≥ 4 MP, верхнего предела для фото нет (EPS ≤ 25 MP),
+JPEG ≤ 50 MB; **description ≤ 150 символов** («Preparing Your Uploaded Content», 10.02.2026)
+— в Readiness / контракте 2048 → применено строже, 150; keywords 7–50; категории — при
+загрузке. Встроенная metadata поддерживается («embedding … Adobe Bridge, Adobe Lightroom,
+Photo Mechanic … titles and keywords»), какие поля читаются — не указано; утверждения
+«только IPTC» нет → условие остановки не выполнено; v1 пишет XMP `dc:description` /
+`dc:subject` — подтвердить первой загрузкой. Источники — в `SHUTTERSTOCK.sources`.
+
+### Реализация (`app/export_preparation.py`, 11239f5)
+
+- Ядро обобщено по текстовому полю профиля: `text_field` (title / description), `xmp_text`
+  (dc:title / dc:description), `text_no_commas_warning`, `text_min_words`; отказы
+  `<FIELD>_TOO_LONG_FOR_PROFILE` / `<FIELD>_EMPTY`, предупреждения `<FIELD>_LONG` /
+  `_HAS_COMMA` / `_SHORT`. Новые параметры — в `spec()` только при отличии от умолчаний
+  Adobe; ключ снимка в отпечатке — имя поля (Adobe: `title`) → отпечатки Adobe не
+  изменились: 10 production-объектов остались `ready_for_export` (проверено до экспорта).
+- `SHUTTERSTOCK`: версия, MP, размер — из профиля Readiness; description ≤ 150 (отказ
+  `DESCRIPTION_TOO_LONG_FOR_PROFILE`, без обрезки), < 5 слов — `DESCRIPTION_SHORT`;
+  keywords 7–50; имя — slug описания ≤ 30 символов (в плане Shutterstock нет title);
+  `data/export/shutterstock/<id>/`.
+- Тесты `tests/test_export_shutterstock.py` (16): профиль; Adobe spec / XMP не изменены;
+  загрязнение → только белый список (без dc:title); мутация «dc:title в файле» ловится;
+  экспорт рядом с Adobe, `ready_for_export` = [adobe, shutterstock]; повтор `UNCHANGED`,
+  пересоздание с тем же sha256; description > лимита — отказ без обрезки, файла нет;
+  keywords вне 7–50; NOT_READY; SOURCE_CHANGED; без downscale. Атомарность: экспорт
+  Shutterstock в прогоне (MAX_INJECTED 18). Мутации кода (dc:title всегда; обрезка вместо
+  отказа) — 5 и 1 падение, после восстановления зелёные. `pytest`: 817 passed, 4 skipped.
+
+### Production (копия до — `prod-before-shutterstock.db`)
+
+| | Файл (`data/prod/export/shutterstock/<id>/`) | Байт | Description: символов / слов | Итог |
+|---|---|---|---|---|
+| prod #2 | `two_men_hard_hats_2.jpg` | 9 749 617 | 131 / 20 | CREATED |
+| prod #3 | `close_up_assorted_metal_3.jpg` | 8 580 963 | 145 / 20 | CREATED |
+| prod #6 | — | — | 154 / 25 | `DESCRIPTION_TOO_LONG_FOR_PROFILE` |
+| prod #8 | `dimly_lit_warehouse_8.jpg` | 9 147 340 | 145 / 22 | CREATED |
+| prod #13 | `robotic_arm_welds_metal_13.jpg` | 8 959 427 | 100 / 16 | CREATED |
+| prod #14 | `close_up_blue_electric_14.jpg` | 11 016 470 | 129 / 23 | CREATED |
+| prod #15 | `low_angle_view_15.jpg` | 9 723 876 | 143 / 21 | CREATED |
+| prod #16 | `industrial_warehouse_16.jpg` | 11 238 220 | 149 / 22 | CREATED |
+| prod #17 | — | — | 152 / 26 | `DESCRIPTION_TOO_LONG_FOR_PROFILE` |
+| prod #19 | — | — | 200 / 31 | `DESCRIPTION_TOO_LONG_FOR_PROFILE` |
+
+Предупреждений нет; повтор — `UNCHANGED`. Adobe-файлы не затронуты (все 10 —
+`ready_for_export` по Adobe). События 289 → 299; check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
