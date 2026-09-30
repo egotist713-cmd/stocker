@@ -5684,6 +5684,22 @@ lr_10 обрезан на 18 px при полосе 19 px — остался к�
 Состояния: ready_for_export 9, human_review 2 (#10, #18), rejected 7; инвариант — 0
 нарушений; check_consistency OK (9/9).
 
+### Дополнение: исправленный lr_10 (копия БД до — `prod-before-lr10b.db`)
+
+Исправленный файл записан поверх `data/prod/incoming/lr_10.jpeg` (15:31, sha
+`84d2ddf3…`) — это source_path prod #18. Чтобы два объекта не делили один путь (как test
+#2 / #3), файл скопирован без изменений в `lr_10b.jpeg` (SHA256 совпадает), исходный
+`lr_10.jpeg` не тронут. prod #18 — `source_invalid` (SOURCE_CHANGED).
+
+- lr_10b: 7672×4284 (−20 px сверху), q98, sRGB, EDGE_BORDER пуст → prod #19,
+  `publication_approved` (gate `auto_approved`; text `795`).
+- Условие выполнено → `metadata.reject` (human) «заменён версией из Lightroom»: prod #10,
+  prod #18 → `rejected`. `export.prepare` prod #19 → `yellow_tracked_19.jpg`,
+  `ready_for_export`; повтор — `UNCHANGED`.
+- Итог production: **ready_for_export 10** (prod #2, #3, #6, #8, #13–#17, #19), rejected 9.
+  Старые файлы к ручному удалению: `data/prod/export/adobe/{4,5,7,9,10}/…`. События
+  275 → 289; инвариант — 0 нарушений; check_consistency OK (9/9).
+
 ---
 
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
