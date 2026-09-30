@@ -5399,6 +5399,33 @@ digest) падал `ValueError`, как только в каталоге поя�
 
 ---
 
+# 35ZZZ. 2026-09-30 — Ретушь #1: #131 отклонён в тестовом каталоге, 1_retouched.jpg в production
+
+Копии БД до — `test-before-131.db`, `prod-before-retouch.db` (scratchpad).
+
+- **Тестовый каталог:** #131 — `metadata.reject` (human): «случайно попал в тестовый
+  каталог (ретушь #1 из data/incoming), COLOR_SPACE_UNDECLARED». Файл
+  `data/incoming/11.jpg` не удалялся и не переносился.
+- **ICC без перекодирования (пользователь подтвердил: ретушь в sRGB):** `11.jpg` — чистый
+  JPEG q90 (только JFIF, DQT, SOF, DHT, SOS; ни EXIF, ни XMP, ни ICC). Копия
+  `data/prod/incoming/1_retouched.jpg` = тот же файл + один сегмент APP2 `ICC_PROFILE`
+  (`app/profiles/srgb.icc`) после APP0. Таблицы и сжатые данные — байт в байт;
+  декодированные пиксели идентичны (numpy, 7676×4796×3); `11.jpg` не изменён (SHA256).
+  Факты: `srgb`, declared, ICC sha `551b2647…`.
+- **Production, штатный pipeline:** #11 `1_retouched.jpg` → gate `auto_approved` (без
+  причин; approve человека не было) → Readiness `ready` (adobe, shutterstock) →
+  Publication approved → `publication_approved`. Vision: `brands` / `logos` / `text` пусты
+  (у #1 было `logos: ['CTC']`), людей нет. Title «Robotic Arm Welding Metal in Factory».
+  Export не запускался (не запрошен). События production 124 → 135.
+- **Сравнение с #1:** размер тот же (7676×4796), сдвиг 0 (фазовая корреляция, пик 0,93) —
+  кропа нет. Средняя |разница| 0,85 уровня (перекодирование q99 → q90), отличия
+  сосредоточены в 2–3 блоках 64×64: x 2240–2368, y 768–896 — место ретуши логотипа.
+  Отличия от #1 для сведения: ретушь сохранена в q90 (3,5 МБ против 19 МБ у #1);
+  XMP Topaz (`DigitalSourceType`, Software) в ретуши отсутствует — провенанс в файле
+  ретуши не сохранён.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
