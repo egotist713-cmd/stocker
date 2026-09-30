@@ -20,7 +20,6 @@ from app.database.db import add_event, get_asset, insert_event, transaction, upd
 from app.ingest import ingest_file, sha256_file, source_file
 from app.qc import check_asset, save_qc_result
 from app.qc import edge_escalation_reason as qc_edge_reason
-from app.textnorm import normalize_text
 
 
 # Исходы process_asset. Это не assets.status: статус не меняется,
@@ -151,9 +150,11 @@ def run_edge_escalation(asset_id: int) -> str | None:
     if metadata["state"] not in review_gate.ESCALATABLE_STATES:
         print(f"EDGE_BORDER: not escalated (metadata '{metadata['state']}' is a human decision)")
         return None
-    # metadata.escalate нормализует текст («—» → «-»): сравнение — в той же форме.
-    if ((metadata.get("review_gate") or {}).get("escalation") or {}).get("reason") == normalize_text(reason):
-        return None
+    existing = (((metadata.get("review_gate") or {}).get("escalation") or {}).get("reason") or "")
+    if "EDGE_BORDER:" in existing:
+        return None  # уже у человека по полосам — без дублей (ширина — в текущем результате QC)
+    if existing:
+        reason = f"{existing}; {reason}"  # другая ручная эскалация не затирается
     metadata_service.escalate(asset_id, reason)
     print(f"EDGE_BORDER: escalated ({reason})")
     return reason

@@ -28,22 +28,27 @@ EXTREME_PREVIEW = 1600
 # Версия формул QC (резкость, доли тёмного / светлого, проверки). Значения порогов
 # входят в отпечаток сами (rules()), поэтому их смена тоже делает результат STALE.
 # v2 (28.09.2026): пиксели — из AnalysisView.
-# v3 (30.09.2026): чёрные полосы по краям (EDGE_BORDER, предупреждение; паспорт §35ZZZB).
-QC_RULES_VERSION = "qc-rules-v3"
+# v3 (30.09.2026): чёрные полосы по краям (EDGE_BORDER, фиксированные окна; паспорт §35ZZZB).
+# v4 (30.09.2026): EDGE_BORDER — глубина по каждой колонке (полосы до 3 % кадра; §35ZZZC).
+QC_RULES_VERSION = "qc-rules-v4"
 
 # Чёрные полосы по краям (EDGE_BORDER). Для стороны — линии от края внутрь; по каждой колонке
-# (строке) outer = mean линий 0–7, inner = mean линий 14–21. Колонка полосная, если outer <= DARK
-# и inner - outer >= DIFF; сторона с полосой — доля полосных >= SHARE. Не по максимуму линии:
-# у реальных полос края кадра светлее (prod #9: max строки 110 при значениях 0–2 в середине).
-# Ширина — по глубине скачка mean полосных колонок; шире MAX_WIDTH — тёмный сюжет, не полоса.
-# Пороги подобраны по prod #9 / #5 / #10 и 128 тестовым исходникам: 0 ложных срабатываний.
-EDGE_OUTER = (0, 8)
-EDGE_INNER = (14, 22)
+# (строке): r — длина тёмного (<= DARK) прогона от края; outer = mean линий 0…min(r, 8),
+# inner = mean линий r+2…r+9. Колонка полосная, если outer <= DARK и inner - outer >= DIFF
+# (скачок сразу за прогоном — тень и градиент его не дают). Ширина стороны w = медиана r
+# полосных колонок; согласованные — |r - w| <= max(3, w / 4); полоса, если их доля >= SHARE.
+# Прогон шире MAX_WIDTH_RATIO размера кадра по этой оси — тёмный сюжет, не полоса.
+# Не по максимуму линии: у реальных полос края кадра светлее (prod #9: max строки 110).
+# Пороги: prod #4 / #5 / #9 / #10 найдены, 130 тестовых исходников — 0 срабатываний.
 EDGE_DARK = 25
-EDGE_DIFF = 30
-EDGE_SHARE = 0.5
-EDGE_MAX_WIDTH = 32
-EDGE_PROFILE_LINES = 64
+EDGE_DIFF = 20
+EDGE_SHARE = 0.4
+EDGE_OUTER_LINES = 8
+EDGE_INNER_OFFSET = 2
+EDGE_INNER_LINES = 8
+EDGE_CONSISTENCY_PX = 3
+EDGE_CONSISTENCY_RATIO = 0.25
+EDGE_MAX_WIDTH_RATIO = 0.03
 
 
 def rules() -> dict:
@@ -58,13 +63,15 @@ def rules() -> dict:
         "dark_level": DARK_LEVEL,
         "bright_level": BRIGHT_LEVEL,
         "extreme_preview": EXTREME_PREVIEW,
-        "edge_outer": list(EDGE_OUTER),
-        "edge_inner": list(EDGE_INNER),
         "edge_dark": EDGE_DARK,
         "edge_diff": EDGE_DIFF,
         "edge_share": EDGE_SHARE,
-        "edge_max_width": EDGE_MAX_WIDTH,
-        "edge_profile_lines": EDGE_PROFILE_LINES,
+        "edge_outer_lines": EDGE_OUTER_LINES,
+        "edge_inner_offset": EDGE_INNER_OFFSET,
+        "edge_inner_lines": EDGE_INNER_LINES,
+        "edge_consistency_px": EDGE_CONSISTENCY_PX,
+        "edge_consistency_ratio": EDGE_CONSISTENCY_RATIO,
+        "edge_max_width_ratio": EDGE_MAX_WIDTH_RATIO,
     }
 
 
@@ -118,31 +125,45 @@ def calculate_extreme_pixels(image: Image.Image):
     return dark_ratio, bright_ratio
 
 
-def _side_lines(gray: np.ndarray) -> dict:
-    """Массивы (линия от края, позиция вдоль края) для каждой стороны."""
-    n = EDGE_PROFILE_LINES
-    return {"top": gray[:n, :], "bottom": gray[::-1][:n, :], "left": gray[:, :n].T, "right": gray[:, ::-1][:, :n].T}
+def _side_lines(gray: np.ndarray, depth: int) -> dict:
+    """Массивы (линия от края, позиция вдоль края) для каждой стороны, depth линий."""
+    return {"top": gray[:depth, :], "bottom": gray[::-1][:depth, :],
+            "left": gray[:, :depth].T, "right": gray[:, ::-1][:, :depth].T}
+
+
+def _side_border(lines: np.ndarray, limit: int) -> dict | None:
+    """Полоса одной стороны: lines — (линия от края, колонка); limit — наибольшая ширина полосы."""
+    dark = lines[:limit] <= EDGE_DARK
+    run = np.where(dark.all(axis=0), limit, np.argmin(dark, axis=0))  # r: тёмный прогон от края
+    columns = np.arange(lines.shape[1])
+    cumsum = np.vstack([np.zeros((1, lines.shape[1]), np.float32), np.cumsum(lines, axis=0)])
+    n_outer = np.clip(np.minimum(run, EDGE_OUTER_LINES), 1, None)
+    outer = cumsum[n_outer, columns] / n_outer
+    lo = run + EDGE_INNER_OFFSET
+    hi = np.minimum(lo + EDGE_INNER_LINES, lines.shape[0])
+    inner = (cumsum[hi, columns] - cumsum[np.minimum(lo, hi), columns]) / np.clip(hi - lo, 1, None)
+    banded = (run >= 1) & (run < limit) & (hi > lo) & (outer <= EDGE_DARK) & (inner - outer >= EDGE_DIFF)
+    if not banded.any():
+        return None
+    width = int(np.median(run[banded]))
+    consistent = banded & (np.abs(run - width) <= max(EDGE_CONSISTENCY_PX, EDGE_CONSISTENCY_RATIO * width))
+    share = float(consistent.mean())
+    return {"width": width, "share": round(share, 4)} if share >= EDGE_SHARE else None
 
 
 def edge_border(image: Image.Image) -> list[dict]:
     """Стороны с чёрной полосой: [{side, width, share}]; пусто — полос нет."""
     gray = np.asarray(image.convert("L"), dtype=np.float32)
+    height, width = gray.shape
     found = []
-    for side, lines in _side_lines(gray).items():
-        if lines.shape[0] < EDGE_INNER[1]:
+    for side, axis in (("top", height), ("bottom", height), ("left", width), ("right", width)):
+        limit = int(axis * EDGE_MAX_WIDTH_RATIO)  # шире — тёмный сюжет, не полоса
+        if limit < 1:
             continue
-        outer = lines[EDGE_OUTER[0]:EDGE_OUTER[1]].mean(axis=0)
-        inner = lines[EDGE_INNER[0]:EDGE_INNER[1]].mean(axis=0)
-        banded = (outer <= EDGE_DARK) & (inner - outer >= EDGE_DIFF)
-        share = float(banded.mean())
-        if share < EDGE_SHARE:
-            continue
-        profile = lines[:, banded].mean(axis=1)
-        middle = (profile[EDGE_OUTER[0]:EDGE_OUTER[1]].mean() + profile[EDGE_INNER[0]:EDGE_INNER[1]].mean()) / 2
-        width = int(np.argmax(profile >= middle)) if (profile >= middle).any() else lines.shape[0]
-        if width > EDGE_MAX_WIDTH:
-            continue  # широкая тёмная область — сюжет
-        found.append({"side": side, "width": width, "share": round(share, 4)})
+        lines = _side_lines(gray, limit + EDGE_INNER_OFFSET + EDGE_INNER_LINES)[side]
+        border = _side_border(lines, limit)
+        if border:
+            found.append({"side": side, **border})
     return found
 
 

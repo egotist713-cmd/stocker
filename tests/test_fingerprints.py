@@ -77,7 +77,7 @@ def test_rules_cover_every_qc_threshold():
     assert {name.lower() for name in thresholds} <= set(qc.rules())
 
 
-@pytest.mark.parametrize("name, value", [("MIN_MEGAPIXELS", 3.0), ("EXTREME_RATIO", 0.3), ("QC_RULES_VERSION", "qc-rules-v4")])
+@pytest.mark.parametrize("name, value", [("MIN_MEGAPIXELS", 3.0), ("EXTREME_RATIO", 0.3), ("QC_RULES_VERSION", "qc-rules-v5")])
 def test_qc_rule_change_makes_qc_stale(stocker_root, monkeypatch, name, value):
     asset_id = worker.process_file(make_image(stocker_root), analyzer=FakeAnalyzer())
     monkeypatch.setattr(qc, name, value)
