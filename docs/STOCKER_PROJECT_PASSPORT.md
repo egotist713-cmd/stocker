@@ -5653,6 +5653,39 @@ lr_10 обрезан на 18 px при полосе 19 px — остался к�
 
 ---
 
+# 35ZZZF. 2026-09-30 — Замена версиями из Lightroom: reject старых, экспорт новых
+
+Пользователь осмотрел prod #13–#17 (100 %) — подтверждено. Копия БД до —
+`prod-before-lr-rejects.db`.
+
+- Исправленного lr_10 в `data/prod/incoming` нет (`lr_10.jpeg` — тот же файл 14:40, sha
+  `39c2e1b0…` = prod #18; новых объектов нет) → условие не выполнено: reject prod #10 и
+  prod #18 **не выполнялся** (оба `human_review`).
+- `metadata.reject` (human) «заменён версией из Lightroom»: prod #4, #5, #9, #11, #12 →
+  `rejected`.
+- `export.prepare`: prod #13–#17 → CREATED, `ready_for_export`, предупреждений нет;
+  повтор — `UNCHANGED`. События 265 → 275.
+
+Готовы к загрузке (`data/prod/export/adobe/<id>/`, ready_for_export): prod #2
+`two_industrial_workers_2.jpg`, #3 `scattered_metal_3.jpg`, #6
+`workers_hard_hats_near_6.jpg`, #8 `warehouse_interior_view_8.jpg`, #13
+`robotic_arm_welding_13.jpg`, #14 `blue_industrial_motor_14.jpg`, #15
+`snowfall_over_urban_15.jpg`, #16 `warehouse_interior_16.jpg`, #17
+`bulldozer_muddy_17.jpg` — 9 файлов.
+
+Старые (не текущие) экспортные файлы — к ручному удалению: prod #4, #5, #7, #9
+(`rejected`); prod #10 (`human_review`, файл `stale`).
+
+**Замечено:** `check_consistency` проверяет файл последнего `DERIVATIVE/CREATED` у любого
+объекта, в т. ч. `rejected` — после ручного удаления старых файлов он покажет FAIL
+«export file missing» для prod #4, #5, #7, #9 (ложная тревога). Не исправлялось — решение
+пользователя.
+
+Состояния: ready_for_export 9, human_review 2 (#10, #18), rejected 7; инвариант — 0
+нарушений; check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
