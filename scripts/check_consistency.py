@@ -73,15 +73,27 @@ def _derivative_problems(connection, root: Path) -> list[int]:
 
 
 def _export_problems(connection, root: Path) -> list[int]:
-    """Последний DERIVATIVE/CREATED площадки ссылается на файл экспорта, которого нет или который изменён."""
+    """
+    Последний DERIVATIVE/CREATED площадки ссылается на файл экспорта, которого нет или который изменён.
+    У отклонённых объектов (metadata rejected) отсутствие файла — не нарушение: старые экспортные
+    файлы удаляются вручную (паспорт §35ZZZF). Изменённый файл — нарушение всегда.
+    """
+    rejected = {asset_id for (asset_id,) in connection.execute(
+        "SELECT id FROM assets WHERE json_extract(metadata_json, '$.state') = 'rejected'")}
     latest = {}
     for asset_id, message in connection.execute(
             "SELECT asset_id, message FROM processing_events WHERE stage = 'DERIVATIVE' AND status = 'CREATED' ORDER BY id"):
         created = json.loads(message)
         if created.get("purpose") == "export":
             latest[(asset_id, created.get("platform"))] = created
-    broken = {asset_id for (asset_id, _), created in latest.items()
-              if not (root / created["path"]).exists() or _sha256(root / created["path"]) != created["sha256"]}
+    broken = set()
+    for (asset_id, _), created in latest.items():
+        path = root / created["path"]
+        if not path.exists():
+            if asset_id not in rejected:
+                broken.add(asset_id)
+        elif _sha256(path) != created["sha256"]:
+            broken.add(asset_id)
     return sorted(broken)
 
 

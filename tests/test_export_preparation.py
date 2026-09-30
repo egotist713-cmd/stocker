@@ -350,6 +350,23 @@ def test_consistency_detects_missing_export_file(stocker_root):
     assert find_problems(db.db_path())["DERIVATIVE/CREATED export file missing or changed"] == [asset_id]
 
 
+def test_missing_export_file_of_rejected_asset_is_not_a_problem(stocker_root):
+    """Старые экспортные файлы отклонённых объектов удаляются вручную (паспорт §35ZZZF)."""
+    asset_id = approved_asset(stocker_root)
+    path = stocker_root / ep.prepare(asset_id)["export"]["path"]
+    assert dispatch("metadata.reject", {"asset_id": asset_id, "reason": "replaced"}, actor="human")["ok"]
+    path.unlink()
+    assert find_problems(db.db_path())["DERIVATIVE/CREATED export file missing or changed"] == []
+
+
+def test_changed_export_file_of_rejected_asset_is_still_a_problem(stocker_root):
+    asset_id = approved_asset(stocker_root)
+    path = stocker_root / ep.prepare(asset_id)["export"]["path"]
+    dispatch("metadata.reject", {"asset_id": asset_id, "reason": "replaced"}, actor="human")
+    path.write_bytes(b"changed")
+    assert find_problems(db.db_path())["DERIVATIVE/CREATED export file missing or changed"] == [asset_id]
+
+
 def test_export_orphan_file_is_reported(stocker_root):
     orphan = db.export_dir() / "adobe" / "99" / "x_99.jpg"
     orphan.parent.mkdir(parents=True)
