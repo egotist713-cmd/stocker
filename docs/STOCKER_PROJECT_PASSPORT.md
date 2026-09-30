@@ -5426,6 +5426,35 @@ digest) падал `ValueError`, как только в каталоге поя�
 
 ---
 
+# 35ZZZA. 2026-09-30 — Ретушь #7 (7_retouched_srgb.jpg → #12)
+
+- `1_retouched.jpg` в задании — тот же файл, что уже зарегистрирован как #11 (sha
+  `8e773462…`): повторный ingest дал бы дубликат — не выполнялся. #131 в тестовой БД уже
+  `rejected` (событие 3848, §35ZZZ) — повторный reject не выполнялся.
+- `7_retouched.jpg` (ретушь #7: убрана красная табличка с логотипом слева) — JPEG q90
+  без metadata и без ICC (цвет `undeclared`), 7676×4796, как у #7. Пользователь подтвердил
+  sRGB → копия `data/prod/incoming/7_retouched_srgb.jpg` с сегментом APP2 ICC
+  (`app/profiles/srgb.icc`); сжатые данные байт в байт, декодированные пиксели идентичны,
+  исходный `7_retouched.jpg` не изменён. Копия БД до — `prod-before-7-retouch.db`.
+- Штатный pipeline: #12 → gate `auto_approved` (без причин) → Readiness `ready` (adobe,
+  shutterstock) → Publication approved → `publication_approved`. Vision: `brands`, `logos`
+  пусты; `text_visible` — `ВЫХОД` (WARNING_WORD, technical). У исходного #7 Vision тоже не
+  видел табличку с логотипом (`brands` / `logos` пусты; текст `ВЫХОД`, `Плоск ТТ502 №1`) —
+  отсутствие брендов у #12 не доказывает чистоту кадра; решает визуальная проверка.
+  События production 135 → 146.
+- `7_retouched.jpg` (без ICC) остаётся в `data/prod/incoming` незарегистрированным: общий
+  ingest папки (`python -m app.ingest`) зарегистрировал бы его отдельным объектом
+  (`COLOR_SPACE_UNDECLARED`).
+- **#7 и metadata.reject (симуляция на копии production-БД, реальная не менялась — хеш):**
+  metadata #7 `auto_approved` ∈ `REJECTABLE_STATES` — reject применим. После него:
+  состояние `rejected`; стадия export `not_applicable`; `export.get` — `stale`
+  (`NOT_READY_OR_NOT_APPROVED`), `export: null`, `last_export.current = false`; файл
+  `data/prod/export/adobe/7/industrial_workshop_7.jpg` остаётся на диске без изменений
+  (Stocker файлы не удаляет); `export.prepare` → `NOT_READY`; check_consistency — OK.
+  Загрузка (будущий этап) берёт только `ready_for_export` — файл #7 не уйдёт.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
