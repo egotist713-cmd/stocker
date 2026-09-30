@@ -200,6 +200,31 @@ def test_prepare_creates_verified_file_and_ready_for_export(stocker_root):
     assert not any(find_problems(db.db_path()).values()) and find_export_orphans(db.db_path()) == []
 
 
+def test_every_asset_state_is_known_to_views_and_list_filter():
+    """Регрессия 30.09.2026: review.queue падал на ready_for_export (нет в views.ASSET_STATES)."""
+    import typing
+
+    from app.service import registry, views
+
+    states = {value for name, value in vars(asset_state).items()
+              if name.isupper() and isinstance(value, str) and name in (
+                  "REJECTED", "SOURCE_INVALID", "BLOCKED", "ERROR", "STALE", "PROCESSING", "HUMAN_REVIEW",
+                  "METADATA_APPROVED", "PLATFORM_READY", "PUBLICATION_APPROVED", "READY_FOR_EXPORT")}
+    assert set(views.ASSET_STATES) == states
+    listed = set(typing.get_args(typing.get_args(registry.ListParams.model_fields["state"].annotation)[0]))
+    assert listed == states
+
+
+def test_review_queue_and_list_with_ready_for_export(stocker_root):
+    asset_id = approved_asset(stocker_root)
+    ep.prepare(asset_id)
+    summary = dispatch("review.queue", {})["data"]["summary"]
+    assert summary["by_state"]["ready_for_export"] == 1 and summary["ready_for_export"] == 1
+    assert summary["publication_approved"] == 1 and summary["platform_ready"] == 1
+    items = dispatch("asset.list", {"state": "ready_for_export"})["data"]["items"]
+    assert [item["id"] for item in items] == [asset_id]
+
+
 def test_title_and_keywords_come_from_the_readiness_snapshot(stocker_root):
     asset_id = approved_asset(stocker_root)
     created = ep.prepare(asset_id)["export"]

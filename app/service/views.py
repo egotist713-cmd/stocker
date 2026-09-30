@@ -25,7 +25,7 @@ METADATA_APPROVED_STATES = (mb.AUTO_APPROVED, mb.APPROVED)
 ASSET_STATES = (
     asset_state.REJECTED, asset_state.SOURCE_INVALID, asset_state.BLOCKED, asset_state.ERROR, asset_state.STALE,
     asset_state.PROCESSING, asset_state.HUMAN_REVIEW, asset_state.METADATA_APPROVED, asset_state.PLATFORM_READY,
-    asset_state.PUBLICATION_APPROVED,
+    asset_state.PUBLICATION_APPROVED, asset_state.READY_FOR_EXPORT,
 )
 
 
@@ -211,7 +211,7 @@ def review_queue(limit: int = 50, offset: int = 0) -> dict:
     """
     by_state = {state: 0 for state in ASSET_STATES}
     by_metadata_state = {state: 0 for state in METADATA_STATES}
-    metadata_approved = platform_ready = publication_approved = 0
+    metadata_approved = platform_ready = publication_approved = ready_for_export = 0
     problem_counts = {}
     problems = []
     review_items = []
@@ -222,8 +222,11 @@ def review_queue(limit: int = 50, offset: int = 0) -> dict:
         by_state[state["state"]] = by_state.get(state["state"], 0) + 1
         by_metadata_state[pipeline["metadata"]] = by_metadata_state.get(pipeline["metadata"], 0) + 1
         metadata_approved += state["metadata_approved"]
-        platform_ready += state["state"] in (asset_state.PLATFORM_READY, asset_state.PUBLICATION_APPROVED)
-        publication_approved += state["state"] == asset_state.PUBLICATION_APPROVED
+        # ready_for_export — дальше по той же цепочке: одобрение площадки и Publication сохраняются.
+        platform_ready += state["state"] in (asset_state.PLATFORM_READY, asset_state.PUBLICATION_APPROVED,
+                                             asset_state.READY_FOR_EXPORT)
+        publication_approved += state["state"] in (asset_state.PUBLICATION_APPROVED, asset_state.READY_FOR_EXPORT)
+        ready_for_export += state["state"] == asset_state.READY_FOR_EXPORT
 
         if state["problems"]:
             problems.append({"id": view["id"], "filename": view["filename"], "state": state["state"],
@@ -243,6 +246,7 @@ def review_queue(limit: int = 50, offset: int = 0) -> dict:
             "metadata_approved": metadata_approved,
             "platform_ready": platform_ready,
             "publication_approved": publication_approved,
+            "ready_for_export": ready_for_export,
             "by_metadata_state": by_metadata_state,
             "problem_counts": dict(sorted(problem_counts.items())),
             # Сначала самое важное: порядок состояний контракта (source_invalid, blocked, error, stale…).

@@ -34,7 +34,7 @@ class ListParams(Params):
     metadata_state: Literal["none", "draft", "auto_approved", "human_review", "approved", "rejected"] | None = None
     state: Literal[
         "rejected", "source_invalid", "blocked", "error", "stale", "processing",
-        "human_review", "metadata_approved", "platform_ready",
+        "human_review", "metadata_approved", "platform_ready", "publication_approved", "ready_for_export",
     ] | None = None
     metadata_approved: bool | None = None
     limit: int = Field(default=50, ge=1, le=500)
