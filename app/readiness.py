@@ -349,12 +349,29 @@ def metadata_checks(profile: Profile, metadata: dict, brands: list[dict], catego
     return checks
 
 
-def rights_checks(vision: AIAnalysis, brands: list[dict]) -> list[dict]:
+ATTESTATION_KINDS = ("not_identifiable", "release_on_file")
+
+
+def attestation_label(attestation: dict | None) -> str | None:
+    """Строка отчёта: «people: not_identifiable (human)» / «people: release_on_file (human)»."""
+    return f"people: {attestation['kind']} (human)" if attestation else None
+
+
+def rights_checks(vision: AIAnalysis, brands: list[dict], attestation: dict | None = None) -> list[dict]:
+    """attestation — актуальная человеческая аттестация людей в кадре (HUMAN/PEOPLE_ATTESTED, §3.3b):
+    снимает только MODEL_RELEASE_REQUIRED и только для взрослых; дети — как прежде (gate-v1.2)."""
     checks = []
 
     people = rg.people_risk(vision)
     if people["level"] == "recognizable":
-        checks.append(_check("MODEL_RELEASE_REQUIRED", BLOCKER, f"Recognizable people ({', '.join(people['markers'])}); no model release"))
+        children = any(marker.startswith("child:") for marker in people["markers"])
+        if attestation and attestation.get("kind") in ATTESTATION_KINDS and not children:
+            checks.append(_check("PEOPLE_ATTESTED", INFO, f"{attestation_label(attestation)}; "
+                                 f"Vision: recognizable ({', '.join(people['markers'])})"))
+        else:
+            detail = "; human attestation does not apply to children" if attestation and children else ""
+            checks.append(_check("MODEL_RELEASE_REQUIRED", BLOCKER,
+                                 f"Recognizable people ({', '.join(people['markers'])}); no model release{detail}"))
     elif people["level"] in ("partial", "unclear"):
         checks.append(_check("PEOPLE_NOT_RECOGNIZABLE", WARNING, f"People present but not recognizable ({people['level']})"))
 
@@ -400,6 +417,9 @@ def fingerprint(facts: dict, metadata: dict | None, platforms: list[str]) -> str
         "fields": metadata.get("fields"),
         "vision_event_id": ((metadata.get("sources") or {}).get("vision") or {}).get("event_id"),
     }
+    # Аттестация людей (§3.3b) — только если есть: отпечатки оценок без неё не меняются.
+    if facts.get("people_attestation"):
+        payload["people_attestation"] = facts["people_attestation"]
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
@@ -413,7 +433,8 @@ def evaluate_platform(profile: Profile, facts: dict, metadata: dict, vision: AIA
     categories = map_categories(profile, category_scores(vision, metadata["fields"]))
 
     file_list, operations = file_checks(profile, facts)
-    checks = file_list + metadata_checks(profile, metadata, brands, categories) + rights_checks(vision, brands)
+    attestation = facts.get("people_attestation")
+    checks = file_list + metadata_checks(profile, metadata, brands, categories) + rights_checks(vision, brands, attestation)
 
     blocked = any(check["level"] == BLOCKER for check in checks)
     plan = None
@@ -424,6 +445,8 @@ def evaluate_platform(profile: Profile, facts: dict, metadata: dict, vision: AIA
             plan["category"] = categories[0] if categories else None
         else:
             plan["categories"] = categories
+        if any(check["code"] == "PEOPLE_ATTESTED" for check in checks):
+            plan["people"] = attestation_label(attestation)
         plan.update({
             "file": {"from": "original", "operations": operations},
             "releases": [],

@@ -5332,6 +5332,59 @@ compositeWithTrainedAlgorithmicMedia`, Software `Topaz Gigapixel 1.3.6 (Windows)
 
 ---
 
+# 35ZZY. 2026-09-30 — Человеческая аттестация людей в кадре (asset.attest_people)
+
+### Решение пользователя
+
+#2 и #6 одобрены человеком, но Readiness блокировал их `MODEL_RELEASE_REQUIRED` по тегу
+`subject:*`, а записать вывод «люди не узнаваемы» было нечем. Решение человека — вход
+Readiness; затрагивается только `MODEL_RELEASE_REQUIRED`.
+
+### Реализация (без изменения схемы БД)
+
+- `app/attestation.py`: `asset.attest_people {asset_id, kind, note}` — `not_identifiable` /
+  `release_on_file` (note обязателен) / `none` (отзыв); SHA256 source при записи; событие
+  `HUMAN/PEOPLE_ATTESTED` (kind, note, file_hash, actor) одной транзакцией. Уровень
+  `review` + `AGENT_FORBIDDEN`; n8n — нет в allowlist; не инструмент MCP.
+- Readiness: `stock_readiness._db_facts` добавляет действующую аттестацию
+  (`attestation.current`: последняя, не `none`, тот же `file_hash`); `rd.rights_checks` —
+  вместо blocker `MODEL_RELEASE_REQUIRED` → info `PEOPLE_ATTESTED` «people:
+  not_identifiable (human)», `export_plan.people`. Дети (`child:*`) — аттестация не
+  действует. Fingerprint — ключ `people_attestation` только при действующей аттестации:
+  прежние оценки обоих каталогов не стали stale.
+- Контракт Readiness: §3.3 (таблица), новый §3.3b, §7.1.
+- Тесты `tests/test_attestation.py` (12): без аттестации — blocked; с ней — ready →
+  Publication → Export; release_on_file без note — отказ; отзыв → stale → blocked;
+  агент и n8n — FORBIDDEN без события; изменённый source — отказ, чужой file_hash не
+  действует; дети и другие blocker-ы не меняются. Атомарность: модуль в `ATOMIC_MODULES`,
+  аттестация в прогоне (MAX_INJECTED 17). `pytest`: 776 passed, 4 skipped; тестовая БД
+  за прогон не изменилась (хеш).
+
+### Production
+
+Копия БД до — `prod-before-attestation.db` (scratchpad). #2, #6 —
+`not_identifiable`, note «люди со спины и вдали, решение пользователя 30.09.2026» →
+Readiness `ready` (adobe, shutterstock; `PEOPLE_ATTESTED`) → Publication approved →
+`export.prepare` CREATED → `ready_for_export`; повтор — `UNCHANGED`.
+
+| # | Файл | MP | Байт | Title | kw | sha256 |
+|---|---|---|---|---|---|---|
+| 2 | `data/prod/export/adobe/2/two_industrial_workers_2.jpg` | 36,81 | 9 749 534 | 60 | 30 | `4e153696…` |
+| 6 | `data/prod/export/adobe/6/workers_hard_hats_near_6.jpg` | 35,68 | 8 951 630 | 46 | 30 | `81daf180…` |
+
+События production 116 → 124. Состояния: `ready_for_export` 9, `rejected` 1. Инвариант —
+0 нарушений; check_consistency OK (9/9).
+
+### Замечено: n8n принял файл в тестовый каталог
+
+Живой n8n (`stocker-ingest`, actor `workflow:n8n`) 29.09 18:45 UTC зарегистрировал в
+**тестовой** БД #131 `data/incoming/11.jpg` (7676×4796 — размер как у production #1):
+вероятно, ретушированный #1 положен в `data/incoming`, а не в `data/prod/incoming`.
+Объект прошёл pipeline (`auto_approved`, Readiness). Ничего не менялось — решение за
+пользователем.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

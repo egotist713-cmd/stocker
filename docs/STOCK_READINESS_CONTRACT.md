@@ -178,7 +178,8 @@ sRGB-профилей, **а не по подстроке `sRGB` в описан�
 
 | code | Условие | Уровень |
 |---|---|---|
-| `MODEL_RELEASE_REQUIRED` | `people_risk` = `recognizable` (в т.ч. дети, `gate-v1.2`), релиза нет | blocker |
+| `MODEL_RELEASE_REQUIRED` | `people_risk` = `recognizable` (в т.ч. дети, `gate-v1.2`), релиза нет и нет действующей человеческой аттестации (§3.3b; для детей аттестация не действует) | blocker |
+| `PEOPLE_ATTESTED` | `people_risk` = `recognizable` (взрослые), действует аттестация человека (§3.3b): «people: not_identifiable (human)» / «people: release_on_file (human)» | info |
 | `DOMINANT_BRAND` | бренд или логотип — главный объект кадра (§3.3a); нужен property release или другой кадр | blocker |
 | `COMPONENT_BRAND` | бренд на оборудовании, не главный объект (Siemens на щите, §3.3a) | warning |
 | `INCIDENTAL_MARKING` | маркировка, шильдик, юрлицо в надписи (§3.3a) | info |
@@ -189,6 +190,21 @@ sRGB-профилей, **а не по подстроке `sRGB` в описан�
 
 Human approve metadata **не** снимает blocker-ы прав: approve подтверждает
 текст, релиз — это отдельный юридический факт.
+
+### 3.3b. Человеческая аттестация людей в кадре (30.09.2026, паспорт §35ZZY)
+
+Vision определяет людей грубо (`subject:*` → `recognizable`); глаза человека —
+основной фильтр. Вывод человека — отдельный вход Readiness:
+
+| | |
+|---|---|
+| Операция | `asset.attest_people {asset_id, kind, note}` — уровень `review`, **только actor `human`** (`AGENT_FORBIDDEN`, нет в allowlist n8n, не инструмент MCP) |
+| `kind` | `not_identifiable` — люди не узнаваемы; `release_on_file` — релиз есть у пользователя (`note` обязателен: номер / ссылка; Stocker релиз не хранит и не проверяет); `none` — отзыв |
+| Событие | `HUMAN/PEOPLE_ATTESTED`: `kind`, `note`, `file_hash` source, `actor`; схема БД не меняется |
+| Проверка source | при записи — SHA256 файла = `assets.file_hash`, иначе `SOURCE_INVALID` |
+| Действует | последняя аттестация, `kind` ≠ `none`, `file_hash` = `assets.file_hash` |
+| Влияние | снимает **только** `MODEL_RELEASE_REQUIRED` для взрослых → `PEOPLE_ATTESTED` (info), в `export_plan.people` — та же строка. Дети (`child:*`), `DOMINANT_BRAND`, `PERSONAL_DOCUMENT`, `EDITORIAL_ONLY`, цвет и прочие blocker-ы не меняются; Gate, Vision, Metadata, Publication Gate — тоже |
+| Устаревание | аттестация (`kind`, `event_id`, `file_hash`) входит в fingerprint Readiness — **только если действует** (без неё отпечатки прежних оценок не меняются); новая аттестация или отзыв → Readiness `stale`; изменённый source → `source_invalid` |
 
 ### 3.3a. Бренды: три уровня
 
@@ -701,6 +717,8 @@ nature 2; несогласий с отбором 18 → 12.
 
 1. **Релизы.** Stocker не хранит релизы: `MODEL_RELEASE_REQUIRED` и
    `DOMINANT_BRAND` — blocker; позже операция человека `release.attach`.
+   С 30.09.2026 `MODEL_RELEASE_REQUIRED` (взрослые) снимает человеческая аттестация
+   `asset.attest_people` (§3.3b); сам релиз по-прежнему не хранится.
    `partial`/`unclear` люди и второстепенные бренды блокером не являются.
 2. **Категории** — детерминированная таблица (§3.5a), без совпадения — человек.
 3. **Creative Review** выключен до реализации шагов 1–5; после включения —

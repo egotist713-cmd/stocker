@@ -8,7 +8,7 @@ Stock Readiness: оценка asset и события READINESS/* (docs/STOCK_RE
 
 import json
 
-from app import ingest
+from app import attestation, ingest
 from app import readiness as rd
 from app.ai.schema import AIAnalysis
 from app.database.db import get_asset, get_connection, insert_event, transaction
@@ -59,12 +59,18 @@ def _db_facts(asset: dict, events: list[dict]) -> dict:
     qc = _json(asset["qc_result"]) or {}
     source_invalid = _last(events, "SOURCE", "INVALID")
     source_facts = _last(events, "NORMALIZE", "EVALUATED")
-    return {
+    facts = {
         "file_hash": asset["file_hash"],
         "facts_event_id": source_facts["id"] if source_facts else None,
         "source_event_id": source_invalid["id"] if source_invalid else None,
         "qc_passed": bool(qc.get("passed")),
     }
+    # Человеческая аттестация людей (§3.3b) — вход только если действует: иначе ключа нет,
+    # и отпечатки прежних оценок не меняются. Отзыв / новая аттестация → stale.
+    attested = attestation.current(asset, events)
+    if attested:
+        facts["people_attestation"] = attested
+    return facts
 
 
 def _inputs(asset: dict) -> tuple[dict | None, AIAnalysis | None]:

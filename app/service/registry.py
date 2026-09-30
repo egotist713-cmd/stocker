@@ -105,6 +105,11 @@ class ExportParams(AssetParams):
     platform: str = Field(default="adobe", description="Export profile platform (adobe)")
 
 
+class AttestPeopleParams(AssetParams):
+    kind: str = Field(description="not_identifiable | release_on_file | none (revoke)")
+    note: str | None = Field(default=None, description="Required for release_on_file: release number or link (not stored or checked)")
+
+
 class ApproveParams(AssetParams):
     allow_partial: bool = False
     confirm_claims: bool = False
@@ -187,6 +192,12 @@ DESCRIPTIONS = {
         "Publication Gate: may the asset be published to each stock platform. Deterministic, per platform: approved "
         "only where metadata is approved and current Stock Readiness is ready; Creative Review advice is recorded as "
         'information and never blocks. Source is verified (SHA256). Changes nothing else. Args: {"asset_id": 5}'
+    ),
+    "asset.attest_people": (
+        "Human attestation of people in the frame, an input of Stock Readiness: not_identifiable (people are not "
+        "recognizable) or release_on_file (note: release number or link; not stored or checked); none revokes. "
+        "Lifts only MODEL_RELEASE_REQUIRED for adults, while the source file is unchanged. Human actors only. "
+        'Args: {"asset_id": 5, "kind": "not_identifiable", "note": "..."}'
     ),
     "export.prepare": (
         "Export preparation: build and verify the platform file (sRGB JPEG, embedded title and keywords only, "
@@ -290,6 +301,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("metadata.escalate", DESCRIPTIONS["metadata.escalate"], ReasonParams, PIPELINE, ops.metadata_escalate),
         Operation("metadata.approve", DESCRIPTIONS["metadata.approve"], ApproveParams, REVIEW, ops.metadata_approve),
         Operation("metadata.reject", DESCRIPTIONS["metadata.reject"], ReasonParams, REVIEW, ops.metadata_reject),
+        Operation("asset.attest_people", DESCRIPTIONS["asset.attest_people"], AttestPeopleParams, REVIEW, ops.asset_attest_people),
         Operation("normalize.evaluate", DESCRIPTIONS["normalize.evaluate"], AssetParams, PIPELINE, ops.normalize_evaluate),
         Operation("normalize.run", DESCRIPTIONS["normalize.run"], AssetParams, PIPELINE, ops.normalize_run),
         Operation("normalize.get", DESCRIPTIONS["normalize.get"], AssetParams, READ, ops.normalize_get),

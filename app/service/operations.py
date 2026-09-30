@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from app import creative_review as creative_review_service
+from app import attestation
 from app import enhancement_decision
 from app import export_preparation
 from app import ingest
@@ -124,6 +125,14 @@ def publication_evaluate(params) -> dict:
     except publication.PublicationError as exc:
         raise ServiceError(exc.code, str(exc)) from exc
     return _result(params.asset_id, result["outcome"], {"publication": result["publication"]})
+
+
+def asset_attest_people(params) -> dict:
+    try:
+        result = attestation.attest(params.asset_id, params.kind, params.note)
+    except attestation.AttestationError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    return _result(params.asset_id, result["outcome"], {"attestation": result["attestation"]})
 
 
 def export_prepare(params) -> dict:

@@ -62,7 +62,8 @@ WORKFLOW_NO_FORCE = frozenset({"asset.process", "metadata.build"})
 
 # Факт доставки уведомления фиксирует тот, кто доставляет (workflow), а не агент.
 # Export preparation — только человек (решение 30.09.2026): инструменты OpenClaw не расширяются.
-AGENT_FORBIDDEN = frozenset({"notification.record", "export.prepare", "export.get"})
+# asset.attest_people — вывод человека о людях в кадре (§35ZZY), только human.
+AGENT_FORBIDDEN = frozenset({"notification.record", "export.prepare", "export.get", "asset.attest_people"})
 
 
 def _workflow_guard(operation: str, params: dict, actor: str) -> str | None:
