@@ -19,6 +19,8 @@ from app.database import db
 from app.database.db import add_event, get_asset, insert_event, transaction, update_ai_result
 from app.ingest import ingest_file, sha256_file, source_file
 from app.qc import check_asset, save_qc_result
+from app.qc import edge_escalation_reason as qc_edge_reason
+from app.textnorm import normalize_text
 
 
 # Исходы process_asset. Это не assets.status: статус не меняется,
@@ -135,6 +137,28 @@ def run_metadata(asset_id: int, analyzer: MetadataAnalyzer | None = None) -> str
     return result["outcome"]
 
 
+def run_edge_escalation(asset_id: int) -> str | None:
+    """
+    Чёрные полосы по краям (QC EDGE_BORDER) → существующий metadata.escalate (паспорт §35ZZZB):
+    объект уходит к человеку с причиной «EDGE_BORDER: чёрные полосы — …». Gate не меняется.
+    Без полос, без metadata, при решении человека (approved / rejected) или той же эскалации — ничего.
+    """
+    asset = get_asset(asset_id)
+    reason = qc_edge_reason(json.loads(asset["qc_result"]) if asset and asset["qc_result"] else None)
+    metadata = json.loads(asset["metadata_json"]) if asset and asset["metadata_json"] else None
+    if reason is None or metadata is None:
+        return None
+    if metadata["state"] not in review_gate.ESCALATABLE_STATES:
+        print(f"EDGE_BORDER: not escalated (metadata '{metadata['state']}' is a human decision)")
+        return None
+    # metadata.escalate нормализует текст («—» → «-»): сравнение — в той же форме.
+    if ((metadata.get("review_gate") or {}).get("escalation") or {}).get("reason") == normalize_text(reason):
+        return None
+    metadata_service.escalate(asset_id, reason)
+    print(f"EDGE_BORDER: escalated ({reason})")
+    return reason
+
+
 def run_normalization(asset_id: int) -> str:
     """
     Internal Normalization (docs/INTERNAL_IMAGE_REPRESENTATION_CONTRACT.md): факты об
@@ -218,6 +242,7 @@ def process_asset(
     if asset["ai_result"] and not force:
         print("AI: already done (use --force to re-run)")
         run_metadata(asset_id, metadata_analyzer)
+        run_edge_escalation(asset_id)
         return AI_ALREADY_DONE
 
     problem = verify_source(asset)
@@ -254,6 +279,7 @@ def process_asset(
 
     if outcome == AI_PASSED:
         run_metadata(asset_id, metadata_analyzer)
+        run_edge_escalation(asset_id)  # до Readiness: к человеку, а не на площадки
         run_readiness(asset_id)
 
     return outcome

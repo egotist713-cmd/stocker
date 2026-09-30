@@ -202,7 +202,7 @@ def run(
     if dry_run:
         return {**planned, "outcome": DRY_RUN, "executed": []}
 
-    executed, stopped, view = [], None, None
+    executed, stopped, view, escalated = [], None, None, None
     for step in planned["steps"]:
         name = step["stage"]
         current = asset_state.get(asset_id)["stages"]
@@ -214,6 +214,8 @@ def run(
             continue
         elif current[name]["status"] == asset_state.CURRENT:
             executed.append({"stage": name, "outcome": "SKIPPED_CURRENT"})
+            if name == "metadata":
+                escalated = worker.run_edge_escalation(asset_id) or escalated  # QC только что нашёл полосы
             continue
         # Защита: стадия не запускается на неактуальном upstream (например, QC не прошёл).
         bad = [u for u in UPSTREAM[name] if current[u]["status"] != asset_state.CURRENT]
@@ -243,6 +245,9 @@ def run(
 
         outcome = _execute(name, asset_id, view, analyzer, metadata_analyzer, creative_advisor)
         executed.append({"stage": name, "outcome": outcome})
+        if name in ("qc", "metadata"):
+            # Чёрные полосы (QC EDGE_BORDER) → эскалация metadata до Readiness (паспорт §35ZZZB).
+            escalated = worker.run_edge_escalation(asset_id) or escalated
         if outcome in ("NORMALIZE_FAILED", "QC_FAILED", worker.AI_FAILED, "METADATA_AI_FAILED", "READINESS_FAILED",
                        creative_review.REVIEW_FAILED) or outcome.startswith("REFUSED:"):
             stopped = {"stage": name, "code": outcome}
@@ -257,10 +262,10 @@ def run(
         _write_summary(asset_id, {
             "reprocess_from": planned["reprocess_from"], "through": through,
             "state_before": planned["state"], "reasons_before": planned["reasons"],
-            "executed": executed, "stopped": stopped,
+            "executed": executed, "stopped": stopped, "escalated": escalated,
             "state_after": after["state"], "reasons_after": after["reasons"],
         })
-    return {**planned, "outcome": outcome, "executed": executed, "stopped": stopped,
+    return {**planned, "outcome": outcome, "executed": executed, "stopped": stopped, "escalated": escalated,
             "state_after": after["state"], "reasons_after": after["reasons"],
             "reprocess_from_after": after["reprocess_from"]}
 
