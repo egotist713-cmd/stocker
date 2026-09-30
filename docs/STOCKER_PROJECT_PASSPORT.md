@@ -5380,8 +5380,22 @@ Readiness `ready` (adobe, shutterstock; `PEOPLE_ATTESTED`) → Publication appro
 Живой n8n (`stocker-ingest`, actor `workflow:n8n`) 29.09 18:45 UTC зарегистрировал в
 **тестовой** БД #131 `data/incoming/11.jpg` (7676×4796 — размер как у production #1):
 вероятно, ретушированный #1 положен в `data/incoming`, а не в `data/prod/incoming`.
-Объект прошёл pipeline (`auto_approved`, Readiness). Ничего не менялось — решение за
-пользователем.
+Объект прошёл pipeline: metadata `auto_approved`, Readiness `blocked` —
+`COLOR_SPACE_UNDECLARED` (в файле нет ICC-профиля; в production он был бы заблокирован
+так же — нужен файл с встроенным sRGB). Ничего не менялось — решение за пользователем.
+
+### Найдено и исправлено: review.queue на ready_for_export (15c846b)
+
+`views.ASSET_STATES` не содержал `ready_for_export` — `review.queue` (его читает n8n
+digest) падал `ValueError`, как только в каталоге появлялся экспортированный объект с
+проблемой; `by_state` не знал состояния. Живой MCP работал на старом коде — не затронут.
+Исправлено: состояние в `ASSET_STATES`; в сводке `ready_for_export` учитывается и в
+`platform_ready`, и в `publication_approved`, плюс отдельный счётчик `ready_for_export`;
+фильтр `asset.list state` принимает `publication_approved` (пробел был и раньше) и
+`ready_for_export`. Регрессионные тесты: все состояния `asset_state` известны views и
+фильтру; `review.queue` / `asset.list` с объектом `ready_for_export`. `pytest`: 778 passed,
+4 skipped. Тестовый каталог: publication_approved 102 + ready_for_export 4 (#4, #9, #10,
+#50) = 106, human_review 22, source_invalid 1, blocked 1 (#131); инвариант — 0 нарушений.
 
 ---
 
