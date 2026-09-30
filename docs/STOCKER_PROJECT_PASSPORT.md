@@ -5623,6 +5623,36 @@ check_consistency OK.
 
 ---
 
+# 35ZZZE. 2026-09-30 — Версии из Lightroom (lr_*): ingest до Publication
+
+Решение пользователя: обрезка и ретушь переделаны в Lightroom; задание про `*_cropped.*`
+отменено (файлы не регистрировались). Копия production-БД до — `prod-before-lr.db`.
+
+- В `data/prod/incoming` — 10 файлов `lr_*`; `lr_2`, `lr_3`, `lr_6`, `lr_8` байт в байт
+  совпадают с `2.jpeg`, `3.jpeg`, `6.jpeg`, `8.jpeg` (SHA256) — не трогались (prod #2, #3,
+  #6, #8 по решению пользователя не трогать).
+- Шесть файлов: JPEG q98, ICC `sRGB IEC61966-2-1 black scaled` (встраивать не нужно),
+  EXIF Software — Adobe Photoshop 27.4; обрезка по высоте: lr_4 −60 px, lr_5 −12,
+  lr_9 −12, lr_10 −18 (рекомендовалось 63 / 14 / 14 / 22).
+
+| Файл | Новый | Заменяет | Состояние | Gate | EDGE_BORDER | brands / text |
+|---|---|---|---|---|---|---|
+| lr_1 | prod #13 | prod #1 | `publication_approved` | `auto_approved` | — | — / — |
+| lr_4 | prod #14 | prod #4 | `publication_approved` | `auto_approved` | — | — / — |
+| lr_5 | prod #15 | prod #5 | `publication_approved` | `auto_approved` | — | — / — |
+| lr_7 | prod #16 | prod #7 | `publication_approved` | `auto_approved` | — | — / `ВЫХОД` |
+| lr_9 | prod #17 | prod #9 | `publication_approved` | `auto_approved` | — | — / — |
+| lr_10 | prod #18 | prod #10 | `human_review` | MANUAL_ESCALATION | верх 1 px (0,69) | — / `795` |
+
+lr_10 обрезан на 18 px при полосе 19 px — остался край 1 px (эскалация EDGE_BORDER).
+Подготовлено, не выполнено (ждёт визуального осмотра и сообщения пользователя):
+`metadata.reject` «заменён версией из Lightroom» для prod #4, #5, #9, #10 (`human_review`)
+и prod #11, #12 (`auto_approved`) — все в `REJECTABLE_STATES`. События 199 → 265.
+Состояния: publication_approved 7, human_review 5, ready_for_export 4, rejected 2;
+инвариант — 0 нарушений; check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
