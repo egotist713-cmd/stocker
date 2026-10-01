@@ -231,7 +231,7 @@ export preparation правил площадок не содержит.
 | Разрешение | 4–100 MP | ≥ 4 MP |
 | Размер файла | ≤ 45 MB | ≤ 50 MB |
 | Качество JPEG | по умолчанию 95; нижняя граница для `fit_file_size` — 90 (проверить при реализации) | то же |
-| Metadata в файле | title, keywords (≤ 49) | description (≤ 150 символов — страницы 30.09.2026; было 2048), keywords (7–50) |
+| Metadata в файле | title, keywords (≤ 49) | description (≤ 2048 — отказ; > 150 — предупреждение; ≥ 5 слов — предупреждение), keywords (7–50) |
 | Категории | не в файле — при загрузке / API / CSV | не в файле — при загрузке / API / CSV |
 | Белый список metadata | ICC, IPTC / XMP title, keywords (+ автор / права — если задано) | ICC, IPTC / XMP description, keywords (+ автор / права — если задано) |
 | Правила очистки | §4.3 полностью | §4.3 полностью |
@@ -292,9 +292,8 @@ preparation. Решения человека (approve / reject) Export preparati
 - Какие поля IPTC / XMP читают площадки — **частично**: Adobe сохраняет встроенные title
   и keywords из Lightroom / Bridge / Photoshop (пишут XMP `dc:title` / `dc:subject`);
   v1 пишет только XMP IPTC Core, без IIM (APP13 = Photoshop IRB, §4.3). Подтвердить
-  первой реальной загрузкой. Shutterstock: поддерживает встроенные titles / keywords (Bridge, Lightroom,
-  Photo Mechanic), какие поля читает — не указано; v1 пишет XMP `dc:description` / `dc:subject` —
-  подтвердить первой загрузкой.
+  первой реальной загрузкой. Shutterstock: **подтверждено пробной загрузкой prod #13 (30.09.2026)** —
+  XMP `dc:description` и `dc:subject` подхвачены.
 - Provenance (`digitalSourceType`) в файл — **открыт**: Adobe отмечает генеративный AI
   при загрузке в портале, а не полем файла; v1 не пишет (§4.2).
 
@@ -324,9 +323,9 @@ preparation. Решения человека (approve / reject) Export preparati
 |---|---|---|
 | Формат, цвет | JPEG (TIFF допускается), sRGB | «What are the technical requirements for images?» (19.02.2026) |
 | Разрешение, размер | ≥ 4 MP, без верхнего предела для фото; ≤ 50 MB | там же; «How do I submit photos» |
-| Текстовое поле | `description` → XMP `dc:description`, ≤ 150 символов, без обрезки → `DESCRIPTION_TOO_LONG_FOR_PROFILE` | «Preparing Your Uploaded Content» (10.02.2026): 150; Readiness / контракт — 2048 → **строже 150** |
+| Текстовое поле | `description` → XMP `dc:description`; > 2048 — отказ `DESCRIPTION_TOO_LONG_FOR_PROFILE` (без обрезки); > 150 — предупреждение `DESCRIPTION_LONG_FOR_RECOMMENDATION` | поправка 30.09.2026 по пробной загрузке: поле Description в портале — лимит 2048, минимум 5 слов; 150 — рекомендация справки (было: 150 как отказ) |
 | Короткое описание | < 5 слов → предупреждение `DESCRIPTION_SHORT` | как Readiness (`text_min_words`) |
-| Keywords | 7–50 | «7-50 keywords» |
+| Keywords | 7–50 | «7-50 keywords»; портал: счётчик 28/50, минимум 7 |
 | Белый список | `segment:APP2:ICC`, `segment:APP1:XMP`, `xmp:dc:description`, `xmp:dc:subject` | dc:title не пишется |
 | Имя файла | `<slug description>_<asset_id>.jpg` ≤ 30 символов, `data/export/shutterstock/<id>/` | лимит Shutterstock не найден — как Adobe; slug — из описания (в плане Shutterstock нет title) |
 

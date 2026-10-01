@@ -124,6 +124,7 @@ class ExportProfile:
     xmp_text: str = "dc:title"                 # свойство XMP текстового поля
     text_no_commas_warning: bool = True        # Adobe CSV: title без запятых
     text_min_words: int | None = None          # меньше слов -> предупреждение <FIELD>_SHORT
+    text_recommended_code: str | None = None   # код предупреждения о рекомендации (по умолчанию <FIELD>_LONG)
 
     @property
     def name(self) -> str:
@@ -143,6 +144,7 @@ class ExportProfile:
                 ("xmp_text", self.xmp_text, "dc:title"),
                 ("text_no_commas_warning", self.text_no_commas_warning, True),
                 ("text_min_words", self.text_min_words, None),
+                ("text_recommended_code", self.text_recommended_code, None),
             ) if value != default},
         }
 
@@ -199,27 +201,32 @@ SHUTTERSTOCK = ExportProfile(
     jpeg_quality_min=90,
     jpeg_subsampling="4:4:4",
     text_field="description",                             # «Description» — единственное текстовое поле
-    title_max=150,                                        # «150 character limit»; Readiness / контракт — 2048 (строже — 150)
-    title_recommended=None,
+    title_max=2048,                                       # поле Description в портале: лимит 2048 (пробная загрузка 30.09.2026)
+    title_recommended=150,                                # help center: «150 character limit» — рекомендация, не отказ
     keywords_min=7,                                       # «7-50 keywords»
     keywords_max=50,
     filename_max=30,                                      # лимит Shutterstock не найден — как у Adobe (одно имя на площадки)
     metadata_whitelist=frozenset({"segment:APP2:ICC", "segment:APP1:XMP", "xmp:dc:description", "xmp:dc:subject"}),
     xmp_text="dc:description",
     text_no_commas_warning=False,                         # правило CSV Adobe, не Shutterstock
-    text_min_words=_READINESS_SHUTTERSTOCK.text_min_words,  # 5 — как Readiness (предупреждение)
+    text_min_words=_READINESS_SHUTTERSTOCK.text_min_words,  # 5 — портал: минимум 5 слов; как Readiness (предупреждение)
+    text_recommended_code="DESCRIPTION_LONG_FOR_RECOMMENDATION",
     sources=(
         {"what": "JPEG (TIFF accepted), sRGB recommended, >= 4 MP, JPEG <= 50 MB (web / FTPS)",
          "url": "https://submit.shutterstock.com/help/en/articles/10617390-what-are-the-technical-requirements-for-images",
          "checked_at": "2026-09-30"},
-        {"what": "Description: 150 character limit; at least 7 keywords; 1 category required, 2nd optional",
+        {"what": "Contributor Portal UI (trial upload of prod #13): Description limit 2048 characters, minimum 5 words; "
+                 "keywords 28/50, minimum 7; XMP dc:description and dc:subject were picked up from the file",
+         "url": None, "checked_at": "2026-09-30"},
+        {"what": "Help center: Description 150 character limit (recommendation; the portal accepts 2048); "
+                 "at least 7 keywords; 1 category required, 2nd optional",
          "url": "https://submit.shutterstock.com/help/en/articles/10617414-portfolio-preparing-your-uploaded-content-for-submission",
          "checked_at": "2026-09-30"},
         {"what": "7-50 keywords; JPEG / TIFF >= 4 MP; files under 50 MB via web upload",
          "url": "https://submit.shutterstock.com/help/en/articles/10594645-how-do-i-submit-photos-for-review",
          "checked_at": "2026-09-30"},
         {"what": "embedded titles and keywords (Adobe Bridge, Lightroom, Photo Mechanic) are supported; which XMP / "
-                 "IPTC fields are read is not stated — v1 writes XMP dc:description / dc:subject, confirm on first upload",
+                 "IPTC fields are read is not stated on help pages — confirmed by the trial upload (XMP dc:description / dc:subject)",
          "url": "https://submit.shutterstock.com/help/en/articles/10594594-can-i-sell-my-work-on-sites-other-than-shutterstock",
          "checked_at": "2026-09-30"},
     ),
@@ -606,7 +613,7 @@ def _check_snapshot(snapshot: dict, profile: ExportProfile) -> list[dict]:
         raise ExportRefused(KEYWORDS_OUT_OF_RANGE, f"{len(keywords)} keywords ({profile.keywords_min}–{profile.keywords_max})")
     warnings = []
     if profile.title_recommended and len(text) > profile.title_recommended:
-        warnings.append({"code": f"{field_code}_LONG",
+        warnings.append({"code": profile.text_recommended_code or f"{field_code}_LONG",
                          "message": f"{profile.text_field} is {len(text)} characters (recommended <= {profile.title_recommended})"})
     if profile.text_no_commas_warning and "," in text:
         warnings.append({"code": f"{field_code}_HAS_COMMA",

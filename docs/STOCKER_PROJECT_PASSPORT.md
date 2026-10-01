@@ -5797,6 +5797,45 @@ Photo Mechanic … titles and keywords»), какие поля читаются 
 
 ---
 
+# 35ZZZI. 2026-10-01 — Поправка профиля shutterstock-2026-09 по пробной загрузке
+
+### Решение пользователя
+
+Пробная загрузка prod #13 в Shutterstock: поле Description в портале — лимит 2048 символов,
+минимум 5 слов; ключевые слова 28/50, минимум 7; **XMP `dc:description` и `dc:subject`
+подхвачены** (открытый вопрос §8 по Shutterstock закрыт). Жёсткий лимит — 2048 (отказ);
+150 — рекомендация (предупреждение `DESCRIPTION_LONG_FOR_RECOMMENDATION`). Сокращённые
+описания prod #6 / #17 / #19 отменены — metadata не менялась.
+
+### Реализация
+
+- `SHUTTERSTOCK`: `title_max = 2048`, `title_recommended = 150`,
+  `text_recommended_code = DESCRIPTION_LONG_FOR_RECOMMENDATION` (новое поле профиля; Adobe
+  сохраняет `TITLE_LONG`, в `spec()` Adobe не входит); источник — интерфейс портала,
+  30.09.2026. Контракт §5 / §9a / §8 обновлён.
+- Тесты: профиль (2048 / 150 / код); > 150 — CREATED с предупреждением, описание не
+  обрезано; код Adobe не изменён. Мутации (предупреждение не выдаётся; рекомендация как
+  отказ) — по 2 падения, после восстановления зелёные. `pytest`: 819 passed, 4 skipped.
+
+### Production (копия до — `prod-before-ss-2048.db`)
+
+Лимиты входят в `spec()` профиля → прежние экспорты Shutterstock стали `stale`.
+
+| | Shutterstock | Description | Предупреждения |
+|---|---|---|---|
+| prod #6 | `workers_hard_hats_walk_6.jpg` (8 951 750 Б) — новый | 154 / 25 слов | DESCRIPTION_LONG_FOR_RECOMMENDATION |
+| prod #17 | `yellow_black_bulldozer_17.jpg` (9 124 064 Б) — новый | 152 / 26 | DESCRIPTION_LONG_FOR_RECOMMENDATION |
+| prod #19 | `row_yellow_tracked_19.jpg` (10 647 853 Б) — новый | 200 / 31 | DESCRIPTION_LONG_FOR_RECOMMENDATION |
+| prod #2, #3, #13, #15, #16 | пересозданы — sha256 те же (байт в байт) | ≤ 150 | — |
+
+Adobe-файлы prod #2, #3, #6, #13, #15, #16, #17, #19 — sha256 не изменились, Adobe —
+`ready_for_export`. Shutterstock prod #8, #14, #20 не трогались (#8 / #14 заменяются,
+#20 — по указанию): их экспорты `stale` → prod #20 сейчас `publication_approved` (проблема
+`STALE:export:FILE_STALE:shutterstock`), Adobe-файл #20 актуален. `lr_4c` в
+`data/prod/incoming` нет — п. 3 ждёт файла. События 312 → 320; check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

@@ -54,7 +54,9 @@ def test_profile_is_the_readiness_profile_plus_file_parameters():
     profile, readiness = ep.SHUTTERSTOCK, rd.SHUTTERSTOCK
     assert profile.version == readiness.version == "shutterstock-2026-09"
     assert (profile.min_mp, profile.max_mp, profile.max_file_size) == (4.0, None, 50 * 1024 * 1024)
-    assert (profile.text_field, profile.xmp_text, profile.title_max) == ("description", "dc:description", 150)
+    # Портал (пробная загрузка 30.09.2026): лимит 2048 — отказ; 150 (справка) — рекомендация.
+    assert (profile.text_field, profile.xmp_text, profile.title_max) == ("description", "dc:description", 2048)
+    assert (profile.title_recommended, profile.text_recommended_code) == (150, "DESCRIPTION_LONG_FOR_RECOMMENDATION")
     assert (profile.keywords_min, profile.keywords_max) == (7, 50)
     assert profile.metadata_whitelist == {"segment:APP2:ICC", "segment:APP1:XMP", "xmp:dc:description", "xmp:dc:subject"}
     assert all(source["checked_at"] == "2026-09-30" for source in profile.sources)
@@ -152,6 +154,21 @@ def test_description_longer_than_profile_is_refused_not_truncated(stocker_root, 
     assert got["status"] == ep.NOT_PREPARED and got["last_failure"]["code"] == ep.DESCRIPTION_TOO_LONG_FOR_PROFILE
     assert derivative_events(stocker_root, asset_id, "shutterstock") == []
     assert [p for p in (db.export_dir() / "shutterstock").rglob("*") if p.is_file()] == []
+
+
+def test_description_over_recommendation_is_a_warning_not_a_refusal(stocker_root, monkeypatch):
+    asset_id = approved_asset(stocker_root)
+    description = ep._readiness_plan(ep._events(asset_id), "shutterstock")[1]["description"]
+    set_profile(monkeypatch, title_recommended=len(description) - 1)
+    result = ep.prepare(asset_id, "shutterstock")
+    assert result["outcome"] == ep.CREATED
+    codes = [w["code"] for w in result["export"]["warnings"]]
+    assert "DESCRIPTION_LONG_FOR_RECOMMENDATION" in codes
+    assert result["export"]["metadata"]["description"] == description  # не обрезано
+
+
+def test_adobe_keeps_its_title_long_code():
+    assert ep.ADOBE.text_recommended_code is None and "text_recommended_code" not in ep.ADOBE.spec()
 
 
 @pytest.mark.parametrize("bounds", [{"keywords_min": 100}, {"keywords_max": 3}])
