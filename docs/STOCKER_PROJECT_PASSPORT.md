@@ -5870,6 +5870,32 @@ Adobe-файлы prod #2, #3, #6, #13, #15, #16, #17, #19 — sha256 не изм
 
 ---
 
+# 35ZZZL. 2026-10-01 — lr_4c (без ICC): проверка пикселей, копия со sRGB → prod #21
+
+Копия БД до — `prod-before-lr4c-srgb.db`. Пользователь подтвердил: lr_4c сохранён в sRGB
+из того же Photoshop-документа, что lr_8b.
+
+- Заголовки (для сведения): у lr_4c нет сегмента APP2 `ICC_PROFILE` и EXIF ColorSpace =
+  65535 (Uncalibrated), в XMP нет `photoshop:ICCProfile`; у lr_8b — ICC
+  `sRGB IEC61966-2-1 black scaled` (3062 Б), ColorSpace = 1. Остальная структура та же
+  (Exif, Photoshop IRB, XMP, APP14 Adobe; Photoshop 27.4); расширения `.jpeg` / `.jpg`.
+  Вероятно, при сохранении не был включён «Embed Color Profile».
+- Пиксели: ICC `4.jpeg` — `sRGB IEC61966-2-1 black scaled`. lr_4c и 4.jpeg выровнены по
+  верхнему левому углу (7676×4723 / 7676×4796), 1000 px по ширине: средняя |разница| вне
+  ретушированной зоны (x 560–680, y 260–320 из 1000×615 — верхняя полоса шильдика)
+  R 0,37 / G 0,28 / B 0,45 ≤ 4 — значения lr_4c соответствуют sRGB исходника.
+- Копия `lr_4c_srgb.jpeg` + APP2 ICC (`app/profiles/srgb.icc`) перед DQT; сжатые данные байт
+  в байт, декодированные пиксели идентичны; lr_4c не изменён. sha `3de2a5a7…e59b`.
+- Ingest → **prod #21** (заменяет prod #14): gate `auto_approved` (без причин),
+  EDGE_BORDER пуст, brands / logos / text пусты → `publication_approved`. Экспорт: adobe
+  `blue_electric_motor_21.jpg` (8 198 434 Б, title 58 / 9 слов), shutterstock
+  `close_up_blue_electric_21.jpg` (8 198 517 Б, description 129 / 23) — `ready_for_export`
+  [adobe, shutterstock], предупреждений нет.
+- prod #14 уже `rejected` (§35ZZZK). Состояния production: ready_for_export 10, rejected 11.
+  События 323 → 336; check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
