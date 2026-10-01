@@ -5754,6 +5754,49 @@ Photo Mechanic … titles and keywords»), какие поля читаются 
 
 ---
 
+# 35ZZZH. 2026-10-01 — Модерация Adobe (первая партия), lr_8b / lr_4b, сокращение description
+
+### Калибровочные данные: модерация Adobe Stock, production, партия из 10
+
+| Результат | Объекты |
+|---|---|
+| Приняты | prod #2, #3, #6, #13, #15, #16, #17, #19 |
+| Отклонены — авторские права | prod #8 — логотип на бочке; prod #14 — шильдик электродвигателя: логотип производителя и обозначение серии в верхней полосе шильдика |
+
+У обоих отклонённых Vision `brands` / `logos` пусты, gate — `auto_approved`: логотип на
+предмете (бочка) и шильдик оборудования pipeline не видит. Данные для калибровки
+(правила не менялись).
+
+**Shutterstock:** 3 из 10 description превысили 150 символов (prod #6 154, #17 152,
+#19 200) — данные для решения о builder позже; builder не менялся.
+
+### lr_8b / lr_4b (копия БД до — `prod-before-lr-b.db`)
+
+- `lr_8b.jpg` (из `8.jpeg`): sha `b4d272b9…0cc2`, 19 281 332 Б, q98, 7676×4796, ICC
+  `sRGB IEC61966-2-1 black scaled`, EDGE_BORDER пуст → **prod #20**: gate
+  `auto_approved` (без причин), `publication_approved`; brands / logos пусты, text
+  `SP 200`, `ОПАСНО`. `export.prepare`: adobe `warehouse_interior_20.jpg` (9 902 182 Б,
+  title 49 симв. / 7 слов), shutterstock `dimly_lit_warehouse_20.jpg` (9 902 270 Б,
+  description 125 / 18) — `ready_for_export` [adobe, shutterstock], предупреждений нет.
+- `lr_4b.jpeg` (из `4.jpeg`): sha `db8b0fba…3cba`, 12 420 399 Б, q98, 7676×4723 — **ICC нет**
+  (EXIF ColorSpace Uncalibrated) → остановка по правилу пользователя: не встраивалось, не
+  регистрировалось.
+- reject prod #8 / #14 — ждёт сообщения пользователя после осмотра. Экспорты
+  Shutterstock prod #8 (`dimly_lit_warehouse_8.jpg`) и prod #14
+  (`close_up_blue_electric_14.jpg`) к загрузке не предназначены (объекты заменяются).
+
+### Сокращённые description (Shutterstock, ≤ 150) — на согласовании, metadata.edit не выполнялся
+
+Предпросмотр в памяти (`mb.edit` + `apply_gate`, событий 0): prod #17, #19 — gate
+`auto_approved`; prod #6 (metadata `approved` человеком, люди с аттестацией) — правка
+возвращает `human_review` (`PEOPLE_RECOGNIZABLE`) → нужен повторный approve; аттестация
+действует (тот же файл). Ожидание для Adobe после правки: Readiness / Publication
+переоцениваются, отпечаток экспорта меняется (fingerprint Readiness) → Adobe-файл
+пересоздаётся новым событием, но с теми же пикселями, title и keywords → тот же sha256.
+Проверить после правки.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
