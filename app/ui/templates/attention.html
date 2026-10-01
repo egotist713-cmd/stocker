@@ -21,6 +21,10 @@
 
     <form method="post" action="/attention/{{ asset.id }}/approve" class="approve" data-people="{{ 'yes' if people else 'no' }}">
       <input type="hidden" name="token" value="{{ token }}">
+      {% if claims %}
+      <input type="hidden" name="claims" value="{{ claims|join('|') }}">
+      <label class="attest"><input type="checkbox" name="confirm_claims" id="confirm_claims"> Подтверждаю формулировки: {{ claims|join(", ") }}</label>
+      {% endif %}
       {% if people %}
       <label class="attest"><input type="checkbox" name="attest" id="attest"> Люди в кадре не узнаваемы</label>
       {% endif %}

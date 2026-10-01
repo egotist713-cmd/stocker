@@ -3,6 +3,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const approve = document.querySelector("form.approve");
   if (approve) {
     approve.addEventListener("submit", (event) => {
+      const claims = approve.querySelector("#confirm_claims");
+      if (claims && !claims.checked) {
+        event.preventDefault();
+        alert("Сначала подтвердите формулировки (или отклоните объект).");
+        claims.focus();
+        return;
+      }
       const attest = approve.querySelector("#attest");
       if (attest && attest.checked &&
           !confirm("Подтвердите: люди в кадре не узнаваемы. Решение будет записано как ваша аттестация.")) {

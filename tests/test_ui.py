@@ -5,6 +5,7 @@
 
 import dataclasses
 import json
+from urllib.parse import unquote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -132,6 +133,55 @@ def test_people_toggle_attests_and_makes_ready(stocker_root, client):
     (attested,) = stage_events(stocker_root, people, "HUMAN", "PEOPLE_ATTESTED")
     assert attested["kind"] == "not_identifiable" and attested["actor"] == "human"
     assert asset_state.get(people)["state"] == asset_state.PUBLICATION_APPROVED
+
+
+def _with_claim(asset_id: int) -> None:
+    """Утверждение без опоры на Vision (UNCONFIRMED_CLAIM): «Berlin» в description."""
+    result = dispatch("metadata.edit", {"asset_id": asset_id, "description": "Workers far away in Berlin."}, actor="human")
+    assert result["ok"] and "UNCONFIRMED_CLAIM" in {e["code"] for e in result["data"]["metadata"]["validation"]["errors"]}
+
+
+def test_unconfirmed_claim_toggle_confirms_and_attests_in_one_step(stocker_root, client):
+    people = asset(stocker_root, 1, PEOPLE)
+    _with_claim(people)
+    page = client.get(f"/attention/{people}").text
+    assert "Подтверждаю формулировки: Berlin" in page and 'name="claims" value="Berlin"' in page
+
+    # Без подтверждения: одобрение не вызывается, аттестация не записывается (одним шагом).
+    response = client.post(f"/attention/{people}/approve", data={"token": TOKEN, "attest": "on"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert unquote(response.headers["location"]).endswith("error=Не подтверждены формулировки: Berlin"
+                                                          " — подтвердите их или отклоните объект")
+    assert stage_events(stocker_root, people, "METADATA", "APPROVED") == []
+    assert stage_events(stocker_root, people, "HUMAN", "PEOPLE_ATTESTED") == []
+
+    # Подтверждён устаревший список формулировок → тоже ничего не записано.
+    client.post(f"/attention/{people}/approve",
+                data={"token": TOKEN, "attest": "on", "confirm_claims": "on", "claims": "Paris"})
+    assert stage_events(stocker_root, people, "METADATA", "APPROVED") == []
+    assert stage_events(stocker_root, people, "HUMAN", "PEOPLE_ATTESTED") == []
+
+    client.post(f"/attention/{people}/approve",
+                data={"token": TOKEN, "attest": "on", "confirm_claims": "on", "claims": "Berlin"})
+    (approved,) = stage_events(stocker_root, people, "METADATA", "APPROVED")
+    assert approved["confirmed_claims"] == ["Berlin"] and approved["actor"] == "human"
+    assert stage_events(stocker_root, people, "HUMAN", "PEOPLE_ATTESTED")
+    assert asset_state.get(people)["state"] == asset_state.PUBLICATION_APPROVED
+
+
+def test_failed_approve_leaves_no_attestation(stocker_root, client, monkeypatch):
+    people = asset(stocker_root, 1, PEOPLE)
+    refused = {"ok": False, "data": None, "error": {"code": "INVALID_TRANSITION", "message": "refused"}}
+    real_call = server._call
+    monkeypatch.setattr(server, "_call", lambda op, **p: refused if op == "metadata.approve" else real_call(op, **p))
+    response = client.post(f"/attention/{people}/approve", data={"token": TOKEN, "attest": "on"}, follow_redirects=False)
+    assert "error=refused" in response.headers["location"]
+    assert stage_events(stocker_root, people, "HUMAN", "PEOPLE_ATTESTED") == []
+
+
+def test_toggle_absent_without_claims(stocker_root, client):
+    review = asset(stocker_root, 1, BRAND)
+    assert "Подтверждаю формулировки" not in client.get(f"/attention/{review}").text
 
 
 def test_blocked_screen_attests_model_release(stocker_root, client):

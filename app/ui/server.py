@@ -146,6 +146,12 @@ def _model_release_needed(asset: dict) -> bool:
     return "PEOPLE_RECOGNIZABLE" in codes or "MODEL_RELEASE_REQUIRED" in asset["state"]["reasons"]
 
 
+def _unconfirmed_claims(asset: dict) -> list[str]:
+    """Конкретные утверждения metadata без подтверждения (UNCONFIRMED_CLAIM, METADATA_CONTRACT §4.7)."""
+    grounding = (asset.get("metadata") or {}).get("grounding") or {}
+    return [claim["term"] for claim in grounding.get("specific_claims", []) if not claim.get("confirmed")]
+
+
 def _after_human_decision(asset_id: int, attest: bool) -> list[str]:
     """Как в ручном потоке: аттестация (если отмечена) → Readiness → Publication. Возвращает ошибки."""
     errors = []
@@ -204,9 +210,10 @@ def create_app(token: str | None = None, require_prod: bool = True) -> FastAPI:
             raise HTTPException(403, "invalid token")
 
     @app.get("/", response_class=HTMLResponse)
-    def panel(request: Request):
+    def panel(request: Request, error: str | None = None):
         numbers = counters()
-        return render(request, "panel.html", numbers=numbers, can_collect=can_collect(numbers), events=recent_events())
+        return render(request, "panel.html", numbers=numbers, can_collect=can_collect(numbers), events=recent_events(),
+                      error=error)
 
     @app.get("/attention")
     def attention_first():
@@ -222,7 +229,8 @@ def create_app(token: str | None = None, require_prod: bool = True) -> FastAPI:
         following = [i for i in ids if i > asset_id] or [i for i in ids if i < asset_id]
         return render(request, "attention.html", asset=asset, fields=(asset["metadata"] or {}).get("fields") or {},
                       gate=humanize.gate_reasons(asset["metadata"]), qc=humanize.qc_reasons(asset["qc"]),
-                      people=_model_release_needed(asset), position=ids.index(asset_id) + 1, total=len(ids),
+                      people=_model_release_needed(asset), claims=_unconfirmed_claims(asset),
+                      position=ids.index(asset_id) + 1, total=len(ids),
                       next_id=following[0] if following else None, error=error)
 
     def _next_after(asset_id: int) -> RedirectResponse:
@@ -231,12 +239,24 @@ def create_app(token: str | None = None, require_prod: bool = True) -> FastAPI:
         return RedirectResponse(f"/attention/{following[0]}" if following else "/", status_code=303)
 
     @app.post("/attention/{asset_id}/approve")
-    def approve(asset_id: int, token: str = Form(""), attest: str = Form("")):
+    def approve(asset_id: int, token: str = Form(""), attest: str = Form(""),
+                confirm_claims: str = Form(""), claims: str = Form("")):
         check_token(token)
-        result = _call("metadata.approve", asset_id=asset_id)
+        # Одним шагом: сначала одобрение, аттестация — только после успешного одобрения
+        # (неудачное одобрение не оставляет записанной аттестации).
+        current = _unconfirmed_claims(_asset(asset_id))
+        confirm = confirm_claims == "on"
+        if current and not confirm:
+            return _go(f"/attention/{asset_id}",
+                       f"Не подтверждены формулировки: {', '.join(current)} — подтвердите их или отклоните объект")
+        if confirm and claims != "|".join(current):
+            return _go(f"/attention/{asset_id}", "Список формулировок изменился — обновите страницу")
+        result = _call("metadata.approve", asset_id=asset_id, confirm_claims=confirm and bool(current))
         if not result["ok"]:
             return _go(f"/attention/{asset_id}", result["error"]["message"])
-        _after_human_decision(asset_id, attest == "on")
+        errors = _after_human_decision(asset_id, attest == "on")
+        if errors:
+            return _go("/", f"prod #{asset_id} одобрен; " + "; ".join(errors))  # объект уже не в «Требует внимания»
         return _next_after(asset_id)
 
     @app.post("/attention/{asset_id}/reject")
