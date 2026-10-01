@@ -27,6 +27,9 @@ def fake_vision(monkeypatch):
         ("metadata.reject", {"reason": "x"}),
         ("metadata.build", {"force": True}),
         ("asset.process", {"force": True}),
+        ("export.prepare", {"platform": "adobe"}),
+        ("export.get", {"platform": "adobe"}),
+        ("asset.attest_people", {"kind": "not_identifiable"}),
     ],
 )
 def test_workflow_forbidden_operations(stocker_root, operation, params):
@@ -51,6 +54,29 @@ def test_workflow_allowed_operations(stocker_root, fake_vision):
     processed = dispatch("asset.process_file", {"path": "data/incoming/new.jpg"}, actor=N8N)
     assert processed["ok"] and processed["data"]["pipeline"]["metadata"] == "auto_approved"
     assert dispatch("asset.process", {"asset_id": processed["asset_id"]}, actor=N8N)["ok"]
+
+
+def test_workflow_cannot_collect_exports(stocker_root):
+    assert dispatch("export.collect", {"platform": "adobe"}, actor=N8N)["error"]["code"] == "FORBIDDEN"
+
+
+def test_workflow_brings_new_file_to_publication(stocker_root, monkeypatch):
+    """stocker-ingest (02.10.2026): process_file -> если platform_ready -> publication.evaluate."""
+    import dataclasses
+
+    from app import readiness as rd
+    from app import worker
+    from tests.test_publication import SRGB_ICC, StockVision
+
+    monkeypatch.setattr(rd, "PROFILES", {n: dataclasses.replace(p, min_mp=0.001) for n, p in rd.PROFILES.items()})
+    monkeypatch.setattr(worker, "LocalAnalyzer", StockVision)
+    make_image(stocker_root, name="new.jpg", seed=9, icc_profile=SRGB_ICC)
+    processed = dispatch("asset.process_file", {"path": "data/incoming/new.jpg"}, actor=N8N)
+    assert processed["ok"] and processed["data"]["state"]["state"] == "platform_ready"
+    published = dispatch("publication.evaluate", {"asset_id": processed["asset_id"]}, actor=N8N)
+    assert published["ok"] and published["data"]["publication"]["approved_for"] == ["adobe", "shutterstock"]
+    state = dispatch("asset.get", {"asset_id": processed["asset_id"]}, actor=N8N)["data"]["state"]
+    assert state["state"] == "publication_approved"
 
 
 def test_agent_keeps_its_wider_rights(stocker_root):

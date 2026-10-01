@@ -54,6 +54,10 @@ WORKFLOW_ALLOWED = frozenset(
         "creative.get",
         "readiness.evaluate",
         "readiness.get",
+        # Publication Gate после Readiness (решение пользователя 02.10.2026, паспорт §35ZZZP):
+        # n8n доводит новые файлы до publication_approved; approve / reject / export.* — по-прежнему нет.
+        "publication.evaluate",
+        "publication.get",
         "notification.record",
     }
 )

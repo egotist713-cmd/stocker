@@ -3,6 +3,9 @@
 > **Статус:** 🟢 СОГЛАСОВАН 26 сентября 2026 (решения пользователя). Реализовано и проверено;
 > включены по расписанию `stocker-ingest`, `stocker-digest` (и подпроцесс `stocker-notify`);
 > `stocker-retry` выключен до накопления статистики.
+> С 02.10.2026 (паспорт §35ZZZP) живой контур работает на **production-каталоге**
+> (`STOCKER_DATA_DIR=data/prod` в `scripts/start_mcp_http.cmd`); `stocker-ingest` доводит
+> новые файлы до Publication Gate.
 >
 > Связанные документы: паспорт §3A, §3B (права), §35M (роль n8n);
 > `docs/SERVICE_CONTRACT.md`; `docs/RECOVERY.md`.
@@ -92,6 +95,7 @@ Content-Type: application/json
 | `metadata.build` | ✅ | только `force=false` (создать или дозаполнить partial; существующие metadata не заменяются) |
 | `metadata.gate` | ✅ | gate не меняет решения человека |
 | `readiness.evaluate`, `readiness.get` | ✅ | оценка по правилам площадок; решений не принимает, metadata и файл не меняет |
+| `publication.evaluate`, `publication.get` | ✅ (с 02.10.2026, §35ZZZP) | Publication Gate по правилам (`publication-v1`); вызывается в `stocker-ingest` только после `platform_ready`; решений человека не меняет |
 | `creative.review`, `creative.get` | ✅ | коммерческая оценка — только рекомендация |
 | `normalize.evaluate`, `normalize.run`, `normalize.get` | ✅ | факты и внутреннее представление; source не меняется, ничего не улучшается |
 | `enhancement.assess`, `enhancement.advise`, `enhancement.get` | ✅ | метрики качества и рекомендация (модель — только для спорных); ничего не улучшает |
@@ -104,6 +108,7 @@ Content-Type: application/json
 | `notification.record` | ✅ | только факт доставки (`NOTIFY/SENT`); pipeline и review не меняет. Агентам недоступна |
 | `metadata.edit`, `metadata.rebuild`, `metadata.escalate` | ❌ `FORBIDDEN` | |
 | `metadata.approve`, `metadata.reject` | ❌ `FORBIDDEN` | |
+| `export.prepare`, `export.get`, `export.collect`, `asset.attest_people` | ❌ `FORBIDDEN` | файлы площадок, партии к загрузке и аттестация — только человек |
 
 Allowlist — константа в коде; изменение — изменение контракта.
 
@@ -111,7 +116,8 @@ Allowlist — константа в коде; изменение — измен�
 
 ## 5. Новая операция чтения `incoming.list`
 
-Файлы в `data/incoming/` поддерживаемых форматов, которых ещё нет в Stocker:
+Файлы во входной папке каталога MCP-процесса (`<STOCKER_DATA_DIR>/incoming/`; живой контур —
+`data/prod/incoming/`) поддерживаемых форматов, которых ещё нет в Stocker:
 
 ```json
 {"total": 1, "items": [{"path": "data/incoming/IMG_1.jpg", "filename": "IMG_1.jpg", "file_size": 15478054, "duplicate_of": null}]}
@@ -131,7 +137,7 @@ Allowlist — константа в коде; изменение — измен�
 
 | Workflow | Триггер | Действия |
 |---|---|---|
-| `stocker-ingest` | каждые 5 минут | `incoming.list` → для каждого нового файла без `duplicate_of` → `asset.process_file` **последовательно** |
+| `stocker-ingest` | каждые 5 минут | `incoming.list` → для каждого нового файла без `duplicate_of` → `asset.process_file` **последовательно** → если `state.state = platform_ready` → `publication.evaluate` (итог `publication_approved` или остаётся `platform_ready`; `human_review` / `blocked` — до Publication не доходят). Путей в workflow нет: папку задаёт `STOCKER_DATA_DIR` MCP-процесса |
 | `stocker-retry` | каждые 30 минут (**выключен** до накопления статистики, §6.1) | `asset.list {"vision":"failed"}` → `asset.process`; partial-черновики → `metadata.build`. Ограничители — §6.1 |
 | `stocker-digest` | ежедневно + после ingest при изменениях | `review.queue` → сводка (`summary`: итоговые состояния, metadata одобрена ≠ готово для площадки, проблемы по кодам, до 10 объектов по приоритету) → `stocker-notify`; `NOTIFY/SENT` — только для показанных объектов (с 28.09.2026) |
 | `stocker-notify` | вызывается другими | слой уведомлений: `{severity, title, text, data, kind, items}` → канал → `notification.record` (если есть `items`) |

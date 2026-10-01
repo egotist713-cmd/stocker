@@ -248,11 +248,12 @@ def test_gate_policy_regate_with_same_decision_is_no_cascade(stocker_root, monke
 # --- reprocess и права ------------------------------------------------------------------------
 
 
-def test_publication_only_on_request_and_not_for_n8n(stocker_root):
+def test_publication_only_on_request(stocker_root):
+    """Publication — только по запросу (не в цепочках по умолчанию). С 02.10.2026 n8n вправе его вызывать
+    (stocker-ingest: platform_ready → publication.evaluate, паспорт §35ZZZP; см. test_workflow_rights)."""
     asset_id = ready_asset(stocker_root)
     for start in ("qc", "vision", "metadata", "readiness"):
         assert "publication" not in [s["stage"] for s in reprocess.run(asset_id, reprocess_from=start)["steps"]]
-    assert dispatch("publication.evaluate", {"asset_id": asset_id}, actor="workflow:n8n")["error"]["code"] == "FORBIDDEN"
     planned = reprocess.run(asset_id, reprocess_from="publication")
     assert [(s["stage"], s["action"]) for s in planned["steps"]] == [("publication", "run")]
     done = reprocess.run(asset_id, reprocess_from="publication", dry_run=False)

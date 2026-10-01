@@ -5996,6 +5996,65 @@ Gate / Readiness / Publication / QC / схема БД — без изменен�
 
 ---
 
+# 35ZZZP. 2026-10-02 — Живой контур (n8n + MCP + OpenClaw) переключён на production
+
+Решение пользователя («ДА на переключение»): живой контур работает на `data/prod`; n8n доводит
+новые файлы до Publication Gate (вариант «а»). Gate v1.3, Readiness, Publication Gate, QC и
+схема БД не менялись.
+
+**Факты до переключения (только чтение).** MCP (`Stocker MCP`, 172.26.192.1:8765) работал на
+тестовом каталоге: n8n регистрировал новые файлы пользователя в тестовой БД (тест #132–#137).
+`stocker-ingest` доходил только до Readiness (`platform_ready`), которого нет на экранах
+интерфейса. В `data/prod/incoming/` лежали черновики без ICC. Workflows n8n путей не содержат:
+входную папку задаёт `STOCKER_DATA_DIR` MCP-процесса.
+
+**Сделано (в этом порядке).**
+1. Резервные копии (scratchpad сессии): `test-before-switch.db`, `prod-before-switch.db`,
+   живой `stocker-ingest` до изменения — `n8n-live-stocker-ingest-before-switch.json`.
+2. Черновики перенесены в `data/prod/incoming_drafts/` без изменения содержимого (SHA256 до и
+   после совпадают): `4_cropped.jpeg`, `lr_4c.jpeg` (оба `db8b0fba…`), `5_cropped.jpeg`
+   (`d58317ba…`), `9_cropped.jpeg` (`8db8ac32…`), `10_cropped.jpeg` (`7b01b2f1…`),
+   `7_retouched.jpg` (`ba89abb5…`).
+3. `WORKFLOW_ALLOWED` += `publication.evaluate`, `publication.get`. `approve` / `reject` /
+   `export.*` / `asset.attest_people` для n8n по-прежнему `FORBIDDEN` (тесты:
+   `test_workflow_cannot_collect_exports`, расширенный список запретов,
+   `test_workflow_brings_new_file_to_publication`; `test_publication_only_on_request` — без
+   утверждения «не для n8n»). Полный прогон: 845 passed, 4 skipped.
+4. `stocker-ingest`: после `asset.process_file` — узел «Platform ready» (только `ok` и
+   `state.state = platform_ready`) → `publication.evaluate` (по одному, таймаут 120 с).
+   Развёрнут (`deploy_n8n_workflows.ps1 -Only stocker-ingest`, `publish:workflow`,
+   `docker restart n8n`) **до** перезапуска MCP: пока MCP смотрел в тестовый каталог, новых
+   файлов там не было — TOP-файлы не могли попасть в старый workflow без Publication.
+5. `scripts/start_mcp_http.cmd`: `set STOCKER_DATA_DIR=data/prod`; MCP перезапущен
+   (остановлены процессы `app.service.mcp_http`, `Start-ScheduledTask 'Stocker MCP'`).
+6. Документы: `docs/N8N_CONTRACT.md` (allowlist, шаг Publication, входная папка),
+   `docs/ASSET_STATE_CONTRACT.md` (Publication: n8n — только после `platform_ready`),
+   `docs/UI.md` (куда класть фото, что дальше, где результат).
+
+**Проверка.**
+- `/api/v1/incoming.list` (токен n8n) → пути `data/prod/incoming/...`: `lr_2`, `lr_3`, `lr_6`,
+  `lr_8` (дубликаты, не обрабатываются) и 4 файла «TOPСнимок экрана 2026-10-01 …».
+  `export.collect` от n8n → `FORBIDDEN`.
+- Ручной запуск `stocker-ingest` (`n8n execute --id StockerIngest001`) → `success`, последний
+  узел `publication.evaluate`. Новые production-объекты: #22, #24, #25 → `publication_approved`;
+  #23 → `human_review` (gate-v1.3: `TEXT_BRAND_OR_LEGAL` — McLaren; заметка `PEOPLE_PARTIAL`).
+- Интерфейс (127.0.0.1:8780, `data_dir` = `data/prod`): «Одобрено» показывает #22, #24, #25;
+  «Требует внимания» → `/attention/23` с причиной про бренд McLaren.
+- Тестовая БД `data/db/stocker.db` не изменилась: 3899 событий / 136 объектов, как в копии до
+  переключения. Тест #132–#137 не трогались.
+
+**Откат.** (1) Убрать строку `set STOCKER_DATA_DIR=data/prod` из `start_mcp_http.cmd` и
+перезапустить MCP (остановить `app.service.mcp_http`, `Start-ScheduledTask 'Stocker MCP'`);
+(2) импортировать `n8n-live-stocker-ingest-before-switch.json` (или версию из коммита
+3d13c43) через `deploy_n8n_workflows.ps1`, `publish:workflow`, `docker restart n8n`;
+(3) при необходимости вернуть БД из копий `*-before-switch.db`; черновики вернуть из
+`incoming_drafts` (SHA256 — выше).
+
+Отныне: новые фото — в `data/prod/incoming/`; черновики — в `data/prod/incoming_drafts/`;
+`data/incoming/` (тестовый каталог) автоматически не обрабатывается.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

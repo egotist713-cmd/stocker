@@ -149,7 +149,7 @@ Creative Review (если политика gate его требует — реш
 | Устаревание | наследуется от Readiness (`UPSTREAM_STALE:readiness`); собственный отпечаток → `FINGERPRINT_CHANGED` с `changed` (`readiness_fingerprint`, `profiles`, `advice`, `source_sha256`, `policy_version`) |
 | Каскады | metadata → Readiness → Creative → Publication `stale`; смена политики gate с тем же решением → после повторного gate Readiness и Publication снова `current` **без** новых оценок |
 | Отказы (без событий) | `PUBLICATION_NOT_APPLICABLE`, `UPSTREAM_NOT_CURRENT`, `SOURCE_INVALID` (SHA256), `REJECTED` |
-| Запуск | по запросу: `publication.evaluate` или `asset.reprocess reprocess_from=publication`; не в цепочках по умолчанию, не в worker, **не для n8n** |
+| Запуск | по запросу: `publication.evaluate` или `asset.reprocess reprocess_from=publication`; не в цепочках по умолчанию, не в worker; n8n (`stocker-ingest`) — только после `platform_ready` (с 02.10.2026, паспорт §35ZZZP) |
 | Итоговое состояние | актуальное решение с непустым `approved_for` → `publication_approved` (`approved_for` в `state`); иначе `platform_ready`; устаревшее → `stale` (`reprocess_from = publication`) |
 | `publication.get` | `result` — только актуальное решение; иначе `result: null`, `last_result` с `current: false` |
 | Upstream | Publication **ничего не меняет** в metadata, Readiness и Creative Review; событие `PUBLICATION/EVALUATED` — и есть результат |

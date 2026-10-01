@@ -142,6 +142,56 @@
         "source": "database",
         "workflowId": "StockerNotify001"
       }
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000007",
+      "name": "Platform ready",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        180
+      ],
+      "notes": "Только объекты, которые Readiness признал готовыми (platform_ready): их решает Publication Gate. human_review / blocked сюда не попадают.",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Готовые для площадок (platform_ready) -> Publication Gate. Решения человека здесь не принимаются.\nreturn $input.all()\n  .filter(item => item.json.ok && item.json.data && item.json.data.state && item.json.data.state.state === 'platform_ready')\n  .map(item => ({ json: { asset_id: item.json.asset_id } }));"
+      }
+    },
+    {
+      "id": "5a1d0c11-2b2b-4d2e-8b02-000000000008",
+      "name": "publication.evaluate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        180
+      ],
+      "notes": "Publication Gate (детерминированный, без AI). approve / reject / export.* для n8n закрыты.",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.STOCKER_URL }}/api/v1/publication.evaluate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ asset_id: $json.asset_id }) }}",
+        "options": {
+          "timeout": 120000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 0
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__STOCKER_CREDENTIAL_ID__",
+          "name": "Stocker API"
+        }
+      }
     }
   ],
   "connections": {
@@ -185,6 +235,11 @@
             "node": "Report",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Platform ready",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -205,6 +260,17 @@
         [
           {
             "node": "incoming.list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Platform ready": {
+      "main": [
+        [
+          {
+            "node": "publication.evaluate",
             "type": "main",
             "index": 0
           }
