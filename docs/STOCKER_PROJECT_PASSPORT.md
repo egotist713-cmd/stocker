@@ -5836,6 +5836,20 @@ Adobe-файлы prod #2, #3, #6, #13, #15, #16, #17, #19 — sha256 не изм
 
 ---
 
+# 35ZZZJ. 2026-10-01 — prod #20 подтверждён, reject prod #8
+
+- Пользователь осмотрел prod #20 (из lr_8b): брендов и логотипов нет — подтверждено.
+- prod #8 — `metadata.reject` (human): «заменён версией из Lightroom» → `rejected`. Копия БД
+  до — `prod-before-reject-8.db`. Старые файлы prod #8 к ручному удалению:
+  `data/prod/export/adobe/8/warehouse_interior_view_8.jpg`,
+  `data/prod/export/shutterstock/8/dimly_lit_warehouse_8.jpg` (`stale`).
+- Shutterstock-экспорт prod #20 по-прежнему `stale` (смена лимитов, §35ZZZI) — prod #20 в
+  `publication_approved`; пересоздание ждёт разрешения пользователя.
+- Состояния production: ready_for_export 8, publication_approved 2 (#14, #20), rejected 10.
+  check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
