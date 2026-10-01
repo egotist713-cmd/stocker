@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Панель{% endblock %}
+{% block content %}
+<h1>Панель</h1>
+<section class="counters">
+  <a class="counter" href="/approved" data-counter="approved"><b>{{ numbers.approved }}</b><span>Одобрено, ещё не собрано</span><small>всего одобрено: {{ numbers.approved_total }}</small></a>
+  <a class="counter {% if numbers.attention %}hot{% endif %}" href="/attention" data-counter="attention"><b>{{ numbers.attention }}</b><span>Требует внимания</span></a>
+  <a class="counter" href="/blocked" data-counter="blocked"><b>{{ numbers.blocked }}</b><span>Заблокировано</span></a>
+  <a class="counter" href="/rejected" data-counter="rejected"><b>{{ numbers.rejected }}</b><span>Отклонено</span></a>
+  <div class="counter" data-counter="source"><b>{{ numbers.source }}</b><span>Проблемы с источником</span><small>source_invalid + stale</small></div>
+</section>
+
+<form method="post" action="/collect" class="collect">
+  <input type="hidden" name="token" value="{{ token }}">
+  <button type="submit" id="collect" {% if not can_collect %}disabled{% endif %}>Собрать к загрузке</button>
+  {% if not can_collect %}<span class="hint">Сначала разберите «Требует внимания» ({{ numbers.attention }}).</span>{% endif %}
+</form>
+
+<h2>Недавние события</h2>
+<table class="events">
+  <thead><tr><th>Время</th><th>Объект</th><th>Стадия</th><th>Статус</th><th>Подробности</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+    <tr><td>{{ e.created_at }}</td><td>prod #{{ e.asset_id }}</td><td>{{ e.stage }}</td><td>{{ e.status }}</td><td>{{ e.summary }}</td></tr>
+  {% else %}
+    <tr><td colspan="5">Событий нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

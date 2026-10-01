@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Требует внимания{% endblock %}
+{% block content %}
+<h1>Требует внимания · {{ position }} из {{ total }}</h1>
+<article class="review">
+  <figure>
+    <img src="/photo/{{ asset.id }}/preview.jpg" alt="prod #{{ asset.id }}">
+    <figcaption>prod #{{ asset.id }} · {{ asset.filename }} · {{ asset.width }}×{{ asset.height }}
+      · <a href="/photo/{{ asset.id }}/full" target="_blank" rel="noopener">Открыть 100%</a></figcaption>
+  </figure>
+  <section class="details">
+    <h2>Почему на проверке</h2>
+    <ul class="reasons">
+      {% for line in gate %}<li>{{ line }}</li>{% endfor %}
+      {% for line in qc %}<li>{{ line }}</li>{% endfor %}
+    </ul>
+    <h2>Title</h2>
+    <p class="readonly">{{ fields.title }}</p>
+    <h2>Ключевые слова ({{ fields.keywords|length }})</h2>
+    <p class="readonly keywords">{{ fields.keywords|join(", ") }}</p>
+
+    <form method="post" action="/attention/{{ asset.id }}/approve" class="approve" data-people="{{ 'yes' if people else 'no' }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      {% if people %}
+      <label class="attest"><input type="checkbox" name="attest" id="attest"> Люди в кадре не узнаваемы</label>
+      {% endif %}
+      <button type="submit" class="ok">Одобрить</button>
+    </form>
+
+    <form method="post" action="/attention/{{ asset.id }}/reject" class="reject">
+      <input type="hidden" name="token" value="{{ token }}">
+      <label>Причина / что делать <input type="text" name="reason" required maxlength="300"></label>
+      <button type="submit" class="danger">Отклонить</button>
+    </form>
+
+    {% if next_id %}<a class="skip" href="/attention/{{ next_id }}">Пропустить</a>{% else %}<a class="skip" href="/">Пропустить</a>{% endif %}
+  </section>
+</article>
+{% endblock %}

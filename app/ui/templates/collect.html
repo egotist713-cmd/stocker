@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Собрано к загрузке{% endblock %}
+{% block content %}
+<h1>Собрано к загрузке</h1>
+{% for platform, r in report.items() %}
+<section class="platform-report">
+  <h2>{{ platform }}</h2>
+  {% if r.prepared %}<p>Подготовлены файлы: {% for i in r.prepared %}prod #{{ i }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if r.refused %}
+  <p class="warn">Не подготовлены:</p>
+  <ul>{% for f in r.refused %}<li>prod #{{ f.asset_id }} — {{ f.reason }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if r.collect.error %}
+    <p class="error">Ошибка сбора: {{ r.collect.error.code }} — {{ r.collect.error.message }}</p>
+  {% elif r.collect.outcome == "NOTHING_TO_COLLECT" %}
+    <p>Новых файлов нет — партия не создана.</p>
+  {% else %}
+    <p>Партия {{ "%03d"|format(r.collect.batch) }}: <code>{{ r.collect.folder }}</code> — файлов: {{ r.collect.files|length }}; manifest: <code>{{ r.collect.manifest }}</code></p>
+    <table class="events">
+      <thead><tr><th>Объект</th><th>Файл</th><th>Слов</th></tr></thead>
+      <tbody>{% for f in r.collect.files %}<tr><td>prod #{{ f.asset_id }}</td><td>{{ f.filename }}</td><td>{{ f.words }}</td></tr>{% endfor %}</tbody>
+    </table>
+  {% endif %}
+  {% if r.collect.skipped %}
+  <p class="warn">Пропущены:</p>
+  <ul>{% for s in r.collect.skipped %}<li>prod #{{ s.asset_id }} — {{ s.reason }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+{% endfor %}
+<p><a href="/">← На панель</a></p>
+{% endblock %}

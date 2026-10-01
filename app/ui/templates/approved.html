@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Одобрено{% endblock %}
+{% block content %}
+<h1>Одобрено ({{ rows|length }})</h1>
+<section class="grid">
+  {% for row in rows %}
+  <div class="card">
+    <a href="/photo/{{ row.asset.id }}/full" target="_blank" rel="noopener"><img loading="lazy" src="/photo/{{ row.asset.id }}/thumb.jpg" alt="prod #{{ row.asset.id }}"></a>
+    <div class="meta">
+      <b>prod #{{ row.asset.id }}</b> · {{ row.title }}
+      <ul class="platforms">
+        {% for platform, c in row.collection.items() %}
+        <li>{{ platform }}: {% if c.collected %}в партии {{ "%03d"|format(c.collected.batch) }}{% elif c.status == "ready_for_export" %}готов, не собран{% else %}файл не подготовлен ({{ c.status }}){% endif %}</li>
+        {% endfor %}
+      </ul>
+      <a href="/photo/{{ row.asset.id }}/full" target="_blank" rel="noopener">Открыть 100%</a>
+      <form method="post" action="/approved/{{ row.asset.id }}/return" class="return">
+        <input type="hidden" name="token" value="{{ token }}">
+        <button type="submit">Вернуть на проверку</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p>Одобренных объектов нет.</p>
+  {% endfor %}
+</section>
+{% endblock %}

@@ -5911,8 +5911,58 @@ Adobe-файлы prod #2, #3, #6, #13, #15, #16, #17, #19 — sha256 не изм
 - Тесты `tests/test_outbox.py` (8); модуль в `ATOMIC_MODULES`, сбор в прогоне атомарности
   (MAX_INJECTED 19). Мутация «collect включает отклонённые / устаревшие» — тест падает,
   после восстановления зелёный. `pytest`: 828 passed, 4 skipped.
-- Веб-интерфейс не начат: в окружении нет `fastapi`, `jinja2`, `httpx` (нужен TestClient) —
-  установка пакетов ждёт разрешения пользователя.
+- Веб-интерфейс — §35ZZZN.
+
+---
+
+# 35ZZZN. 2026-10-01 — Локальный веб-интерфейс Stocker v1
+
+### Решение пользователя
+
+Рутина без Claude Code: incoming → счётчики → «требует внимания» → сбор к загрузке в
+плоские папки. FastAPI + Jinja2 + немного JS, без CDN, 127.0.0.1:8780,
+`scripts/start_ui.cmd`; тонкий слой над сервисом (actor `human`); только `data/prod`;
+Gate / Readiness / Publication / QC / схема БД — без изменений; новая операция — только
+`export.collect` (§35ZZZM).
+
+### Реализация
+
+- Пакеты `fastapi` 0.142.2, `jinja2` 3.1.6, `httpx` 0.28.1 (TestClient) — установлены в
+  `.venv` с разрешения пользователя, добавлены в `requirements.txt` / `requirements.lock.txt`;
+  `starlette` 1.7.0 (MCP) не изменился.
+- `app/ui/server.py`: `create_app(token, require_prod=True)` — отказ, если `DATA_DIR` не
+  `data/prod`; все чтения и действия — `dispatch(..., actor="human")`: `review.queue`,
+  `asset.list`, `asset.get`, `asset.history`, `export.get`, `metadata.approve / reject /
+  escalate`, `asset.attest_people`, `readiness.evaluate`, `publication.evaluate`,
+  `export.prepare`, `export.collect`. Превью 2000 px / миниатюры 480 px — из AnalysisView
+  (единственный вход пикселей), кэш в памяти; «100 %» — исходный файл по asset_id
+  (FileResponse, путь — из записи объекта, внутри проекта). POST — токен сессии
+  (`hmac.compare_digest`), иначе 403. «Собрать» — и кнопка, и сервер: только при
+  `human_review = 0` (иначе 409).
+- После «Одобрить» (и аттестации) — `readiness.evaluate`, затем `publication.evaluate`,
+  если `platform_ready`: как ручной поток §35ZZX–§35ZZY.
+- `app/ui/humanize.py` — причины gate / QC / EDGE_BORDER (сторона, ширина, обрезка +3 px) /
+  блокеров Readiness человеческим языком с подсказкой действия.
+- Шаблоны `app/ui/templates/*.html`, `app/ui/static/{style.css, ui.js}` (подтверждения);
+  инструкция — `docs/UI.md`.
+
+### Тесты и проверки
+
+- `tests/test_ui.py` (12): счётчики и активность кнопки; 409 при внимании; только
+  `data/prod`; экран внимания (причины, «100 %», metadata только чтение); approve через UI —
+  событие METADATA/APPROVED идентично CLI (`dispatch`), затем Readiness; reject — причина
+  обязательна, событие как CLI; переключатель «люди не узнаваемы» → HUMAN/PEOPLE_ATTESTED →
+  `publication_approved`; экран «Заблокировано» — аттестация с подтверждением; «Вернуть на
+  проверку» → METADATA/ESCALATED «вернул пользователь»; «Отклонено»; POST без токена — 403,
+  событий нет; фото только по id (параметр path игнорируется, не-число — 422, нет объекта —
+  404); сбор обеих площадок, партии 001, повтор — «новых файлов нет».
+- Мутации: «кнопка активна при attention > 0» — тест падает; «collect включает
+  отклонённые» (§35ZZZM) — тест падает; после восстановления зелёные. `pytest`: 840 passed,
+  4 skipped.
+- Проверка на production (только GET): `/`, `/approved`, `/blocked`, `/rejected`,
+  `/attention` — 200; счётчики: одобрено и не собрано 10, требует внимания 0, отклонено 11;
+  кнопка активна; превью prod #21 — 336 КБ JPEG; «100 %» — исходник 12,4 МБ. Сервер
+  остановлен; БД и файлы не менялись.
 
 ---
 

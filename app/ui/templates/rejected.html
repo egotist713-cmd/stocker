@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Отклонено{% endblock %}
+{% block content %}
+<h1>Отклонено ({{ rows|length }})</h1>
+<table class="events">
+  <thead><tr><th>Объект</th><th>Исходный файл</th><th>Причина</th><th>Дата</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr><td>prod #{{ row.asset.id }}</td><td>{{ row.asset.source_path }}</td><td>{{ row.reason }}</td><td>{{ row.date }}</td></tr>
+  {% else %}
+    <tr><td colspan="4">Отклонённых нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Заблокировано{% endblock %}
+{% block content %}
+<h1>Заблокировано ({{ rows|length }})</h1>
+{% for row in rows %}
+<article class="blocked">
+  <img loading="lazy" src="/photo/{{ row.asset.id }}/thumb.jpg" alt="prod #{{ row.asset.id }}">
+  <div>
+    <b>prod #{{ row.asset.id }}</b> · {{ row.asset.filename }} · <a href="/photo/{{ row.asset.id }}/full" target="_blank" rel="noopener">Открыть 100%</a>
+    <ul class="reasons">
+      {% for what, todo in row.reasons %}<li><b>{{ what }}</b> — {{ todo }}</li>{% endfor %}
+    </ul>
+    {% if row.attest %}
+    <form method="post" action="/blocked/{{ row.asset.id }}/attest" class="attest-form">
+      <input type="hidden" name="token" value="{{ token }}">
+      <label><input type="checkbox" name="confirm"> Люди в кадре не узнаваемы — подтверждаю</label>
+      <button type="submit">Записать решение</button>
+    </form>
+    {% endif %}
+  </div>
+</article>
+{% else %}
+<p>Заблокированных объектов нет.</p>
+{% endfor %}
+{% endblock %}
