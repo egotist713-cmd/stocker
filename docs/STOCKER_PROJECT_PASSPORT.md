@@ -5850,6 +5850,26 @@ Adobe-файлы prod #2, #3, #6, #13, #15, #16, #17, #19 — sha256 не изм
 
 ---
 
+# 35ZZZK. 2026-10-01 — Shutterstock prod #20 пересоздан, reject prod #14, lr_4c без ICC
+
+Копии БД до — `prod-before-20-14.db`, `prod-before-lr4c.db`.
+
+- prod #20 — `export.prepare` shutterstock: CREATED `dimly_lit_warehouse_20.jpg`, sha256
+  совпал с прежним (`3a2f0168…`) байт в байт; prod #20 — `ready_for_export` [adobe,
+  shutterstock].
+- prod #14 — `metadata.reject` (human): «отклонён Adobe (логотип на шильдике), заменяется
+  версией lr_4c» → `rejected`. Прежние экспорты к загрузке не предназначены, к ручному
+  удалению: `data/prod/export/adobe/14/blue_industrial_motor_14.jpg`,
+  `data/prod/export/shutterstock/14/close_up_blue_electric_14.jpg`.
+- check_consistency для rejected без экспортного файла — уже исправлено (cf1dad9).
+- `lr_4c.jpeg`: sha `db8b0fba…3cba` — **тот же файл, что `lr_4b.jpeg`** (12 420 399 Б, q98,
+  7676×4723); ICC нет (EXIF ColorSpace Uncalibrated) → остановка по правилу пользователя:
+  не встраивалось, не регистрировалось.
+- Состояния production: ready_for_export 9 (#2, #3, #6, #13, #15, #16, #17, #19, #20),
+  rejected 11. check_consistency OK (9/9).
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом
