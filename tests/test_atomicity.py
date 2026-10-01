@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app import attestation, creative_review, enhancement_decision, export_preparation, ingest, normalization, qc, reprocess, stock_readiness, worker
+from app import attestation, creative_review, enhancement_decision, export_preparation, ingest, normalization, outbox, qc, reprocess, stock_readiness, worker
 from app import metadata as metadata_service
 from app import readiness as rd
 from app.service import dispatch
@@ -29,9 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Модули, которые пишут результат + событие; у каждого подменяется insert_event.
 ATOMIC_MODULES = (ingest, normalization, qc, reprocess, worker, metadata_service, enhancement_decision, creative_review,
-                  stock_readiness, export_preparation, attestation)
+                  stock_readiness, export_preparation, attestation, outbox)
 
-MAX_INJECTED = 18
+MAX_INJECTED = 19
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +73,10 @@ def _run_pipeline(root: Path) -> None:
         for operation in ("readiness.evaluate", "creative.review", "publication.evaluate", "export.prepare"):
             dispatch(operation, {"asset_id": asset_id})  # envelope не бросает исключений
         dispatch("export.prepare", {"asset_id": asset_id, "platform": "shutterstock"})
+        try:
+            outbox.collect("adobe")  # файлы партии, затем OUTBOX/COLLECTED одной транзакцией
+        except PowerLoss:
+            pass
 
 
 def test_pipeline_writes_many_events(stocker_root, monkeypatch):

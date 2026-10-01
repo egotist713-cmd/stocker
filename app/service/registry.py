@@ -110,6 +110,10 @@ class AttestPeopleParams(AssetParams):
     note: str | None = Field(default=None, description="Required for release_on_file: release number or link (not stored or checked)")
 
 
+class PlatformParams(Params):
+    platform: str = Field(description="Export profile platform: adobe | shutterstock")
+
+
 class ApproveParams(AssetParams):
     allow_partial: bool = False
     confirm_claims: bool = False
@@ -204,6 +208,12 @@ DESCRIPTIONS = {
         "nothing copied from the source) from the current Readiness export plan; only where Readiness is ready and "
         "Publication Gate approved the platform. Same inputs return UNCHANGED. Refusals are recorded as EXPORT/FAILED. "
         'No upload. Human actors only. Args: {"asset_id": 5, "platform": "adobe"}'
+    ),
+    "export.collect": (
+        "Collect upload files: copy the current, verified export files of a platform that are not collected yet into "
+        "a flat batch folder <DATA_DIR>/publish/<platform>/<NNN>_<YYYY-MM-DD>/ with manifest.csv; records OUTBOX/COLLECTED. "
+        "Rejected, stale and already collected files are left out; nothing new to collect returns NOTHING_TO_COLLECT. "
+        'No upload. Human actors only. Args: {"platform": "adobe"}'
     ),
     "export.get": (
         "Export status of an asset for a platform: ready_for_export / stale / not_prepared, the file, its sha256 and "
@@ -316,6 +326,7 @@ def build_registry() -> dict[str, Operation]:
         Operation("readiness.get", DESCRIPTIONS["readiness.get"], AssetParams, READ, ops.readiness_get),
         Operation("export.prepare", DESCRIPTIONS["export.prepare"], ExportParams, PIPELINE, ops.export_prepare),
         Operation("export.get", DESCRIPTIONS["export.get"], ExportParams, READ, ops.export_get),
+        Operation("export.collect", DESCRIPTIONS["export.collect"], PlatformParams, PIPELINE, ops.export_collect),
         Operation("notification.record", DESCRIPTIONS["notification.record"], NotificationParams, PIPELINE, ops.notification_record),
     ]
     return {operation.name: operation for operation in operations}

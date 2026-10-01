@@ -11,6 +11,7 @@ from app import creative_review as creative_review_service
 from app import attestation
 from app import enhancement_decision
 from app import export_preparation
+from app import outbox
 from app import ingest
 from app import metadata as metadata_service
 from app import normalization
@@ -143,6 +144,14 @@ def export_prepare(params) -> dict:
     ok = result["outcome"] != export_preparation.FAILED
     data = {"export": result["export"], **({"refused": result["refused"]} if not ok else {})}
     return _result(params.asset_id, result["outcome"], data, ok=ok)
+
+
+def export_collect(params) -> dict:
+    try:
+        result = outbox.collect(params.platform)
+    except export_preparation.ExportError as exc:
+        raise ServiceError(exc.code, str(exc)) from exc
+    return _result(None, result["outcome"], result)
 
 
 def export_get(params) -> dict:

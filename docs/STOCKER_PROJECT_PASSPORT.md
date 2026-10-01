@@ -5896,6 +5896,26 @@ Adobe-файлы prod #2, #3, #6, #13, #15, #16, #17, #19 — sha256 не изм
 
 ---
 
+# 35ZZZM. 2026-10-01 — export.collect (сбор файлов к загрузке) — часть задания «Web UI v1»
+
+- `app/outbox.py`, операция `export.collect {platform}` (pipeline; `AGENT_FORBIDDEN`, нет в
+  allowlist n8n — только человек): актуальные, ещё не собранные экспортные файлы площадки
+  (`ready_for_export`, sha256 на диске = событию) → временная папка → проверка sha256 копий
+  → `manifest.csv` (asset_id, filename, title / description, words, sha256) → переименование
+  в `<DATA_DIR>/publish/<platform>/<NNN>_<YYYY-MM-DD>/` → `OUTBOX/COLLECTED` (platform, batch,
+  folder, filename, sha256, export_event_id) одной транзакцией. Нумерация партий — по
+  площадке, больше всех событий и папок (папка без событий после сбоя номер не отдаёт).
+  Отклонённые — молча; устаревшие — в `skipped`; уже собранные (тот же sha256) — нет; без
+  новых файлов — `NOTHING_TO_COLLECT`, папка не создаётся.
+- `export.get` дополнен полями `event_id` (в `export`) и `collected` (партия текущего файла).
+- Тесты `tests/test_outbox.py` (8); модуль в `ATOMIC_MODULES`, сбор в прогоне атомарности
+  (MAX_INJECTED 19). Мутация «collect включает отклонённые / устаревшие» — тест падает,
+  после восстановления зелёный. `pytest`: 828 passed, 4 skipped.
+- Веб-интерфейс не начат: в окружении нет `fastapi`, `jinja2`, `httpx` (нужен TestClient) —
+  установка пакетов ждёт разрешения пользователя.
+
+---
+
 # ЧАСТЬ VII. ПРАВИЛА РАБОТЫ БУДУЩЕГО АГЕНТА
 
 # 36. Работа с фактическим проектом

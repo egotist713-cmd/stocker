@@ -734,13 +734,16 @@ def get(asset_id: int, platform: str = "adobe") -> dict:
         last_failure = {"event_id": failed["id"], "code": stored.get("code"), "error": stored.get("error")}
     created = _json(event["message"]) if event else None
     current = status["status"] == READY_FOR_EXPORT
+    from app import outbox  # партия к загрузке (export.collect), если текущий файл уже собран
+
     return {
         "asset_id": asset_id,
         "platform": platform,
         "profile": profile.version,
         "status": status["status"],
         "reason": status.get("reason"),
-        "export": created if current else None,
+        "export": {**created, "event_id": event["id"]} if current else None,
         **({"last_export": {**created, "current": False}} if created and not current else {}),
         "last_failure": last_failure,
+        "collected": outbox.collected(asset_id, platform, created["sha256"]) if current else None,
     }
